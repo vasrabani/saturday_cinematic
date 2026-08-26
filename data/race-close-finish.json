@@ -1,0 +1,45 @@
+{
+  "race_name": "Coral July Sprint Stakes (Group 2)",
+  "race_course": "Newmarket",
+  "race_time": "14:20",
+  "race_distance": "6f",
+  "race_prize": "£150,000",
+  "band": "sprint",
+  "band_subtitle": "6f · pure speed, no hiding place",
+
+  "runners": [
+    {"id": 91001, "number": 1, "name": "Night Signal",     "jockey": "Ryan Moore",       "trainer": "Aidan O'Brien",       "odds": "9/2",  "silk": "#B91C1C", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "hooped",    "sr": 118, "stars": 4, "is_fav": true,  "weight": 121.0},
+    {"id": 91002, "number": 2, "name": "Velvet Sabre",      "jockey": "William Buick",    "trainer": "Charlie Appleby",     "odds": "5/1",  "silk": "#1A7D4A", "silk2": "#F5E49A", "silk_url": "", "silk_pattern": "striped",   "sr": 116, "stars": 4, "is_fav": false, "weight": 119.4},
+    {"id": 91003, "number": 3, "name": "Copper Line",       "jockey": "Oisin Murphy",     "trainer": "Andrew Balding",      "odds": "11/2", "silk": "#1E40AF", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "quartered", "sr": 115, "stars": 4, "is_fav": false, "weight": 118.0},
+    {"id": 91004, "number": 4, "name": "Fox In The Frame",  "jockey": "Frankie Dettori",  "trainer": "John & Thady Gosden", "odds": "7/1",  "silk": "#7C3AED", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "starred",   "sr": 113, "stars": 3, "is_fav": false, "weight": 116.8},
+    {"id": 91005, "number": 5, "name": "Second Nature",     "jockey": "Tom Marquand",     "trainer": "William Haggas",      "odds": "10/1", "silk": "#EA580C", "silk2": "#0B0E15", "silk_url": "", "silk_pattern": "halved",    "sr": 110, "stars": 3, "is_fav": false, "weight": 114.0},
+    {"id": 91006, "number": 6, "name": "Blanket Finish",    "jockey": "James Doyle",      "trainer": "Roger Varian",        "odds": "14/1", "silk": "#0B0E15", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "hooped",    "sr": 108, "stars": 3, "is_fav": false, "weight": 112.0},
+    {"id": 91007, "number": 7, "name": "Quiet Contender",   "jockey": "Rossa Ryan",       "trainer": "Alan King",           "odds": "16/1", "silk": "#0EA5E9", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "striped",   "sr": 106, "stars": 3, "is_fav": false, "weight": 110.5},
+    {"id": 91008, "number": 8, "name": "Furlong Later",     "jockey": "Colin Keane",      "trainer": "Jessica Harrington",  "odds": "20/1", "silk": "#DC2626", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "quartered", "sr": 104, "stars": 2, "is_fav": false, "weight": 108.0},
+    {"id": 91009, "number": 9, "name": "Marginal Call",     "jockey": "Daniel Tudhope",   "trainer": "David O'Meara",       "odds": "25/1", "silk": "#166534", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "starred",   "sr": 101, "stars": 2, "is_fav": false, "weight": 105.7},
+    {"id": 91010, "number": 10, "name": "Late Ticket",      "jockey": "Kieran Shoemark",  "trainer": "Ralph Beckett",       "odds": "33/1", "silk": "#5B21B6", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "halved",    "sr": 98,  "stars": 2, "is_fav": false, "weight": 103.0}
+  ],
+
+  "user_pick": {"id": 91003, "number": 3, "name": "Copper Line", "jockey": "Oisin Murphy", "trainer": "Andrew Balding", "odds": "11/2", "silk": "#1E40AF", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "quartered", "sr": 115, "stars": 4, "is_fav": false, "weight": 118.0},
+  "fox_pick":  {"id": 91001, "number": 1, "name": "Night Signal", "jockey": "Ryan Moore", "trainer": "Aidan O'Brien", "odds": "9/2", "silk": "#B91C1C", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "hooped", "sr": 118, "stars": 4, "is_fav": true, "weight": 121.0},
+
+  "replay_data": {
+    "has_result": true,
+    "is_abandoned": false,
+    "result_order": [91003, 91001, 91002, 91004, 91005, 91006, 91007, 91008, 91009, 91010],
+    "winner_name": "Copper Line (GB)",
+    "winner_sp": "11/2",
+    "place2_name": "Night Signal (IRE)",
+    "place3_name": "Velvet Sabre (GB)",
+    "beaten_distances": {
+      "91003": "0", "91001": "hd", "91002": "shd", "91004": "1/4", "91005": "1/2",
+      "91006": "3/4", "91007": "1", "91008": "1 1/4", "91009": "1 1/2", "91010": "1 3/4"
+    },
+    "lengths_behind_winner": {
+      "91003": 0.0, "91001": 0.08, "91002": 0.18, "91004": 0.4, "91005": 0.65,
+      "91006": 0.9, "91007": 1.1, "91008": 1.35, "91009": 1.6, "91010": 1.85
+    },
+    "max_lengths_behind": 1.85,
+    "has_distances": true
+  }
+}

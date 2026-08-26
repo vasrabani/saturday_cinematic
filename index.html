@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cinematic Lab — Saturday Racing</title>
+<link rel="stylesheet" href="css/experience.css">
+<link rel="stylesheet" href="css/flat.css">
+<style>
+  html, body { margin: 0; background: #0b0e15; }
+  .sandbox-picker {
+    position: fixed; top: 14px; right: 14px; z-index: 9999;
+    font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: rgba(10,14,21,0.85); border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px; padding: 8px 10px; color: #f0ebe0; backdrop-filter: blur(6px);
+  }
+  .sandbox-picker label {
+    display: block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+    opacity: .6; margin-bottom: 4px;
+  }
+  .sandbox-picker select {
+    background: #131a26; color: #f0ebe0; border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 4px; padding: 4px 6px; font: inherit; max-width: 260px;
+  }
+  #dataError {
+    position: fixed; top: 14px; left: 14px; z-index: 9999; display: none;
+    background: #5c1a1a; color: #fff; padding: 10px 14px; border-radius: 6px;
+    font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 320px;
+  }
+</style>
+</head>
+<body class="page-experience page-experience--flat">
+
+<canvas id="particleCanvas" width="0" height="150"></canvas>
+<div id="subtitle"><span class="subtitle__text"></span></div>
+<div id="loadingBar"></div>
+<div id="dataError">Data load failed. This sandbox must be served over http:// — run <code>python -m http.server 8080</code> from this folder and open http://localhost:8080/, not the file directly.</div>
+
+<div class="sandbox-picker">
+  <label for="scenarioPick">Scenario</label>
+  <select id="scenarioPick">
+    <option value="race">race — default finish</option>
+    <option value="race-close-finish">race-close-finish — photo finish</option>
+    <option value="race-runaway">race-runaway — dominant winner</option>
+  </select>
+</div>
+
+<div class="screen flat-screen" id="screen-intro">
+  <div class="intro-kicker flat-intro-kicker">
+    Saturday Racing · The Experience
+    <span class="flat-band-pill flat-band-pill--stayer">Stayer</span>
+  </div>
+  <div class="intro-title">
+    <span class="intro-title__line1">The Virtual</span>
+    <span class="intro-title__line2"></span>
+  </div>
+  <div class="intro-meta">
+    <span></span>
+    <span class="intro-meta__sep">·</span>
+    <span></span>
+    <span class="intro-meta__sep">·</span><span></span>
+    <span class="intro-meta__sep">·</span>
+    <span></span>
+  </div>
+
+  <p class="flat-band-subtitle"></p>
+
+  <div class="intro-runners-preview" id="introRunnersPreview"></div>
+
+  <button type="button" class="intro-btn" id="flatStartBtn">🏇 &nbsp; RUN THE RACE</button>
+  <p style="font-size:11px;color:rgba(240,235,224,0.22);letter-spacing:0.1em;margin-top:8px;">
+    Pre-race simulation · Weighted by SR, AI Stars &amp; market odds
+  </p>
+</div>
+
+<div class="screen flat-screen" id="screen-parade">
+  <div class="parade-header">
+    <div>
+      <div class="parade-header__title"></div>
+      <div class="parade-header__sub"></div>
+    </div>
+    <div style="text-align:right">
+      <div class="parade-counter"><span id="paradeCounter">1</span></div>
+      <div class="parade-counter__label">of 1</div>
+    </div>
+  </div>
+  <div class="parade-stage" id="paradeStage"></div>
+  <div class="parade-dots" id="paradeDots"></div>
+
+  <div class="parade-skip-wrap">
+    <button type="button" class="parade-skip-cta" id="flatSkipParadeBtn">
+      <span class="parade-skip-cta__label">Skip to the Race</span>
+      <span class="parade-skip-cta__arrow">→</span>
+    </button>
+  </div>
+</div>
+
+<div class="screen flat-screen" id="screen-race">
+  <div class="flat-stalls" id="flatStalls" aria-hidden="true">
+    <div class="flat-stalls__top"></div>
+    <div class="flat-stalls__bottom"></div>
+    <div class="flat-stalls__bang">BANG</div>
+  </div>
+
+  <canvas id="raceCanvas" width="0" height="150"></canvas>
+
+  <div class="race-phase-title">
+    <span class="race-phase-title__text" id="phaseTitle">PATIENT EARLY GALLOP</span>
+  </div>
+  <div class="race-leaderboard">
+    <div class="race-leaderboard__title">Live Positions</div>
+    <div id="raceLeaderboard"></div>
+  </div>
+  <div class="race-commentary">
+    <div class="race-commentary__text" id="racingCommentary"></div>
+  </div>
+
+  <div class="race-skip-wrap">
+    <button type="button" class="race-skip-cta" id="raceSkipBtn">
+      <span class="race-skip-cta__arrow" aria-hidden="true">⏭</span>
+      <span class="race-skip-cta__label">Skip to Finish</span>
+    </button>
+  </div>
+
+  <div class="flat-photo-finish" id="flatPhotoFinish" aria-hidden="true">
+    <div class="flat-photo-finish__flash"></div>
+    <div class="flat-photo-finish__label">PHOTO FINISH</div>
+  </div>
+</div>
+
+<div class="screen flat-screen" id="screen-rollcall">
+  <div class="rollcall-eyebrow">The Roll Call · Last to First</div>
+  <div class="rollcall-stage" id="rollcallStage"></div>
+  <div class="rollcall-progress" id="rollcallProgress"></div>
+  <div class="rollcall-skip-wrap">
+    <button type="button" class="rollcall-skip-cta" id="rollcallSkipBtn">
+      <span class="rollcall-skip-cta__label">Skip to Trophy</span>
+      <span class="rollcall-skip-cta__arrow" aria-hidden="true">⏭</span>
+    </button>
+  </div>
+</div>
+
+<div class="screen flat-screen" id="screen-reveal">
+  <div class="reveal-bg" id="revealBg"></div>
+  <div class="reveal-content">
+    <div class="reveal-kicker" style="opacity:0">The Race is Over</div>
+    <div class="reveal-winner-label" style="opacity:0">🏆 &nbsp; THE WINNER &nbsp; 🏆</div>
+    <div class="reveal-trophy-wrap" id="revealTrophyWrap" style="opacity:0;transform:scale(0.7)">
+      <svg viewBox="0 0 240 260" xmlns="http://www.w3.org/2000/svg" class="reveal-trophy-svg" aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient id="tgH" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#B8900A"></stop>
+            <stop offset="30%" stop-color="#F5E49A"></stop>
+            <stop offset="60%" stop-color="#D4AF37"></stop>
+            <stop offset="100%" stop-color="#C8A020"></stop>
+          </linearGradient>
+          <filter id="tgGlow"><feGaussianBlur stdDeviation="6" result="b"></feGaussianBlur><feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter>
+        </defs>
+        <path d="M65,20 L175,20 Q188,65 168,105 Q148,145 120,158 Q92,145 72,105 Q52,65 65,20Z" fill="url(#tgH)" filter="url(#tgGlow)"></path>
+        <path d="M78,26 Q105,22 118,34 Q106,90 88,128 Q74,96 70,56Z" fill="rgba(255,255,255,0.25)"></path>
+        <path d="M65,48 Q22,58 26,110 Q30,142 68,132" fill="none" stroke="url(#tgH)" stroke-width="14" stroke-linecap="round"></path>
+        <path d="M175,48 Q218,58 214,110 Q210,142 172,132" fill="none" stroke="url(#tgH)" stroke-width="14" stroke-linecap="round"></path>
+        <rect x="110" y="158" width="20" height="46" rx="5" fill="url(#tgH)"></rect>
+        <rect x="76" y="202" width="88" height="18" rx="6" fill="url(#tgH)"></rect>
+        <rect x="58" y="218" width="124" height="16" rx="7" fill="url(#tgH)"></rect>
+        <polygon points="120,50 126,70 148,70 131,82 138,102 120,90 102,102 109,82 92,70 114,70" fill="rgba(255,255,200,0.45)"></polygon>
+        <circle cx="120" cy="232" r="0" id="revealSilkCircle" fill="#C8A951"></circle>
+      </svg>
+      <div class="reveal-horse-silk" id="revealSilk" style="position:absolute;bottom:-10px;left:50%;transform:translateX(-50%)"></div>
+    </div>
+    <div class="reveal-horse-name" id="revealHorseName" style="opacity:0;transform:translateY(20px)"></div>
+    <div class="reveal-horse-odds" id="revealOdds" style="opacity:0"></div>
+    <div class="reveal-verdict-box" id="revealVerdictBox" style="opacity:0;transform:translateY(12px)">
+      <div class="reveal-verdict-title" id="revealVerdictTitle"></div>
+      <div class="reveal-verdict-text" id="revealVerdictText"></div>
+    </div>
+    <div class="reveal-podium" id="revealPodium" style="opacity:0;transform:translateY(10px)"></div>
+    <div class="reveal-scores" id="revealScores" style="opacity:0"></div>
+    <div class="reveal-actions" style="opacity:0">
+      <button type="button" class="reveal-btn reveal-btn--primary" id="flatReplayBtn">🔄 Run Again</button>
+      <button type="button" class="reveal-btn reveal-btn--ghost" data-href="#" id="flatToRacecardBtn">View Race Engine →</button>
+      <button type="button" class="reveal-btn reveal-btn--ghost" data-href="#" id="flatToLandingBtn">Back to Saturday Racing</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // gsap.min.js and flat.js are loaded dynamically, AFTER #replayData
+  // is injected below. flat.js reads #replayData once, synchronously,
+  // into a top-level `const REPLAY_DATA` the moment it parses (see
+  // js/flat.js:476) — there's no fallback like FLAT_CONFIG has, so if
+  // flat.js parses before #replayData exists, REPLAY_DATA is null for
+  // the rest of the page's life and the engine falls back to a live
+  // sim instead of honouring result_order. Loading it via a static
+  // <script src> tag here (which runs before this fetch() resolves)
+  // reproduces exactly that bug — hence the dynamic load below.
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.body.appendChild(s);
+    });
+  }
+
+  var params = new URLSearchParams(window.location.search);
+  var slug = params.get('data') || 'race';
+
+  var picker = document.getElementById('scenarioPick');
+  picker.value = slug;
+  picker.addEventListener('change', function () {
+    window.location.search = '?data=' + encodeURIComponent(picker.value);
+  });
+
+  fetch('data/' + slug + '.json')
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(boot)
+    .catch(function (err) {
+      console.error('Data load failed', err);
+      var el = document.getElementById('dataError');
+      if (el) el.style.display = 'block';
+    });
+
+  function boot(payload) {
+    // Everything below is rendered server-side by Django in production
+    // (see cinematic/templates/cinematic/flat.html). flat.js's own
+    // init() never touches these nodes, so the sandbox has to fill
+    // them in itself before handing off to init().
+    document.querySelector('.intro-title__line2').textContent = payload.race_name;
+
+    var metaSpans = document.querySelectorAll('.intro-meta > span:not(.intro-meta__sep)');
+    var metaValues = [payload.race_course, payload.race_time, payload.race_distance, payload.runners.length + ' Runners'];
+    metaSpans.forEach(function (span, i) { span.textContent = metaValues[i] || ''; });
+
+    document.querySelector('.flat-band-subtitle').textContent = payload.band_subtitle || '';
+
+    var pill = document.querySelector('.flat-band-pill');
+    if (pill && payload.band) {
+      pill.className = 'flat-band-pill flat-band-pill--' + payload.band;
+      pill.textContent = payload.band.charAt(0).toUpperCase() + payload.band.slice(1);
+    }
+
+    document.querySelector('.parade-header__title').textContent = payload.race_name;
+    document.querySelector('.parade-header__sub').textContent = 'The Parade Ring · ' + payload.runners.length + ' Runners';
+    var paradeLabel = document.querySelector('.parade-counter__label');
+    if (paradeLabel) paradeLabel.textContent = 'of ' + payload.runners.length;
+
+    document.body.classList.remove('page-experience--sprint', 'page-experience--mile', 'page-experience--stayer');
+    if (payload.band) document.body.classList.add('page-experience--' + payload.band);
+
+    // flat.js reads the result via #replayData at runtime rather than
+    // through init() — see js/flat.js:478 and the README's payload contract.
+    var replayScript = document.createElement('script');
+    replayScript.type = 'application/json';
+    replayScript.id = 'replayData';
+    replayScript.textContent = JSON.stringify(payload.replay_data || {});
+    document.body.appendChild(replayScript);
+
+    var RACE_DATA = {
+      runners:      payload.runners,
+      userPick:     payload.user_pick,
+      foxPick:      payload.fox_pick,
+      raceName:     payload.race_name,
+      raceDistance: payload.race_distance,
+      raceBand:     payload.band
+    };
+
+    // #replayData is in the DOM now, so it's safe to load the engine.
+    loadScript('js/vendor/gsap.min.js')
+      .then(function () { return loadScript('js/flat.js'); })
+      .then(function () { runBootSequence(RACE_DATA); })
+      .catch(function (err) {
+        console.error('Engine script load failed', err);
+        var el = document.getElementById('dataError');
+        if (el) { el.textContent = 'Failed to load the engine scripts (js/vendor/gsap.min.js or js/flat.js).'; el.style.display = 'block'; }
+      });
+  }
+
+  function runBootSequence(RACE_DATA) {
+    // From here down this mirrors the boot sequence served inline on
+    // the production page (loading bar -> reduced-motion branch ->
+    // GSAP intro fade -> init(RACE_DATA)).
+    var bar = document.getElementById('loadingBar');
+    var w = 0;
+    var fill = setInterval(function () {
+      w = Math.min(w + Math.random() * 18, 95);
+      if (bar) bar.style.width = w + '%';
+    }, 120);
+
+    var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    var reveal = function () {
+      clearInterval(fill);
+      if (bar) { bar.style.width = '100%'; setTimeout(function () { bar.style.opacity = '0'; }, 300); }
+
+      if (reduced) {
+        var intro = document.getElementById('screen-intro');
+        if (intro) intro.classList.add('active');
+        init(RACE_DATA);
+        if (window.startExperience) window.startExperience();
+        return;
+      }
+
+      gsap.fromTo('#screen-intro',
+        { opacity: 0, scale: 1.04 },
+        { opacity: 1, scale: 1, duration: 0.8, ease: 'power2.out',
+          onStart: function () { document.getElementById('screen-intro').classList.add('active'); } }
+      );
+      gsap.fromTo('.intro-kicker, .intro-title, .intro-meta, .flat-band-subtitle, .intro-runners-preview, .intro-btn',
+        { opacity: 0, y: 24 },
+        { opacity: 1, y: 0, duration: 0.6, stagger: 0.10, delay: 0.3, ease: 'power2.out' }
+      );
+      init(RACE_DATA);
+    };
+
+    setTimeout(reveal, reduced ? 0 : 800);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,633 @@
+/*
+ * flat.css — Flat-racing cinematic experience.
+ *
+ * Layered ON TOP of experience.css (which provides the base screen
+ * grid, parade, leaderboard, reveal). This file only adds:
+ *   - .page-experience--flat scope (subtle palette tweaks)
+ *   - .flat-band-pill / .flat-band-subtitle (intro chrome)
+ *   - .flat-stalls (gate graphic at race start)
+ *   - .flat-photo-finish (finish-line freeze overlay)
+ *   - .page-experience--sprint / --mile / --stayer hooks for any
+ *     band-specific tuning we want to add later
+ *
+ * Keep selectors prefixed with .flat- or .page-experience--flat so
+ * nothing here can leak into the jumps cinematic at /cinematic/.
+ */
+
+/* ── Band pill in the intro kicker ──────────────────────────── */
+.flat-band-pill {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 10px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+}
+.flat-band-pill--sprint { color: #ff8a5c; background: rgba(255, 138, 92, 0.12); }
+.flat-band-pill--mile   { color: #f5d76e; background: rgba(245, 215, 110, 0.12); }
+.flat-band-pill--stayer { color: #7eb8e8; background: rgba(126, 184, 232, 0.12); }
+
+.flat-band-subtitle {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgba(240, 235, 224, 0.55);
+  margin: -4px 0 18px;
+  font-style: italic;
+}
+.page-experience--sprint .flat-band-subtitle { color: rgba(255, 138, 92, 0.75); }
+.page-experience--mile   .flat-band-subtitle { color: rgba(245, 215, 110, 0.75); }
+.page-experience--stayer .flat-band-subtitle { color: rgba(126, 184, 232, 0.75); }
+
+/* ── Subtle daylight tint on the flat intro background ──────── */
+.page-experience--flat #screen-intro::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 80% 60% at 50% 30%,
+              rgba(126, 184, 232, 0.06), transparent 60%);
+  z-index: -1;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   STALLS — gate graphic at race start
+   ══════════════════════════════════════════════════════════════
+   Two horizontal halves cover the upper + lower track strip; on
+   gate-open they translate apart with a flash + "BANG" subtitle.
+   The flat.js engine adds .is-opening at t=0 of the race phase
+   and .is-hidden once the gates have left the viewport.        */
+
+.flat-stalls {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+  opacity: 1;
+  transition: opacity 0.4s ease;
+}
+.flat-stalls.is-hidden { opacity: 0; pointer-events: none; }
+
+.flat-stalls__top,
+.flat-stalls__bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(180deg, #1c2a44 0%, #0f1828 100%);
+  border-bottom: 4px solid var(--c-gold, #D4AF37);
+  box-shadow:
+    inset 0 -2px 0 rgba(212, 175, 55, 0.25),
+    0 12px 30px rgba(0, 0, 0, 0.6);
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      rgba(212, 175, 55, 0.10) 0,
+      rgba(212, 175, 55, 0.10) 2px,
+      transparent 2px,
+      transparent 56px
+    ),
+    linear-gradient(180deg, #1c2a44 0%, #0f1828 100%);
+  transform: translateY(0);
+  transition: transform 0.6s cubic-bezier(0.6, 0, 0.2, 1),
+              opacity 0.4s ease 0.2s;
+  will-change: transform;
+}
+.flat-stalls__top {
+  top: 0;
+  border-bottom: 4px solid var(--c-gold, #D4AF37);
+}
+.flat-stalls__bottom {
+  bottom: 0;
+  border-top: 4px solid var(--c-gold, #D4AF37);
+  border-bottom: none;
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      rgba(212, 175, 55, 0.10) 0,
+      rgba(212, 175, 55, 0.10) 2px,
+      transparent 2px,
+      transparent 56px
+    ),
+    linear-gradient(0deg, #1c2a44 0%, #0f1828 100%);
+}
+
+.flat-stalls.is-opening .flat-stalls__top    { transform: translateY(-110%); }
+.flat-stalls.is-opening .flat-stalls__bottom { transform: translateY(110%);  }
+
+.flat-stalls__bang {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.5);
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(72px, 14vw, 180px);
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.08em;
+  color: var(--c-gold-lt, #F5E49A);
+  text-shadow:
+    0 0 24px rgba(212, 175, 55, 0.85),
+    0 0 60px rgba(212, 175, 55, 0.45);
+  opacity: 0;
+  pointer-events: none;
+}
+.flat-stalls.is-opening .flat-stalls__bang {
+  animation: flatStallsBang 0.55s cubic-bezier(0.2, 1.4, 0.3, 1) 0.05s both;
+}
+@keyframes flatStallsBang {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+  35%  { opacity: 1; transform: translate(-50%, -50%) scale(1.15); }
+  85%  { opacity: 1; transform: translate(-50%, -50%) scale(1.0); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.0); }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   PHOTO FINISH — overlay at progress = 1.0 for the freeze frame
+   ══════════════════════════════════════════════════════════════ */
+.flat-photo-finish {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9;
+  opacity: 0;
+  transition: opacity 0.18s ease-out;
+}
+.flat-photo-finish.is-active { opacity: 1; }
+
+.flat-photo-finish__flash {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.85);
+  opacity: 0;
+}
+.flat-photo-finish.is-active .flat-photo-finish__flash {
+  animation: flatPhotoFlash 0.22s ease-out forwards;
+}
+@keyframes flatPhotoFlash {
+  0%   { opacity: 0;   }
+  20%  { opacity: 0.95;}
+  100% { opacity: 0;   }
+}
+
+.flat-photo-finish__label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.85);
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(46px, 9vw, 110px);
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.06em;
+  color: var(--c-gold-lt, #F5E49A);
+  text-shadow:
+    0 0 16px rgba(0, 0, 0, 0.8),
+    0 0 36px rgba(212, 175, 55, 0.45);
+  opacity: 0;
+}
+.flat-photo-finish.is-active .flat-photo-finish__label {
+  animation: flatPhotoLabelIn 0.45s cubic-bezier(0.2, 0.9, 0.25, 1) 0.18s forwards;
+}
+@keyframes flatPhotoLabelIn {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1.0);  }
+}
+
+/* ── Reduced motion: no flash, no transforms — just stay clear ── */
+@media (prefers-reduced-motion: reduce) {
+  .flat-stalls,
+  .flat-photo-finish {
+    display: none;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   AI Confidence Badge — forecast-mode intro screen only.
+   Shows the AI's anchor pick + a conviction bar so the viewer
+   knows up-front whether they're watching a high-conviction call
+   or a speculative coin-flip. Server-rendered (no JS) so it's
+   visible in the initial paint.
+   ───────────────────────────────────────────────────────────── */
+.ai-confidence-badge {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin: 18px auto 20px;
+  padding: 16px 22px;
+  min-width: 280px;
+  max-width: 380px;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(212, 175, 55, 0.12) 0%, transparent 70%),
+    linear-gradient(180deg, rgba(14, 19, 32, 0.92) 0%, rgba(11, 14, 21, 0.92) 100%);
+  border: 1px solid rgba(212, 175, 55, 0.32);
+  border-radius: 10px;
+  box-shadow:
+    0 1px 0 rgba(212, 175, 55, 0.08) inset,
+    0 8px 26px rgba(11, 14, 21, 0.32);
+  color: #f5efde;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.ai-confidence-badge__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "DM Sans", "Inter", sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: #d4af37;
+}
+.ai-confidence-badge__sparkle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: #d4af37;
+  color: #0b0e15;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 900;
+}
+.ai-confidence-badge__bar {
+  position: relative;
+  height: 8px;
+  background: rgba(245, 239, 222, 0.10);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.ai-confidence-badge__fill {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  background: linear-gradient(90deg,
+    rgba(212, 175, 55, 0.95) 0%,
+    rgba(232, 197, 88, 1) 100%);
+  border-radius: 999px;
+  box-shadow: 0 0 8px rgba(212, 175, 55, 0.45);
+  transition: width 0.4s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.ai-confidence-badge__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ai-confidence-badge__pct {
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  color: #f5efde;
+  font-variant-numeric: tabular-nums;
+}
+.ai-confidence-badge__label {
+  font-family: "DM Sans", "Inter", sans-serif;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(245, 239, 222, 0.55);
+}
+.ai-confidence-badge__pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(245, 239, 222, 0.04);
+  border-radius: 6px;
+}
+.ai-confidence-badge__pick-label {
+  font-family: "DM Sans", "Inter", sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(245, 239, 222, 0.45);
+}
+.ai-confidence-badge__pick-name {
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  color: #d4af37;
+}
+
+@media (max-width: 640px) {
+  .ai-confidence-badge {
+    min-width: 240px;
+    max-width: 92vw;
+    padding: 12px 16px;
+    margin: 12px auto 14px;
+  }
+  .ai-confidence-badge__pct { font-size: 18px; }
+  .ai-confidence-badge__pick-name { font-size: 14px; }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Race phase strip (P3) — mirror of the same component in
+   experience.css. Same selectors, scoped to the same .race-phase-strip
+   class so both engines render identically.
+   ───────────────────────────────────────────────────────────── */
+.race-phase-strip {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  background: rgba(6, 8, 15, 0.42);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(212, 175, 55, 0.18);
+  border-radius: 999px;
+  z-index: 12;
+  pointer-events: none;
+}
+.race-phase-strip__dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: rgba(245, 239, 222, 0.18);
+  transition: background 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+}
+.race-phase-strip__dot.is-past    { background: #D4AF37; }
+.race-phase-strip__dot.is-current {
+  background: #D4AF37;
+  transform: scale(1.6);
+  box-shadow: 0 0 12px rgba(212, 175, 55, 0.7);
+  animation: race-phase-strip-pulse 1.4s ease-in-out infinite;
+}
+.race-phase-strip__rail {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 2px;
+  background: rgba(245, 239, 222, 0.12);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.race-phase-strip__rail::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: var(--fill, 0%);
+  background: linear-gradient(90deg,
+    rgba(212, 175, 55, 0.85),
+    rgba(232, 197, 88, 1));
+  border-radius: 1px;
+  transition: width 0.15s linear;
+}
+@keyframes race-phase-strip-pulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(212, 175, 55, 0.55); }
+  50%      { box-shadow: 0 0 18px rgba(212, 175, 55, 0.95); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .race-phase-strip__dot.is-current { animation: none; }
+}
+@media (max-width: 640px) {
+  .race-phase-strip { top: 10px; padding: 6px 10px; gap: 3px; }
+  .race-phase-strip__dot { width: 6px; height: 6px; }
+  .race-phase-strip__rail { width: 22px; }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Mr Fox speech bubble (Sprint P4 #6) — mirror of experience.css.
+   ───────────────────────────────────────────────────────────── */
+.race-commentary {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 580px;
+  padding: 10px 16px 10px 14px;
+  background: linear-gradient(180deg, rgba(14, 19, 32, 0.92), rgba(11, 14, 21, 0.92));
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  border-radius: 12px;
+  box-shadow: 0 8px 22px rgba(11, 14, 21, 0.32);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.race-commentary::before {
+  content: '🦊';
+  flex: 0 0 auto;
+  font-size: 22px;
+  line-height: 1.1;
+  filter: drop-shadow(0 1px 0 rgba(212, 175, 55, 0.4));
+}
+.race-commentary__text {
+  flex: 1 1 auto;
+  font-family: "Iowan Old Style", Charter, Georgia, serif;
+  font-size: 15px; font-style: italic; font-weight: 500;
+  line-height: 1.4; color: #f5efde;
+  position: relative; padding-top: 14px;
+}
+.race-commentary__text::before {
+  content: 'Mr Fox';
+  position: absolute; top: 0; left: 0;
+  font-family: "DM Sans", "Inter", sans-serif;
+  font-size: 9.5px; font-weight: 800; font-style: normal;
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: #d4af37;
+}
+@media (max-width: 640px) {
+  .race-commentary { max-width: 88vw; padding: 8px 12px 8px 10px; }
+  .race-commentary::before { font-size: 18px; }
+  .race-commentary__text { font-size: 13.5px; padding-top: 12px; }
+}
+.reveal-deep-dive {
+  display: inline-flex; align-items: center; gap: 10px;
+  margin-top: 18px; padding: 11px 18px;
+  background: linear-gradient(180deg, rgba(212, 175, 55, 0.18), rgba(212, 175, 55, 0.04));
+  border: 1px solid rgba(212, 175, 55, 0.5); border-radius: 999px;
+  color: #f5efde;
+  font-family: "DM Sans", "Inter", sans-serif;
+  font-size: 13px; font-weight: 700; letter-spacing: 0.04em;
+  text-decoration: none;
+  box-shadow: 0 6px 18px rgba(11, 14, 21, 0.28);
+  transition: transform 0.18s, box-shadow 0.18s, background 0.15s;
+}
+.reveal-deep-dive:hover {
+  background: linear-gradient(180deg, rgba(212, 175, 55, 0.26), rgba(212, 175, 55, 0.08));
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(212, 175, 55, 0.28);
+}
+.reveal-deep-dive__fox { font-size: 16px; line-height: 1; }
+.reveal-deep-dive__arrow { color: #d4af37; font-weight: 900; }
+
+/* ─────────────────────────────────────────────────────────────────
+   Reveal-screen podium — three result rows below the winner trophy.
+   Was previously bare inline text ("1 Thunder Call 7/2  2 Red Spells
+   Danger 9/2 +.5"). Now a proper finish-line card stack.
+
+   Layout per row:
+   ┌─────────────────────────────────────────────────────────────┐
+   │  🥇  1ST  ▓▓  Thunder Call                          7/2     │
+   │  🥈  2ND  ▓▓  Red Spells Danger              ½L     9/2     │
+   │  🥉  3RD  ▓▓  Fortification                 1¼L    11/1     │
+   └─────────────────────────────────────────────────────────────┘
+   ───────────────────────────────────────────────────────────── */
+#revealPodium,
+.reveal-podium {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 520px;
+  margin: 16px auto 0;
+}
+.reveal-podium__row {
+  display: grid;
+  /* Six tracks — last two are FIXED minimums so the gap pill column
+     reserves space even when empty, keeping the odds column aligned
+     across all three rows regardless of whether a distance is shown. */
+  grid-template-columns: 28px 40px 30px 1fr 56px 64px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 16px 10px 12px;
+  background: linear-gradient(180deg, rgba(20, 24, 36, 0.86), rgba(11, 14, 21, 0.86));
+  border: 1px solid rgba(212, 175, 55, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(11, 14, 21, 0.32);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  box-sizing: border-box;
+}
+.reveal-podium__row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(11, 14, 21, 0.42);
+}
+.reveal-podium__medal {
+  font-size: 22px;
+  line-height: 1;
+  text-align: center;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+.reveal-podium__pos {
+  font-family: "DM Sans", "Inter", sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(245, 239, 222, 0.55);
+}
+.reveal-podium__silk {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 30px;
+  /* renderSilkSvg() outputs a 28×32-viewBox SVG (matches the racecard
+     atom). Drop-shadow lifts the jersey off the dark card. */
+}
+.reveal-podium__silk .silk-svg,
+.reveal-podium__silk .silk-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
+.reveal-podium__silk .silk-img {
+  border-radius: 3px;
+}
+.reveal-podium__name {
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  color: #f5efde;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reveal-podium__gap {
+  font-family: "DM Sans", "Inter", sans-serif;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: rgba(245, 239, 222, 0.55);
+  padding: 3px 8px;
+  background: rgba(245, 239, 222, 0.05);
+  border: 1px solid rgba(245, 239, 222, 0.10);
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  min-width: 0;
+  justify-self: stretch;
+}
+/* Empty placeholder pill on the winner row — keeps grid alignment. */
+.reveal-podium__gap.is-empty {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+}
+.reveal-podium__odds {
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 17px;
+  font-weight: 800;
+  color: #D4AF37;
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  text-align: right;
+}
+
+/* ── Medal-position tints ───────────────────────────────────── */
+/* Gold winner — stronger border, gold glow, slightly larger row. */
+.reveal-podium__row--1 {
+  border-color: rgba(212, 175, 55, 0.55);
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(212, 175, 55, 0.12) 0%, transparent 70%),
+    linear-gradient(180deg, rgba(28, 24, 14, 0.92), rgba(14, 12, 7, 0.92));
+  box-shadow:
+    0 1px 0 rgba(212, 175, 55, 0.18) inset,
+    0 8px 22px rgba(11, 14, 21, 0.42),
+    0 0 0 1px rgba(212, 175, 55, 0.10);
+}
+.reveal-podium__row--1 .reveal-podium__pos  { color: #D4AF37; }
+.reveal-podium__row--1 .reveal-podium__name { font-size: 20px; }
+.reveal-podium__row--1 .reveal-podium__odds {
+  color: #f5e49a;
+  text-shadow: 0 0 12px rgba(212, 175, 55, 0.5);
+}
+
+/* Silver — cooler tint. */
+.reveal-podium__row--2 {
+  border-color: rgba(192, 192, 192, 0.32);
+}
+.reveal-podium__row--2 .reveal-podium__pos  { color: #C0C0C0; }
+.reveal-podium__row--2 .reveal-podium__odds { color: #C0C0C0; }
+
+/* Bronze — warmer copper tint. */
+.reveal-podium__row--3 {
+  border-color: rgba(205, 127, 50, 0.32);
+}
+.reveal-podium__row--3 .reveal-podium__pos  { color: #CD7F32; }
+.reveal-podium__row--3 .reveal-podium__odds { color: #CD7F32; }
+
+/* ── Mobile ────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  #revealPodium, .reveal-podium { max-width: 92vw; }
+  .reveal-podium__row {
+    grid-template-columns: 22px 34px 24px 1fr 44px 52px;
+    gap: 8px;
+    padding: 8px 12px 8px 10px;
+  }
+  .reveal-podium__medal { font-size: 18px; }
+  .reveal-podium__pos   { font-size: 9px; }
+  .reveal-podium__silk  { width: 22px; height: 26px; }
+  .reveal-podium__name  { font-size: 15px; }
+  .reveal-podium__row--1 .reveal-podium__name { font-size: 16px; }
+  .reveal-podium__gap   { font-size: 10.5px; padding: 2px 6px; }
+  .reveal-podium__odds  { font-size: 14px; }
+}

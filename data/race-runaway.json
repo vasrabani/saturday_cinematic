@@ -1,0 +1,43 @@
+{
+  "race_name": "Goodwood Cup (Group 1)",
+  "race_course": "Goodwood",
+  "race_time": "15:45",
+  "race_distance": "2m",
+  "race_prize": "£350,000",
+  "band": "stayer",
+  "band_subtitle": "2m · attrition, then daylight",
+
+  "runners": [
+    {"id": 92001, "number": 1, "name": "Trawlerman",       "jockey": "William Buick",    "trainer": "John & Thady Gosden", "odds": "7/4",  "silk": "#1E40AF", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "quartered", "sr": 122, "stars": 5, "is_fav": true,  "weight": 128.0},
+    {"id": 92002, "number": 2, "name": "Illinois",         "jockey": "Frankie Dettori",  "trainer": "Aidan O'Brien",       "odds": "40/1", "silk": "#B91C1C", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "hooped",    "sr": 104, "stars": 3, "is_fav": false, "weight": 108.0},
+    {"id": 92003, "number": 3, "name": "Sweet William",    "jockey": "Ryan Moore",       "trainer": "Aidan O'Brien",       "odds": "9/1",  "silk": "#1A7D4A", "silk2": "#F5E49A", "silk_url": "", "silk_pattern": "striped",   "sr": 112, "stars": 4, "is_fav": false, "weight": 116.0},
+    {"id": 92004, "number": 4, "name": "Beaten Favourite",  "jockey": "Tom Marquand",    "trainer": "William Haggas",      "odds": "12/1", "silk": "#7C3AED", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "starred",   "sr": 110, "stars": 3, "is_fav": false, "weight": 114.0},
+    {"id": 92005, "number": 5, "name": "Long Walk Home",    "jockey": "Oisin Murphy",    "trainer": "Andrew Balding",      "odds": "16/1", "silk": "#EA580C", "silk2": "#0B0E15", "silk_url": "", "silk_pattern": "halved",    "sr": 107, "stars": 3, "is_fav": false, "weight": 111.0},
+    {"id": 92006, "number": 6, "name": "Stayer's Fortune",  "jockey": "Colin Keane",     "trainer": "Jessica Harrington",  "odds": "20/1", "silk": "#0B0E15", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "hooped",    "sr": 105, "stars": 3, "is_fav": false, "weight": 109.5},
+    {"id": 92007, "number": 7, "name": "Distant Second",    "jockey": "James Doyle",     "trainer": "Roger Varian",        "odds": "25/1", "silk": "#0EA5E9", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "striped",   "sr": 101, "stars": 2, "is_fav": false, "weight": 106.0},
+    {"id": 92008, "number": 8, "name": "Tailed Off",        "jockey": "Rossa Ryan",      "trainer": "Alan King",           "odds": "33/1", "silk": "#DC2626", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "quartered", "sr": 97,  "stars": 2, "is_fav": false, "weight": 102.0}
+  ],
+
+  "user_pick": {"id": 92002, "number": 2, "name": "Illinois", "jockey": "Frankie Dettori", "trainer": "Aidan O'Brien", "odds": "40/1", "silk": "#B91C1C", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "hooped", "sr": 104, "stars": 3, "is_fav": false, "weight": 108.0},
+  "fox_pick":  {"id": 92001, "number": 1, "name": "Trawlerman", "jockey": "William Buick", "trainer": "John & Thady Gosden", "odds": "7/4", "silk": "#1E40AF", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "quartered", "sr": 122, "stars": 5, "is_fav": true, "weight": 128.0},
+
+  "replay_data": {
+    "has_result": true,
+    "is_abandoned": false,
+    "result_order": [92001, 92003, 92002, 92004, 92005, 92006, 92007, 92008],
+    "winner_name": "Trawlerman (GB)",
+    "winner_sp": "7/4",
+    "place2_name": "Sweet William (IRE)",
+    "place3_name": "Illinois (IRE)",
+    "beaten_distances": {
+      "92001": "0", "92003": "12", "92002": "1 1/2", "92004": "1", "92005": "2",
+      "92006": "1 1/2", "92007": "3", "92008": "4"
+    },
+    "lengths_behind_winner": {
+      "92001": 0.0, "92003": 12.5, "92002": 14.0, "92004": 15.0, "92005": 17.0,
+      "92006": 18.5, "92007": 21.5, "92008": 25.5
+    },
+    "max_lengths_behind": 25.5,
+    "has_distances": true
+  }
+}
