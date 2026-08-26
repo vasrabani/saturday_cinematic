@@ -1,0 +1,59 @@
+{
+  "race_name": "Sky Bet Ebor Handicap Stakes (Heritage Handicap) (GBBplus Race)",
+  "race_course": "York",
+  "race_time": "15:35",
+  "race_distance": "1m5f188y",
+  "race_prize": "£300,000",
+  "band": "stayer",
+  "band_subtitle": "1m6f+ · patience, then the kick",
+
+  "runners": [
+    {"id": 42598, "number": 1, "name": "Opportunity", "jockey": "James Doyle", "trainer": "William Haggas", "odds": "12/1", "silk": "#B91C1C", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "hooped", "sr": 100, "stars": 3, "is_fav": false, "weight": 105.3},
+    {"id": 42599, "number": 2, "name": "Epic Poet", "jockey": "Daniel Tudhope", "trainer": "David O'Meara", "odds": "50/1", "silk": "#1A7D4A", "silk2": "#F5E49A", "silk_url": "", "silk_pattern": "striped", "sr": 83, "stars": 2, "is_fav": false, "weight": 83.7},
+    {"id": 42600, "number": 3, "name": "Paradias", "jockey": "Kieran Shoemark", "trainer": "Alan King", "odds": "150/1", "silk": "#1E40AF", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "quartered", "sr": 76, "stars": 2, "is_fav": false, "weight": 81.3},
+    {"id": 42601, "number": 4, "name": "Furthur", "jockey": "Oisin Murphy", "trainer": "Andrew Balding", "odds": "28/1", "silk": "#7C3AED", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "starred", "sr": 75, "stars": 2, "is_fav": false, "weight": 81.0},
+    {"id": 42602, "number": 5, "name": "Spinning Wheel", "jockey": "Mason Paetel(5)", "trainer": "Simon & Ed Crisford", "odds": "40/1", "silk": "#EA580C", "silk2": "#0B0E15", "silk_url": "", "silk_pattern": "halved", "sr": 82, "stars": 2, "is_fav": false, "weight": 83.3},
+    {"id": 42603, "number": 6, "name": "Tarriance", "jockey": "Colin Keane", "trainer": "Andrew Balding", "odds": "17/2", "silk": "#0B0E15", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "hooped", "sr": 99, "stars": 2, "is_fav": false, "weight": 100.5},
+    {"id": 42604, "number": 7, "name": "Mr Hollywood", "jockey": "Saffie Osborne", "trainer": "W P Mullins", "odds": "18/1", "silk": "#0EA5E9", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "striped", "sr": 90, "stars": 2, "is_fav": false, "weight": 88.0},
+    {"id": 42605, "number": 8, "name": "Daiquiri Bay", "jockey": "Rossa Ryan", "trainer": "Alan King", "odds": "10/1", "silk": "#DC2626", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "quartered", "sr": 102, "stars": 3, "is_fav": false, "weight": 108.0},
+    {"id": 42606, "number": 9, "name": "Hopewell Rock", "jockey": "Callum Rodriguez", "trainer": "George Boughey", "odds": "11/2", "silk": "#166534", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "starred", "sr": 101, "stars": 3, "is_fav": false, "weight": 112.2},
+    {"id": 42607, "number": 10, "name": "Emit", "jockey": "Ryan Moore", "trainer": "Joseph Patrick O'Brien", "odds": "5/1", "silk": "#5B21B6", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "halved", "sr": 102, "stars": 2, "is_fav": false, "weight": 105.0},
+    {"id": 42608, "number": 11, "name": "Paddy The Squire", "jockey": "Andrew Mullen", "trainer": "Iain Jardine", "odds": "18/1", "silk": "#0F766E", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "hooped", "sr": 89, "stars": 2, "is_fav": false, "weight": 87.7},
+    {"id": 42609, "number": 12, "name": "Poetic Sound", "jockey": "Gary Carroll", "trainer": "G M Lyons", "odds": "50/1", "silk": "#B45309", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "striped", "sr": 76, "stars": 2, "is_fav": false, "weight": 81.3},
+    {"id": 42610, "number": 13, "name": "Align The Stars", "jockey": "Daniel Muscutt", "trainer": "Charlie Johnston", "odds": "100/1", "silk": "#7E22CE", "silk2": "#F5E49A", "silk_url": "", "silk_pattern": "quartered", "sr": 78, "stars": 2, "is_fav": false, "weight": 82.0},
+    {"id": 42611, "number": 14, "name": "Burdett Road", "jockey": "Harry Davies", "trainer": "James Owen", "odds": "150/1", "silk": "#0891B2", "silk2": "#0B0E15", "silk_url": "", "silk_pattern": "starred", "sr": 71, "stars": 2, "is_fav": false, "weight": 79.7},
+    {"id": 42612, "number": 15, "name": "Beylerbeyi", "jockey": "Clifford Lee", "trainer": "Ian Williams", "odds": "16/1", "silk": "#B91C1C", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "halved", "sr": 82, "stars": 2, "is_fav": false, "weight": 87.3},
+    {"id": 42613, "number": 16, "name": "Stressfree", "jockey": "Mark Winn", "trainer": "David O'Meara", "odds": "66/1", "silk": "#1A7D4A", "silk2": "#F5E49A", "silk_url": "", "silk_pattern": "hooped", "sr": 77, "stars": 2, "is_fav": false, "weight": 81.7},
+    {"id": 42614, "number": 17, "name": "Klassleader", "jockey": "Tom Marquand", "trainer": "William Haggas", "odds": "13/2", "silk": "#1E40AF", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "striped", "sr": 106, "stars": 3, "is_fav": false, "weight": 112.8},
+    {"id": 42615, "number": 18, "name": "Ascending", "jockey": "Oisin Orr", "trainer": "Henry De Bromhead", "odds": "25/1", "silk": "#7C3AED", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "quartered", "sr": 72, "stars": 2, "is_fav": false, "weight": 80.0},
+    {"id": 42616, "number": 19, "name": "Square Necker", "jockey": "David Egan", "trainer": "Kevin Philippart De Foy", "odds": "14/1", "silk": "#EA580C", "silk2": "#0B0E15", "silk_url": "", "silk_pattern": "starred", "sr": 99, "stars": 3, "is_fav": false, "weight": 103.0},
+    {"id": 42617, "number": 20, "name": "Real Dream", "jockey": "Cieren Fallon", "trainer": "Ian Williams", "odds": "40/1", "silk": "#0B0E15", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "halved", "sr": 75, "stars": 2, "is_fav": false, "weight": 81.0},
+    {"id": 42618, "number": 21, "name": "Circus Of Rome", "jockey": "Jamie Spencer", "trainer": "Richard Hughes", "odds": "33/1", "silk": "#0EA5E9", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "hooped", "sr": 72, "stars": 2, "is_fav": false, "weight": 80.0},
+    {"id": 42619, "number": 22, "name": "Love Me Tender", "jockey": "William Buick", "trainer": "W P Mullins", "odds": "4/1", "silk": "#DC2626", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "striped", "sr": 109, "stars": 3, "is_fav": true, "weight": 116.3},
+    {"id": 42620, "number": 23, "name": "Enemy", "jockey": "TBA", "trainer": "Ian Williams", "odds": "50/1", "silk": "#166534", "silk2": "#FFFFFF", "silk_url": "", "silk_pattern": "quartered", "sr": 73, "stars": 2, "is_fav": false, "weight": 80.3},
+    {"id": 42621, "number": 24, "name": "Dancing In Paris", "jockey": "TBA", "trainer": "Ian Williams", "odds": "33/1", "silk": "#5B21B6", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "starred", "sr": 72, "stars": 2, "is_fav": false, "weight": 80.0}
+  ],
+
+  "user_pick": null,
+  "fox_pick": {"id": 42605, "number": 8, "name": "Daiquiri Bay", "jockey": "Rossa Ryan", "trainer": "Alan King", "odds": "10/1", "silk": "#DC2626", "silk2": "#FBBF24", "silk_url": "", "silk_pattern": "quartered", "sr": 102, "stars": 3, "is_fav": false, "weight": 108.0},
+
+  "replay_data": {
+    "has_result": true,
+    "is_abandoned": false,
+    "result_order": [42605, 42606, 42598, 42615, 42612, 42613, 42611, 42614, 42603, 42619, 42600, 42607, 42616, 42608, 42599, 42618, 42609, 42601, 42602, 42604, 42617, 42610],
+    "winner_name": "Daiquiri Bay (GB)",
+    "winner_sp": "10/1",
+    "place2_name": "Hopewell Rock (IRE)",
+    "place3_name": "Opportunity (GB)",
+    "beaten_distances": {
+      "42598": "0.3", "42599": ".75", "42600": "0.3", "42601": "0.2", "42602": ".5",
+      "42603": "0.2", "42604": "3.75", "42605": "0", "42606": "0.2", "42607": ".5",
+      "42608": "1.25", "42609": "5.5", "42610": "8", "42611": "1.75", "42612": "0.3",
+      "42613": "1.5", "42614": "1.25", "42615": "2", "42616": "1", "42617": "5.5",
+      "42618": ".5", "42619": ".5"
+    },
+    "lengths_behind_winner": {},
+    "max_lengths_behind": 0.0,
+    "has_distances": false
+  }
+}
