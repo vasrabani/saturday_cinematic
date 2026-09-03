@@ -5,6 +5,8 @@ A self-contained sandbox for iterating on the **cinematic replay** GSAP experien
 Everything you need to reproduce what you see at
 <https://www.saturday-racing.com/cinematic/replay/> lives in this folder.
 
+> **New here?** Read [ARCHITECTURE.md](ARCHITECTURE.md) first (~15 min) — it maps the whole feature end-to-end: data flow, engine internals, phase machine, visual layer, GSAP orchestration, and where to make each kind of change.
+
 ---
 
 ## Quick start
