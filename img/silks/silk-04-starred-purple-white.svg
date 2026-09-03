@@ -1,0 +1,8 @@
+<svg viewBox="0 0 28 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <path fill="#7C3AED" d="M2 8 L7 4 L11 6 L17 6 L21 4 L26 8 L26 28 Q26 31 23 31 L5 31 Q2 31 2 28 Z"/>
+  <defs><clipPath id="cip"><path d="M2 8 L7 4 L11 6 L17 6 L21 4 L26 8 L26 28 Q26 31 23 31 L5 31 Q2 31 2 28 Z"/></clipPath></defs>
+  <g clip-path="url(#cip)">
+    <text x="14" y="22" text-anchor="middle" fill="#FFFFFF" font-size="13" font-family="Georgia, serif" style="font-weight:900;">&#9733;</text>
+  </g>
+  <path fill="#FFFFFF" d="M2 8 L0 14 L0 20 L4 20 L4 12 Z M26 8 L28 14 L28 20 L24 20 L24 12 Z"/>
+</svg>
