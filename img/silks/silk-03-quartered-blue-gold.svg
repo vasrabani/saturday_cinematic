@@ -1,0 +1,9 @@
+<svg viewBox="0 0 28 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <path fill="#1E40AF" d="M2 8 L7 4 L11 6 L17 6 L21 4 L26 8 L26 28 Q26 31 23 31 L5 31 Q2 31 2 28 Z"/>
+  <defs><clipPath id="cip"><path d="M2 8 L7 4 L11 6 L17 6 L21 4 L26 8 L26 28 Q26 31 23 31 L5 31 Q2 31 2 28 Z"/></clipPath></defs>
+  <g clip-path="url(#cip)">
+    <rect x="14" y="0"  width="14" height="11" fill="#FBBF24"/>
+    <rect x="0"  y="17" width="14" height="15" fill="#FBBF24"/>
+  </g>
+  <path fill="#FBBF24" d="M2 8 L0 14 L0 20 L4 20 L4 12 Z M26 8 L28 14 L28 20 L24 20 L24 12 Z"/>
+</svg>

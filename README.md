@@ -46,6 +46,7 @@ Each JSON file in `data/` is a self-contained race payload matching the producti
 - `css/experience.css` — the shared visual language for the cinematic (screens, buttons, roll call, reveal, trophy).
 - `css/flat.css` — flat-race-specific styling (stalls, photo finish, leaderboard, band pill).
 - `js/flat.js` — the flat-race engine (parade → race → roll call → reveal, all GSAP timelines and canvas rendering).
+- `img/silks/*.svg` — sample silk images. Every runner falls back to a procedural SVG built from `silk` / `silk2` / `silk_pattern`; populate a runner's `silk_url` to override that fallback with an image. The bundled samples wire runners 1-6 in each fixture so you can see both paths render side by side. Swap in your own PNG/WEBP/SVG here — anything a `<img>` tag accepts.
 
 **Do not touch:**
 
@@ -90,7 +91,7 @@ Every scenario JSON has this top-level shape (already implemented in the fixture
   "odds":         "5/4",            // fractional; engine parses to decimal
   "silk":         "#B91C1C",         // primary silk hex
   "silk2":        "#FFFFFF",         // secondary silk hex
-  "silk_url":     "",                // optional Racing API silk image
+  "silk_url":     "img/silks/silk-01-hooped-red-white.svg",  // optional image src (relative to repo root); when set, replaces the procedural silk render for that runner. See `img/silks/`.
   "silk_pattern": "hooped",          // 'halved'|'hooped'|'striped'|'quartered'|'starred'|'solid'
   "sr":           128,               // speed rating, 0-140-ish
   "stars":        5,                 // AI stars, 0-5
