@@ -64,8 +64,11 @@ cinematic-lab/
 │   ├── race.json           ← 24-runner mid-field-spread scenario (default)
 │   ├── race-close-finish.json  ← 24-runner photo-finish scenario
 │   └── race-runaway.json   ← 24-runner runaway-winner scenario
-└── img/
-    └── silks/              ← sample silk images referenced by runners' silk_url
+├── img/
+│   └── silks/              ← sample silk images referenced by runners' silk_url
+└── fonts/
+    ├── saturday-fonts.css  ← @font-face rules mirrored from production
+    └── *.woff2             ← Playfair Display (4 faces) + DM Sans (5 weights)
 ```
 
 **Two engines?** Flat-race and jumps-race need meaningfully different visuals (starting stalls vs. tape start; photo finish vs. run-in gallop; different track geometry). Rather than one monster file, they're split into `flat.js` and `experience.js`. This sandbox only wires up `flat.js`; treat `experience.js` as reference material.
