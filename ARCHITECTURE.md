@@ -14,6 +14,12 @@ It's the emotional cap on a Saturday Racing article about a race — a reader ha
 
 The whole thing renders in one browser tab, no server round-trips after the initial data load, no images of real horses. Every frame is either canvas 2D, inline SVG, or DOM elements orchestrated by GSAP. It works down to a mid-range phone.
 
+The race scene is **Cinematic Replay V2**. The guiding principle behind it is worth stating before any of the mechanics, because most of the design decisions in §6 and §8 only make sense in its light:
+
+> The user should feel that the camera is travelling alongside a horse race — not that horse sprites are moving across a webpage.
+
+In practice that means the race is rendered in **world space** and viewed through a **virtual camera**, and that every animated value in the scene is owned by a single **GSAP master timeline**. Both are covered in detail below.
+
 This sandbox (`cinematic-lab`) is a stripped-down copy of the same engine, with three hand-authored fixture races swapped in for real production data. The engine is byte-identical to production.
 
 ---
@@ -56,7 +62,7 @@ cinematic-lab/
 │   ├── experience.css      ← shared cinematic chrome (screens, buttons, roll call, reveal, trophy)
 │   └── flat.css            ← flat-race specifics (stalls, photo finish, leaderboard, band pill)
 ├── js/
-│   ├── flat.js             ← THE ENGINE — 2,500 lines, do the work here
+│   ├── flat.js             ← THE ENGINE — ~2,900 lines, do the work here
 │   ├── experience.js       ← jumps-race engine (Grand National etc.); dormant in this sandbox
 │   └── vendor/
 │       └── gsap.min.js     ← self-hosted (production pins the exact same copy)
@@ -125,7 +131,9 @@ Full spec is in `README.md § Payload contract`. Quick reference of what the eng
 | `replay_data.has_result` | branch to replay or sim | when false, engine simulates |
 | `replay_data.result_order` | authoritative finish order | array of runner ids, first-to-last |
 | `replay_data.winner_name`, `.winner_sp` | reveal screen | display |
-| `replay_data.beaten_distances`, `.lengths_behind_winner`, `.max_lengths_behind` | photo-finish stagger + Fin column | keyed by runner id (as string) |
+| `replay_data.beaten_distances`, `.lengths_behind_winner`, `.max_lengths_behind` | field spread, result card, roll call, podium | keyed by runner id (as string) |
+
+V2 reads `lengths_behind_winner` as **real lengths** and draws them at real scale, because a length in world space is by definition the length of the horse being drawn. V1 squashed the whole field into 18% of the track width, which is why a thirty-length runaway used to look like a three-length win. Nothing about the payload changed — only what the renderer does with it.
 
 If `has_result` is `false` or the whole `replay_data` block is missing, the engine drops into simulation mode — it uses each runner's `weight` as a probability, picks a winner via weighted random, and improvises finishing positions with lane jitter and stride variance. **The sim path is the same code path as the replay path** — replay just supplies a pre-known result that overrides the weighted draw.
 
@@ -133,31 +141,46 @@ If `has_result` is `false` or the whole `replay_data` block is missing, the engi
 
 ## 6. The engine — `js/flat.js` deep dive
 
-2,507 lines. The layout in the file matches the runtime sequence, so scrolling top-to-bottom follows the race.
+About 2,900 lines. The layout in the file matches the runtime sequence, so scrolling top-to-bottom follows the race. The race scene is split into banner-commented sections (`// ═══ RACE MODEL ═══` and so on) — grep for those banners and you have the table of contents.
 
 ### 6.1 Module structure (top-to-bottom)
 
 ```
-Lines
-   1-100    Constants: COL palette, config knobs, top-level REPLAY_DATA read
- 101-142    renderSilkSvg() — the silks primitive (see § 6.5)
- 144-160    STATE object — the single source of runtime truth
- 158-215    Canvas setup + DPI handling (raceCanvas + particleCanvas)
- 224-260    init() + wireButtons() + showScreen() — kickoff and phase toggling
- 263-310    Intro screen builders (chips, static reveal fallback)
- 320-410    Parade phase (per-horse walkout, dots, skip)
- 419-460    Race start — the stalls "BANG" transition + startRace()
- 460-540    weightedRandom(), buildRacePositions(), replayBaseLag() — the sim
- 537-615    buildHorseObjects() — the per-horse state each frame will update
- 616-790    raceLoop() — the ONLY requestAnimationFrame call in the file
- 790-1050   Rendering primitives: drawSky, drawTrack, drawFurlongPoles,
-            updateHorses, drawHorses, drawSpeedLines
-1050-1300   Hoof dust particle system + beaten-distance formatters
-1300-1900   Leaderboard live positions, race commentary, phase transitions,
-            slow-motion camera, Fox overlay
-1900-2100   Photo finish freeze frame + silk cap renderer
-2100-2400   Roll call phase (last-to-first walk-in, one row per horse)
-2400-2507   Reveal phase (trophy, winner name, verdict card, podium, actions)
+Section                          What lives there
+─────────────────────────────────────────────────────────────────────────
+CONFIG load                      FLAT_DEFAULTS, the #flatConfig read, COL/TRK
+Silk badge renderer              renderSilkSvg() — the silks primitive (§6.5)
+State                            STATE — the single source of runtime truth
+Canvas + DPI                     raceCanvas + particleCanvas contexts
+Viewport + world layout          WORLD, layoutWorld(), resize()
+Race state                       horses, particles, masterTL, DIRECTOR, CAM
+Race phases                      RACE_PHASES — Cruise / Build / Drive / Line
+Init                             init(), wireButtons(), showScreen()
+Intro chips                      intro previews + the reduced-motion reveal
+Parade                           per-horse walkout, dots, skip
+Transition → race                stalls BANG, startRace()
+                                 weightedRandom(), buildRacePositions()
+RACE MODEL                       deficits in lengths, pace shape, surges,
+                                 smoothing, buildHorseObjects, relayoutLanes
+MASTER TIMELINE                  buildMasterTimeline(), the four phases,
+                                 addFinalFurlongSequence()
+VIRTUAL CAMERA                   principalGroupFocus(), updateCamera(),
+                                 pushWorldTransform(), visibleWorldRange()
+PARALLAX — SEVEN DEPTH PLANES    offscreen tiles + drawBackdrop()
+TRACK PLANE                      turf, far rail, furlong markers,
+                                 winning post, foreground, atmosphere
+MARGINS                          beaten-distance parse/format helpers
+THE FIELD                        drawField(), ground markers, hoof dust
+BROADCAST IDENTIFICATION         the lower-third that replaced the labels
+RENDER LOOP                      renderFrame() on gsap.ticker
+THE HORSE                        drawHorseSilhouette() — anatomy + gallop
+Commentary                       Mr Fox beats + the phase strip
+Leaderboard                      buildLeaderboard() + animated updates
+Phase title                      setPhaseTitle()
+CROSSING THE LINE                the flash, the held shot, the result card
+Roll Call                        last-to-first walk-in, one row per horse
+Reveal                           trophy, winner, verdict card, podium
+Replay                           replayExperience() — the full teardown
 ```
 
 Read the file this way and it tells you the story of a race.
@@ -180,45 +203,87 @@ Each phase's entry function does the work: `beginParade()`, `startRace()`, `runR
 
 The `#skip` buttons on each screen fast-forward to the next phase and are also allowed to short-circuit long GSAP timelines.
 
+**A second, finer state machine runs inside the race screen.** `RACE_PHASES` describes how the *camera* behaves as the race develops:
+
+```
+'cruise' (0%)  →  'build' (45%)  →  'drive' (72%)  →  'line' (90%)
+```
+
+- **Cruise** — wide, level, unhurried. The whole field is legible and the camera keeps the principal group near the centre of frame with track ahead of them.
+- **Build** — the camera starts taking a side. Framing tightens onto the front half of the field; the ground moves faster past it.
+- **Drive** — down onto the principal group. Back markers recede, the camera drops and begins to breathe with the gallop.
+- **Line** — the dedicated final-furlong sequence. The camera closes onto the two or three runners that can still win, the world goes into slow motion, and the winning post comes into shot for the first time.
+
+Each phase is one GSAP tween on the `DIRECTOR` object; the boundaries are labels on the master timeline. The active key is mirrored onto `#screen-race` as `data-race-phase`, which is how CSS reacts to it.
+
+These are deliberately **separate** from `BAND.phaseTable`, the seven editorial beats ("SETTLING DOWN", "TWO FURLONGS OUT") that editorial tunes in the seed JSON and that still drive the on-screen title and phase strip. Direction and copy change independently.
+
 ### 6.3 The DOM ↔ phase mapping
 
 | Phase | Screen div | Primary content |
 |---|---|---|
 | `intro` | `#screen-intro` | Race title, meta chips (course/time/distance/runners), band pill, hero copy, static preview of the field |
 | `parade` | `#screen-parade` | One horse at a time walks across `#paradeStage`. `#paradeCounter` updates, `#paradeDots` shows progress |
-| `race` | `#screen-race` | Two `<canvas>` elements (sky+track+horses on `#raceCanvas`, hoof dust on `#particleCanvas`), plus DOM overlays: `#raceLeaderboard` for live positions, `#racingCommentary` for spoken beats, `#flatPhotoFinish` for the freeze frame |
+| `race` | `#screen-race` | Two `<canvas>` elements (backdrop planes on `#particleCanvas`, track + field + foreground on `#raceCanvas`), plus DOM overlays: `#raceLeaderboard` for live positions, `#racingCommentary` for spoken beats, and two elements the engine injects at runtime — `.bcast-id` (broadcast identification) and `.race-result` (the card after the line). The legacy `#flatPhotoFinish` element is left in the markup and never activated |
 | `rollcall` | `#screen-rollcall` | Last-to-first parade of horses back onto `#rollcallStage`, each with silk + name + finish position |
 | `reveal` | `#screen-reveal` | Trophy SVG, winner name, verdict box, podium chips, three action buttons |
 
 CSS puts every `.screen` into position: absolute + opacity: 0 by default; adding `.active` fades it in. Only one is ever visible.
 
-### 6.4 The race loop — how the canvas frame is built
+### 6.4 World space, the camera, and the frame
 
-`raceLoop(ts)` at line 616 is the only `requestAnimationFrame` loop in the file. Every frame:
+This is the heart of V2, and the part most worth understanding before you change anything in the race scene.
+
+**Positions are distances, not pixels.** Every runner carries a `deficit` measured in **horse lengths behind the leader**. `WORLD.lengthPx` is how many world pixels a length is worth, and it is derived from the size of the horse artwork, because a length is by definition the length of a horse. Screen position falls out of that:
+
+```
+deficit (lengths)  ->  travel (lengths)  ->  worldX (px)  ->  screenX (px)
+                                                            via the camera
+```
+
+The consequence: the viewport only ever sets a scale factor. It never touches the race model, which is what lets the window resize mid-race without the field jumping, and what lets the Racing API's real beaten distances be drawn at their real size.
+
+**Runner movement is interpolated, never snapped.** Each frame the model computes a *target* deficit from the fan-out curve, the runner's pace style and any active surge, and then eases the live deficit toward it with an exponential filter (`DEFICIT_TAU_MS`). We smooth the deficit rather than the absolute position on purpose: a lagged absolute position would leave every runner, the winner included, short of the line at the finish, whereas a deficit is slow-moving and settles exactly on its target.
+
+**The camera follows the race.** `principalGroupFocus()` returns a point somewhere between the centroid of the front 40% of the field and the leader on their own; `DIRECTOR.groupBias` slides between the two as the race develops. `updateCamera()` damps `CAM.x` toward that focus, so the camera never snaps and never overshoots into a visible wobble. A hard floor keeps the leader inside the frame no matter what — on a runaway the centroid sits thirty lengths behind the winner, and a camera that honoured it faithfully would spend the closing stages filming the horses that lost.
+
+`pushWorldTransform(ctx)` then puts the canvas into world coordinates. Everything drawn between it and `ctx.restore()` uses world x and lane y; the transform handles the pan, the zoom, the camera drop, the roll and the hoof rumble.
+
+**A frame is a pure function of `DIRECTOR`.** `renderFrame()` runs on `gsap.ticker` rather than a private `requestAnimationFrame`, so the timeline and the renderer are stepped by the same clock in the same order every frame:
 
 ```javascript
-raceLoop(ts) {
-  const dt = ts - lastTs;                    // ms since last frame
-  const progress = elapsed / RACE_DURATION;  // 0.0 → 1.0
+function renderFrame() {
+  const dt = Math.min(gsap.ticker.deltaRatio() * 16.667, 50);
+  frameClock += dt;
 
-  drawSky(progress);         // gradient background (colour drifts with progress)
-  drawTrack();               // green turf + white rail
-  drawFurlongPoles(progress);// scrolling distance markers
-  updateHorses(progress, dt);// physics: advance each horse's x-position
-  drawHorses(top4Set);       // procedural anatomy + gallop cycle
-  drawSpeedLines(...);       // motion streaks behind leaders
-  drawHoofDust();             // particle system (separate canvas)
+  updateRaceModel(dt);      // deficits -> travel -> worldX
+  updateCamera(dt);         // damped follow + zoom + shake
 
-  // DOM overlays that live outside canvas:
-  updateLeaderboardDOM();     // rewrites #raceLeaderboard innerHTML
-  fireCommentaryBeat();       // GSAP-driven copy into #racingCommentary
+  drawBackdrop();           // sky + 3 far planes, on #particleCanvas
 
-  if (progress >= 1) fireFinish();
-  else requestAnimationFrame(raceLoop);
+  ctx.clearRect(...);
+  pushWorldTransform(ctx);  // ---- world space ----
+  drawTurf();               //   the ground, at rate 1.0
+  drawFarRail();            //   far rail + boards, at rate 0.68
+  drawFurlongMarkers();     //   distance to go, counting down
+  drawWinningPost();        //   only when actually in shot
+  drawHoofDust();           //   divots, left behind in world space
+  drawField();              //   far lanes first, near lanes last
+  ctx.restore();            // ---- back to screen space ----
+
+  drawForegroundPlane();    // grass in FRONT of the field, rate 1.32
+  drawAtmosphere();         // vignette + the flash at the line
+
+  fireCommentary(p);        // DOM overlays, each self-throttling
+  updateCommentary(dt);
+  updateLeaderboard(dt);
+  updateRacePhaseTitle(p);
 }
 ```
 
-**One canvas, one loop, no react-style reconciliation.** Live positions are inserted into `#raceLeaderboard` as a plain innerHTML rewrite because the leaderboard is tiny (top ~6 rows). Everything else is drawn onto pixels.
+Nothing here advances time and nothing here decides anything about the race. If you find yourself wanting to write `if (progress > x) doSomething()` inside a draw call, the answer is almost always a tween on `DIRECTOR` in the master timeline instead.
+
+**Culling matters.** The world is nine viewport-widths long, so most of the field is off camera at any moment. `visibleWorldRange()` gates the horses and the track furniture; it is the difference between drawing 24 horses a frame and drawing eight. Measured cost of a full frame with a 24-runner field: ~3.6ms at 1440x800, ~2.3ms at 375x812 — comfortably inside the 16.7ms budget for 60fps.
 
 ### 6.5 Silks — procedural + optional override
 
@@ -236,7 +301,7 @@ The `img/silks/*.svg` files in this sandbox are the same six patterns rendered a
 
 ### 6.6 The horses themselves
 
-The horses are drawn procedurally in `drawHorses()` (~line 908) as a chain of ellipses and curves — no sprite sheet, no pre-baked images. This is deliberate:
+The horses are drawn procedurally in `drawHorseSilhouette()` as a chain of ellipses and curves — no sprite sheet, no pre-baked images. This is deliberate:
 
 - **Any race, any runners**: a production race could have 4 or 24 runners with jockeys and silks we've never rendered before. Pre-baked sprites can't accommodate this without a huge asset library.
 - **Legibility at all scales**: the same code renders convincingly at phone width (250px lane widths) and desktop (900px+).
@@ -247,32 +312,78 @@ Each horse has:
 - **Body geometry** — a chain of ellipses (torso, neck, head) with a mane and tail.
 - **A gallop cycle** — legs are animated by a phase offset per horse, cycling at ~4Hz. Adjacent horses get slightly different cycles so they don't visually sync ("lane jitter + stride variance").
 - **A silk overlay on the jockey** — mini SVG cap drawn on top, matching that runner's silk fields.
-- **Speed lines** — thin white streaks behind the top 4 horses, faded further back.
-- **Hoof dust** — a particle system on the second canvas, lower opacity, drifting up as the horses pass.
+- **Micro-motion** — a body roll and a head nod driven off `swayPhase`, a couple of degrees and a couple of pixels. Not visible as an effect; very visible by its absence.
+- **Depth** — runners are scaled by their lane's distance from the camera and drawn far-lane-first, so the pack overlaps and occludes the way a real field does.
+- **Hoof dust** — divots kicked up at each ground-contact beat, spawned and drawn in *world* space so the camera leaves them behind.
 
-The three most valuable levers for a designer looking at horse aesthetics:
-- `drawHorses()` — the anatomy itself.
-- The `_hoofDustParticle` push in `updateHorses()` — density + colour of the dust.
-- `drawSpeedLines()` — the motion-line treatment.
+**Three things V1 attached to the horses are gone, and should stay gone.** They are the main reason the old scene read as a browser game:
 
-### 6.7 Sim vs replay
+- **Sprite trails.** `drawSpeedLines()` is deleted. Speed now comes from parallax planes moving past a broadly stationary pack, which is how a real camera shot reads. Streaks welded to a sprite read as an arcade effect.
+- **Persistent labels.** No name chip, no rank pill on any runner at any point. See § 6.8.
+- **Highlight rings.** No pulsing gold ring, no radial aura around the leader or the viewer's pick.
 
-The single most important branch in `flat.js` is inside `buildRacePositions()`. Both branches produce the same output shape (an ordered list of runners with per-horse lag targets), so everything downstream is agnostic.
+The two most valuable levers for a designer looking at horse aesthetics:
+- `drawHorseSilhouette()` — the anatomy itself.
+- `_spawnHoofDust()` — density, size and colour of the divots.
+
+### 6.7 Parallax — seven depth planes
+
+The horses barely move on screen. What moves is the world, and the difference in scroll rate between these planes is what sells the speed.
+
+| Rate | Plane | Surface |
+|---|---|---|
+| 0.00 | sky + sun haze | `#particleCanvas` |
+| 0.06 | distant downland | `#particleCanvas` |
+| 0.17 | grandstand + crowd | `#particleCanvas` |
+| 0.34 | treeline / hedge | `#particleCanvas` |
+| 0.68 | far running rail + advertising boards | `#raceCanvas` |
+| 1.00 | the turf the race is run on | `#raceCanvas` |
+| 1.32 | foreground grass, in front of the field | `#raceCanvas` |
+
+The three repeating mid-planes are pre-painted into offscreen tiles once per resize and blitted after that — repainting a grandstand from paths every frame is the kind of thing that quietly costs 4ms.
+
+Two gotchas if you add a plane:
+
+- A plane drawn **inside** the world transform lands at rate 1.0. To get rate `f`, shift it by `CAM.x * (1 - f)` and offset your draw range by the same amount (`drawFarRail()` is the worked example).
+- A plane drawn **outside** the world transform has to put the horizon where the world transform would, or the turf climbs over the sky the moment the camera tightens. `worldToScreenY()` exists for exactly that.
+
+### 6.8 Broadcast identification
+
+The replacement for V1's floating name chips. A lower-third slides in from the left, names one runner, and leaves — the way a director cuts to a name super when there is something worth saying about a horse. Four in a whole race, ~2.6s each, scheduled as `.call()` beats on the master timeline and resolved against the live order at the moment they fire:
+
+| At | Who | Tag |
+|---|---|---|
+| 10% | the leader | LEADS |
+| 52% | the viewer's pick, else the Fox pick, else third | YOUR PICK / FOX PICK / IN TOUCH |
+| 79% | the leader | IN FRONT |
+| 94.5% | the runner in second | CLOSING |
+
+While a runner is named, a short bar in their own silk colour is drawn on the turf beneath their hooves. The viewer's pick and the Fox pick carry a quieter permanent version of the same mark. That bar is deliberately the least emphatic mark that still works: an ellipse or a glow around the animal is the arcade treatment we removed, and a floating chip is the label we removed.
+
+The element is created from JS, not declared in `index.html`, so nothing has to move into the Django template (see § 10).
+
+### 6.9 Sim vs replay
+
+The single most important branch in `flat.js` is inside `buildRacePositions()`, which decides the finishing ORDER, and `finalLengthsFor()`, which decides the GAPS. Both branches produce the same output shape, so everything downstream is agnostic.
 
 ```
+// ORDER  -- buildRacePositions()
 if (REPLAY_DATA && REPLAY_DATA.has_result) {
-   // REPLAY: use result_order + beaten_distances to set exact per-horse lag
-   winner = runners.find(r => r.id === result_order[0])
-   for each runner: lag = replayBaseLag(runner, trackWidthPx)
-                          (lag comes from lengths_behind_winner)
+   ordered = result_order.map(id => runner)      // the real result
 } else {
-   // SIM: pick a winner by weighted random, invent plausible lags
-   winner = weightedRandom(runners)
-   for each other runner: lag = jittered exponential falloff by weight rank
+   winner  = weightedRandom(runners)             // a weighted draw
+   ordered = [winner, ...rest sorted by jittered weight]
+}
+
+// GAPS  -- finalLengthsFor(runner, rank), in real horse lengths
+if (REPLAY_DATA.has_distances) {
+   lengths = lengths_behind_winner[runner.id]    // the real margin
+} else {
+   lengths = rank * perBandSpacing + jitter      // a plausible fan-out
 }
 ```
 
-The engine then runs the same `raceLoop` for both paths. The user cannot tell from the animation itself which mode is active — that's the point.
+The engine then runs the same model, the same camera and the same timeline for both paths. The user cannot tell from the animation itself which mode is active — that's the point.
 
 `replay_data.has_distances = false` puts the replay path into a hybrid mode: the winner and finishing order are honoured, but per-horse gaps are invented (the runaway fixture is this case).
 
@@ -299,6 +410,16 @@ CSS lives in two files that split responsibilities on subject, not scope:
 - Race leaderboard (`#raceLeaderboard`) rows, silks column, positions
 - Race commentary (`#racingCommentary`) — the ticker line at the bottom
 - Parade stage horse card
+- **V2 broadcast chrome**, in a block at the end of the file:
+  - `.bcast-id` — the lower-third that replaced the on-canvas name chips
+  - `.race-result` — the card shown after the pause at the line
+  - `.race-lb-row.is-climbing / .is-falling` — the direction tint on a
+    leaderboard row that has just gained or lost places
+  - `#screen-race[data-race-phase="..."]` — chrome that steps back as the
+    camera closes in
+  - `#screen-race { background: transparent }` — the race screen has to be
+    see-through so the parallax backdrop drawn on `#particleCanvas` (below it
+    in the stacking order) is visible
 
 **Rule of thumb**: if a style would apply equally well to a jumps race (Grand National, Cheltenham), it belongs in `experience.css`. If it's specific to the flat-race visual grammar (stalls, band pills, photo-finish flash), it belongs in `flat.css`.
 
@@ -308,21 +429,74 @@ The parent body carries a state class the CSS reads: `body.page-experience--spri
 
 ## 8. GSAP orchestration
 
-GSAP (self-hosted at `js/vendor/gsap.min.js`) is used for **DOM animation only** — not for canvas. The canvas has its own frame loop. GSAP drives the screen transitions and the choreography inside each screen.
+GSAP (self-hosted at `js/vendor/gsap.min.js`) drives the screen transitions and the choreography inside each screen, as it always did. What changed in V2 is that it also drives the race scene.
 
-Roughly:
+### 8.1 One timeline owns the race
+
+`buildMasterTimeline()` returns a single `gsap.timeline()` that is the only clock in the race. It owns:
+
+- race progress (`DIRECTOR.progress`, tweened 0 to 1 with `ease: 'none'`, so timeline time and progress fraction are interchangeable)
+- every camera parameter, one tween per phase, labelled `cruise` / `build` / `drive` / `line`
+- the slow-motion ramp through the final furlong
+- the scripted broadcast identifications, as `.call()` beats
+- the cinematic pause at the line, via `onComplete`
+
+Nothing else advances time. The canvas render loop reads `DIRECTOR` and draws; it never asks what o'clock it is.
+
+Everything a frame needs lives on one object:
+
+```javascript
+const DIRECTOR = {
+  progress, zoom, anchorX, camY, tilt, shake,
+  vignette, groupBias, fieldFade, flash, phase,
+};
+```
+
+Read that declaration top to bottom and you have the entire visual state of the race at any instant. Every field on it is written by GSAP and never by hand inside the frame loop.
+
+### 8.2 Why this shape
+
+Three things fall out of it for free, and each was a bug or a limitation in V1:
+
+- **Skip-to-finish is one `seek()`.** Because the timeline owns progress *and* the camera *and* the phase, seeking lands all of them in a consistent state. V1 had a second clock (`raceTime`) that had to be nudged by hand, plus an `raceTimeAccel` end-rush hack to stop the cinematic dangling.
+- **Slow motion is `timeScale`, not a special case.** We slow the clock, not the horses, so commentary, leaderboard cadence and gait all stretch together. The ramp is tweened from inside a `.call()` so the tween driving `timeScale` is not itself being scaled by the value it is changing.
+- **Teardown is total.** `replayExperience()` kills `masterTL`, `finishTL` and any tweens on `DIRECTOR` and on the horse objects *first*, then resets state. Reset a director while a timeline is still alive and the next tick simply writes the old values back.
+
+### 8.3 The final furlong
+
+`addFinalFurlongSequence()` is its own sub-sequence rather than "more of the same, faster": the camera drops to the rail and closes down onto the two or three runners that can still win, the world goes into slow motion, and the winning post comes into shot from the right for the first time in the race. In V1 the finish line was pinned at 94% of the viewport from the moment the gates opened, so the viewer stared at the destination for forty seconds; in V2 it lives at the far end of the world and is only drawn when it is genuinely in frame, which works out at roughly the last three seconds.
+
+### 8.4 Crossing the line
+
+`crossTheLine()` builds `finishTL`, in order:
+
+1. A single frame of flash as the field hits the line.
+2. **A held shot.** The horses stop, the camera does not — it keeps drifting in on the winner for the better part of a second with nothing on screen but the result of the race. This pause is the whole point of the sequence; take it out and the finish reads as an animation ending rather than a race being won.
+3. The result card, sized to the actual margin: PHOTO FINISH under a head, DEAD HEAT when the API says so, otherwise WINNER with the margin spelled out.
+4. Out to the roll call.
+
+### 8.5 The leaderboard
+
+Live Positions is animated, not rewritten. V1 wrote `row.style.transform` on every row on every frame and left a CSS transition to chase it, which produced a permanently in-flight panel where nothing read as a *change*. V2 samples the ranking a few times a second and only touches a row when its rank actually moves — at which point GSAP slides it, the position number flips, and the row briefly carries `.is-climbing` or `.is-falling` so the eye is drawn to the change rather than to constant motion. The CSS transition on `transform` was removed for the same reason: a transition and a tween on the same property fight, and the tween always lands late.
+
+### 8.6 Elsewhere
+
+Outside the race screen, GSAP is used as it was before:
 
 | Phase | GSAP timelines |
 |---|---|
-| Intro | Kicker fade-in, title character reveal, meta chip stagger |
+| Intro | Kicker fade-in, title reveal, meta chip stagger |
 | Parade | Per-horse entry (silk scale, name slide), skip button pulse |
-| Race | Stalls BANG (scale + shake), photo-finish flash overlay, commentary line rotation |
+| Race | Stalls BANG, plus everything in § 8.1-8.5 |
 | Roll call | Per-row entry from off-screen right, position number count-up |
-| Reveal | Trophy scale + rotate + glow, winner name slide-up, verdict box fade, podium stagger, action bar entry |
+| Reveal | Trophy scale + glow, winner name slide-up, verdict box fade, podium stagger, action bar entry |
 
-GSAP timelines are set up inline within their phase's entry function. Search `gsap.timeline(` or `gsap.to(` to find them. They're generally short (5-10 lines each).
+### 8.7 prefers-reduced-motion
 
-**Skips**: every phase has a skip button. Its click handler calls `.kill()` on the current timeline and jumps state to end-state, then advances the phase.
+Two layers, and both matter:
+
+- The engine short-circuits. `startExperience()` routes a reduced-motion visitor straight to `runStaticReveal()` — the settled result, no animated race. This is V1 behaviour and is unchanged.
+- The race scene is hardened anyway, so nothing depends on that short-circuit holding. `SHAKE` is a flat `0`, so every camera-rumble tween multiplies out to nothing; the slow-motion ramp is skipped; hoof dust and the foreground plane never spawn; the finish drift is zero. `css/flat.css` carries a matching `@media (prefers-reduced-motion: reduce)` block for the DOM chrome.
 
 ---
 
@@ -346,7 +520,19 @@ Common jobs you might take on and where they belong.
 
 ### Change how a horse looks
 
-`js/flat.js` → `drawHorses()` (line ~908). Also `_hoofDustParticle` for dust, `drawSpeedLines()` for motion streaks.
+`js/flat.js` → the `THE HORSE` section, `drawHorseSilhouette()`. Also `_spawnHoofDust()` for the divots. Please do not reintroduce trails, rings or floating labels on the animals (§ 6.6).
+
+### Change the camera
+
+`js/flat.js` → the `MASTER TIMELINE` section. Each of the four phases is one tween on `DIRECTOR`; change the numbers there rather than reaching into `updateCamera()`, which only damps toward whatever the director asked for. The follow feel itself is `CAM_FOLLOW_TAU_MS` in the `VIRTUAL CAMERA` section.
+
+### Change how the world looks or how fast it moves
+
+`js/flat.js` → the `PARALLAX` section for the backdrop planes and their scroll rates, `TRACK PLANE` for the turf, rail, furlong markers and winning post. Read the two gotchas in § 6.7 before adding a plane.
+
+### Change how spread out the field is
+
+`js/flat.js` → the `RACE MODEL` section. `finalLengthsFor()` decides where each runner ends up, `paceBiasFor()` decides the shape of their race, and `WORLD.spreadScale` pulls the field in on narrow viewports so a phone does not show four horses and a lot of grass.
 
 ### Change how silks look
 
@@ -397,11 +583,15 @@ Nothing else. The engine will pick it up automatically.
 ## 11. Non-obvious behaviours worth knowing
 
 - **The engine is silent about missing data.** If `replay_data` is absent, it falls back to sim mode without any user-visible warning. If `#replayData` isn't in the DOM when `flat.js` parses, `REPLAY_DATA` is `null` for the rest of the page's life. Neither surfaces as an error — the animation just becomes a simulation. That's why the dynamic load matters.
-- **`raceCanvas` and `particleCanvas` are separate for a reason.** The particle canvas (hoof dust) has different opacity + blend requirements, and separating them keeps the composite cheap.
-- **All timing is progress-based, not wall-clock.** `RACE_DURATION` is a constant; `progress = elapsed / RACE_DURATION`. This means `Skip` can force `progress = 1` and everything renders correctly to end-state.
-- **The `top4Set`** passed to `drawHorses()` is used to decorate the leaders (speed lines, label chips). Horses outside the top 4 are drawn plainer — cheaper and less visually noisy.
-- **`replayBaseLag()` reads `runner.id` as a string** into `lengths_behind_winner` lookup — the fixtures use string keys deliberately (JSON keys can't be numbers). If you add fixtures, keep this convention.
-- **Photo finish**: `photoFinishFired` is a module-level flag that gates the freeze frame overlay. If `progress > 0.92` AND the top 2 horses are within a body of each other AND the flag hasn't fired, it fires (once). Adjusting the threshold changes how often the flash triggers.
+- **`raceCanvas` and `particleCanvas` carry different planes.** `particleCanvas` sits *below* the race screen in the stacking order, so V2 gives it the backdrop: sky, downland, grandstand, treeline. `raceCanvas` carries the track plane, the field and the foreground. That is also why `#screen-race` has to be transparent — an opaque race screen hides the backdrop entirely, which is what happened in V1 and why nobody ever saw the hoof dust.
+- **The master timeline is the only clock.** There is no `raceTime`, no private `requestAnimationFrame` and no wall-clock arithmetic in the race scene. `renderFrame()` runs on `gsap.ticker` and reads `DIRECTOR`. If you need something to happen at a moment in the race, add a tween or a `.call()` to the timeline — do not add a `if (progress > x)` branch to a draw call.
+- **Positions are smoothed, and it is the *deficit* that is smoothed.** Smoothing an absolute position would leave every runner, the winner included, short of the line at the finish. See § 6.4.
+- **`startRace()` is idempotent.** The parade can hand off twice if the skip button is pressed while its fade-in tween is still running. Without the guard that builds a second master timeline, and two timelines both tweening `DIRECTOR.progress` fight each other for the rest of the race.
+- **A `seek()` needs a `snapRaceState()`.** After skip-to-finish the model and the camera are both many seconds behind where the clock now is; left alone the exponential smoothing would spend a second visibly sliding everything into place.
+- **`finalLengthsFor()` reads `runner.id` as a string** into the `lengths_behind_winner` lookup — the fixtures use string keys deliberately (JSON keys can't be numbers). If you add fixtures, keep this convention.
+- **Real distances are capped at `MAX_VISIBLE_LENGTHS` (46).** A Racing API "distance" beaten would otherwise put the tail of the field two full screens behind, which costs render time for horses nobody can see.
+- **`WORLD.spreadScale` is a lens, not a lie.** On a narrow viewport the field is pulled in so a phone does not show four horses and a lot of grass. Finishing order and relative gaps are untouched; only the overall fan-out is scaled.
+- **The camera has a hard floor that keeps the leader in frame.** On a runaway the group centroid sits thirty lengths behind the winner. Honouring it faithfully would mean filming the horses that lost.
 - **The Fox overlay** (a small avatar that appears with certain race narratives) is a DOM element the race screen manages, not a canvas draw. Look for `fox` in `flat.js` for the trigger logic.
 
 ---
