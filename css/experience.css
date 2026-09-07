@@ -548,11 +548,11 @@ body.page-experience {
   padding: 0;
   border-bottom: 1px solid rgba(255,255,255,0.05);
   font-size: 12px;
-  /* The transition is what makes positions visibly CHANGE — without
-     this each frame's reorder is invisible. Tune the duration to
-     match the cadence of mid-race overtakes (~0.4s feels right). */
-  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.35s ease;
+  /* No transform transition. V2 tweens each row with GSAP the moment
+     its rank actually changes (see updateLeaderboard in flat.js), and
+     a CSS transition on the same property just fights the tween. The
+     override lives in flat.css alongside the rest of the V2 chrome. */
+  transition: opacity 0.35s ease;
   will-change: transform, opacity;
 }
 .race-lb-row:last-child { border-bottom: none; }

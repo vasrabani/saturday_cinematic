@@ -631,3 +631,253 @@
   .reveal-podium__gap   { font-size: 10.5px; padding: 2px 6px; }
   .reveal-podium__odds  { font-size: 14px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   CINEMATIC REPLAY V2 — broadcast chrome
+   ═══════════════════════════════════════════════════════════════
+   Everything below belongs to the redesigned race screen. The two
+   elements are injected by js/flat.js at runtime rather than declared
+   in the markup, so nothing here needs a change to the Django template
+   (ARCHITECTURE.md §10, option 1).
+   ─────────────────────────────────────────────────────────────── */
+
+/* ── Broadcast identification ───────────────────────────────────
+   Replaces the floating name chips that used to hang over every
+   podium runner. One runner, named for ~2.6s, bottom-left, the way a
+   director cuts to a name super. Opacity and x are owned by GSAP —
+   no transition here, or the two fight each other. */
+.bcast-id {
+  position: absolute;
+  left: clamp(16px, 3vw, 40px);
+  bottom: clamp(96px, 14vh, 150px);
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 10px;
+  max-width: min(420px, 76vw);
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(6,8,15,0.94), rgba(6,8,15,0.72));
+  border-left: 3px solid var(--gold, #D4AF37);
+  border-radius: 2px 6px 6px 2px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+}
+
+.bcast-id__silk {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+.bcast-id__silk svg { width: 100%; height: 100%; display: block; }
+
+.bcast-id__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.bcast-id__name {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(15px, 1.5vw, 19px);
+  font-weight: 700;
+  color: #F5EFDE;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bcast-id__meta {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(240,235,224,0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bcast-id__tag {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: #0B0E15;
+  background: var(--gold, #D4AF37);
+}
+
+/* ── Result card ────────────────────────────────────────────────
+   Shown after the pause that follows the line, not on it. DOM rather
+   than canvas text so it stays sharp at any pixel ratio and reflows
+   on a phone without a font-size lookup table. */
+.race-result {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  transform: translate(-50%, -50%);
+  z-index: 12;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 34px 78px 40px;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  /* The fade has to finish inside the box, otherwise the corners are
+     still ~50% opaque and the card reads as a rectangle sitting on the
+     turf instead of a pool of shade under the headline. */
+  background: radial-gradient(ellipse 62% 88% at 50% 50%,
+              rgba(6,8,15,0.88) 0%, rgba(6,8,15,0.55) 48%,
+              rgba(6,8,15,0) 82%);
+}
+
+.race-result__eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--gold, #D4AF37);
+  padding: 5px 14px;
+  border: 1px solid rgba(212,175,55,0.45);
+  border-radius: 999px;
+}
+
+.race-result__name {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(30px, 6vw, 68px);
+  font-weight: 900;
+  line-height: 1.05;
+  color: #F5EFDE;
+  text-shadow: 0 0 40px rgba(212,175,55,0.35), 0 4px 24px rgba(0,0,0,0.8);
+}
+
+.race-result__margin {
+  font-family: 'Iowan Old Style', Charter, Georgia, serif;
+  font-style: italic;
+  font-size: clamp(14px, 1.8vw, 22px);
+  color: rgba(245,239,222,0.72);
+}
+
+.race-result--photo .race-result__eyebrow {
+  color: #F5EFDE;
+  background: rgba(212,175,55,0.9);
+  border-color: transparent;
+}
+
+/* ── Live Positions: motion is GSAP's job now ───────────────────
+   V1 let a CSS transition chase a transform that JS rewrote every
+   frame. V2 tweens each row only when its rank actually changes, so
+   the CSS transition on transform has to go or the two compete and
+   every move lands late. Opacity keeps its transition — nothing
+   animates that from JS on a per-frame basis. */
+.race-lb-row {
+  transition: opacity 0.35s ease, background-color 0.35s ease;
+}
+
+/* A row that has just gained or lost places carries a direction class
+   for ~0.65s. Restrained on purpose: a tinted edge, not a flash. */
+.race-lb-row.is-climbing { background: linear-gradient(90deg, rgba(212,175,55,0.16), transparent 62%); }
+.race-lb-row.is-falling  { background: linear-gradient(90deg, rgba(120,140,170,0.14), transparent 62%); }
+
+/* ── Race screen phase states ───────────────────────────────────
+   js/flat.js stamps data-race-phase on #screen-race as the director
+   moves through Cruise → Build → Drive → Line. Used sparingly: the
+   camera does the work, the chrome just gets out of the way. */
+#screen-race[data-race-phase="drive"] .race-leaderboard,
+#screen-race[data-race-phase="line"]  .race-leaderboard {
+  opacity: 0.82;
+}
+#screen-race[data-race-phase="line"] .race-phase-strip {
+  opacity: 0.35;
+}
+.race-leaderboard,
+.race-phase-strip {
+  transition: opacity 0.6s ease;
+}
+
+/* The final furlong dims the surrounding UI so the frame belongs to
+   the race. */
+#screen-race.is-final-furlong .race-commentary {
+  background: linear-gradient(to top, rgba(6,8,15,0.99) 0%, rgba(6,8,15,0.55) 65%, transparent 100%);
+}
+
+/* ── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* On a phone the centred phase title and strip run straight into the
+     Live Positions panel. Stack the race chrome down the left edge and
+     leave the right-hand side to the leaderboard. */
+  .race-phase-title {
+    left: 10px;
+    top: 10px;
+    transform: none;
+    text-align: left;
+    max-width: calc(100vw - 170px);
+  }
+  .race-phase-strip {
+    left: 10px;
+    top: 54px;
+    transform: none;
+  }
+
+  /* The Live Positions rows are 30px tall on a phone but the name plus
+     the probability bar needs more than that, so the bar overflows into
+     the row below and the whole panel reads as double-exposed. The bar
+     is the least useful thing on a 375px screen — drop it and let the
+     name and position have the row. */
+  .race-lb-prob { display: none; }
+  .race-lb-name-prob { justify-content: center; }
+
+  /* The panel no longer slides across mid-race (see updateLeaderboard),
+     so neutralise the old shifted state in case anything still sets it. */
+  .race-leaderboard.lb-shifted-left { transform: none; }
+
+  .bcast-id {
+    left: 10px;
+    bottom: clamp(120px, 20vh, 190px);
+    padding: 6px 10px 6px 8px;
+    gap: 8px;
+    max-width: calc(100vw - 20px);
+  }
+  .bcast-id__silk { width: 18px; height: 18px; }
+  .bcast-id__tag  { font-size: 8px; letter-spacing: 0.12em; padding: 2px 6px; }
+  .race-result    { padding: 16px 20px 20px; width: min(92vw, 520px); }
+}
+
+@media (max-width: 480px) {
+  /* On a phone the lower-third and the commentary line are competing
+     for the same band of screen. The tag is the first thing to go. */
+  .bcast-id__tag { display: none; }
+}
+
+/* ── Reduced motion ─────────────────────────────────────────────
+   The engine already routes prefers-reduced-motion straight to the
+   static reveal and zeroes camera shake, parallax foreground and dust
+   at source. These rules cover the DOM chrome so that anything that
+   does render holds still. */
+@media (prefers-reduced-motion: reduce) {
+  .bcast-id,
+  .race-result,
+  .race-leaderboard,
+  .race-phase-strip,
+  .race-lb-row {
+    transition: none !important;
+    backdrop-filter: none;
+  }
+  .race-lb-row.is-climbing,
+  .race-lb-row.is-falling { background: none; }
+}
+
+/* The race screen has to be transparent so the parallax backdrop drawn
+   on #particleCanvas (which sits below it in the stacking order) shows
+   through. In V1 the whole world was painted onto #raceCanvas over an
+   opaque screen, so the second canvas was invisible and effectively
+   dead weight; V2 gives it the sky and the far planes. */
+#screen-race { background: transparent; }

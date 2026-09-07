@@ -174,14 +174,71 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
   };
 }
 
+// ─── Viewport + world layout ────────────────────────────────────
+// V2 is a WORLD-space engine. A runner's position is a distance
+// travelled measured in horse LENGTHS; the renderer converts
+// lengths → world px → screen px through the virtual camera. The
+// viewport therefore only sets a scale factor — it never touches the
+// race model, which is what lets the window resize mid-race without
+// the field jumping.
 let viewW = 0, viewH = 0;
 
 function getNavH() {
   return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--nav-h')) || 60;
 }
 
+// How many viewport-widths of ground the camera covers between the
+// stalls and the winning post. Nine reads as a genuine journey while
+// keeping the mid-race off the "nothing is happening" line.
+const TRAVEL_SCREENS = 9;
+
+// Nose-to-tail size of the horse artwork at scale 1, in world px. A
+// "length" is by definition the length of a horse, so this number and
+// WORLD.lengthPx have to be the same thing — get it wrong and every gap
+// the Racing API gives us is drawn at the wrong size.
+const HORSE_ART_LENGTH = 74;
+
+const WORLD = {
+  horseScale:   1,   // artwork scale for this viewport
+  spreadScale:  1,   // how much of the field a narrow viewport keeps in shot
+  lengthPx:    74,   // one horse length, in world px
+  spanLengths: 160,  // stalls → winning post, in lengths (derived)
+  spanPx:       0,
+  horizonY:     0,   // screen y of the horizon
+  trackTopY:    0,   // screen y of the far rail
+  trackBotY:    0,   // screen y of the near rail
+  trackMidY:    0,
+};
+
+function layoutWorld() {
+  // One knob sets the whole thing: how big a horse is drawn. A length
+  // follows from that, and the race distance in lengths follows from
+  // wanting the camera to cover TRAVEL_SCREENS of ground either way.
+  WORLD.horseScale  = Math.max(0.62, Math.min(1.15, viewW / 1440));
+  WORLD.lengthPx    = HORSE_ART_LENGTH * WORLD.horseScale;
+  // A phone is a narrower lens on the same race. Left at 1 the field
+  // fans out over three screens and the viewer sees four horses and a
+  // lot of grass, so narrow viewports pull the field in — the same
+  // compromise a real outside-broadcast director makes by going wider.
+  WORLD.spreadScale = Math.max(0.55, Math.min(1, viewW / 1100));
+  WORLD.spanPx      = viewW * TRAVEL_SCREENS;
+  WORLD.spanLengths = WORLD.spanPx / WORLD.lengthPx;
+
+  // The lane band has to survive the final-furlong zoom without the
+  // near-side runners sliding off the bottom of the frame, so it is
+  // centred close to the middle of the viewport and kept narrow enough
+  // that band × maxZoom still fits.
+  WORLD.horizonY  = viewH * 0.38;
+  WORLD.trackTopY = viewH * 0.47;
+  WORLD.trackBotY = viewH * 0.78;
+  WORLD.trackMidY = (WORLD.trackTopY + WORLD.trackBotY) / 2;
+}
+
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
+  // Cap the backing store at 2× — a 3× phone display costs three times
+  // the fill rate for a difference nobody can see at this line weight,
+  // and it is the single biggest lever on holding 60fps.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   viewW = window.innerWidth;
   viewH = window.innerHeight - getNavH();
   for (const c of [canvas, pCanvas]) {
@@ -192,33 +249,63 @@ function resize() {
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   pCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  layoutWorld();
+  buildBackdropTiles();
+  relayoutLanes();
 }
 window.addEventListener('resize', resize);
-resize();
 
 // ─── Race state ─────────────────────────────────────────────────
 let horses = [];
 let raceRunning = false;
-let raceTime = 0;
-let raceDuration = 0;
-let animFrame = null;
-let lastTimestamp = null;
-// End-rush: see experience.js for rationale. Once the leader is at
-// the line, override slow-mo and compress remaining time to ~600ms
-// so the cinematic doesn't dangle for the back of the field.
-let raceTimeAccel = 1;
-const LEADER_NEAR_LINE = 0.94;
-const END_RUSH_BUDGET_MS = 600;
 let particles = [];
 let firedCommentary = new Set();
 let currentCommentary = '';
 let commentaryTimer = 0;
-let photoFinishFired = false;
+let frameClock = 0;          // ms of wall time since the gate opened
 
-// Camera state for closeup. Smoothly lerps toward target so the zoom
-// ramps in instead of snapping. cameraZoom = 1 means full viewport.
-let cameraZoom = 1, cameraX = 0, cameraY = 0;
-let cameraTargetZoom = 1, cameraTargetX = 0, cameraTargetY = 0;
+// The master GSAP timeline is the ONLY thing that advances race time.
+let masterTL = null;
+let finishTL = null;
+let tickerRunning = false;
+
+const SHAKE = prefersReducedMotion ? 0 : 1;
+
+// ── The director ────────────────────────────────────────────────
+// Every animated scalar the renderer reads lives on this one object,
+// and every one of them is written by GSAP — never by hand inside the
+// frame loop. Read it top to bottom and you have the entire visual
+// state of the race at any instant.
+const DIRECTOR = {
+  progress:  0,      // 0 → 1 race progress
+  zoom:      1,      // camera zoom
+  anchorX:   0.50,   // screen fraction the camera's focus sits at
+  camY:      0,      // vertical camera offset (px)
+  tilt:      0,      // camera roll (radians) — a few thousandths, felt not seen
+  shake:     0,      // hoof-rumble amplitude (px)
+  vignette:  0.10,   // edge fall-off
+  groupBias: 0.12,   // 0 = frame the whole principal group, 1 = frame the leader
+  fieldFade: 0,      // how far the back markers recede
+  flash:     0,      // white flash at the line
+  reveal:    0,      // finish-card reveal 0 → 1
+  phase:     'cruise',
+};
+
+// The camera itself. DIRECTOR supplies intent; CAM is the damped
+// result that actually gets drawn.
+const CAM = { x: 0, zoom: 1, shakeX: 0, shakeY: 0, seed: Math.random() * 1000 };
+
+// ─── Race phases ────────────────────────────────────────────────
+// Cruise → Build → Drive → Line. These are DIRECTION phases: they
+// decide how the camera behaves. They are deliberately separate from
+// BAND.phaseTable, which editorial tunes in the seed JSON and which
+// still drives the on-screen commentary and phase strip.
+const RACE_PHASES = [
+  { key: 'cruise', from: 0.00, label: 'CRUISE' },
+  { key: 'build',  from: 0.45, label: 'BUILD'  },
+  { key: 'drive',  from: 0.72, label: 'DRIVE'  },
+  { key: 'line',   from: 0.90, label: 'LINE'   },
+];
 
 // ─── Init ───────────────────────────────────────────────────────
 function init(data) {
@@ -275,13 +362,18 @@ function buildIntroChips() {
   });
 }
 
-// Skip-to-Finish — see experience.js for the rationale. Bumps the
-// master clock so only ~10s of race remain; raceLoop + photo-finish
-// + reveal all keep working unchanged. Idempotent via Math.max.
-const SKIP_TO_FINISH_REMAINING_MS = 10000;
+// Skip-to-Finish — one seek on the master timeline. Because the
+// timeline owns race progress AND every camera parameter, seeking it
+// lands the camera, the phase, the leaderboard and the field all in a
+// consistent state; there is no second clock to keep in step.
+// Idempotent via Math.max.
+const SKIP_TO_FINISH_REMAINING_S = 10;
 window.skipToFinish = function () {
-  if (!raceRunning || raceDuration <= 0) return;
-  raceTime = Math.max(raceTime, raceDuration - SKIP_TO_FINISH_REMAINING_MS);
+  if (!raceRunning || !masterTL) return;
+  const target = Math.max(masterTL.time(),
+                          masterTL.duration() - SKIP_TO_FINISH_REMAINING_S);
+  masterTL.seek(target, false);
+  snapRaceState();
   const wrap = document.querySelector('.race-skip-wrap');
   if (wrap) wrap.classList.add('race-skip-hidden');
 };
@@ -428,6 +520,13 @@ function bangStallsAndStart() {
 
 // ─── Race ───────────────────────────────────────────────────────
 function startRace() {
+  // Idempotent. The parade can hand off twice if the skip button is
+  // pressed while its fade-in tween is still running — without this
+  // guard that builds a second master timeline, and two timelines both
+  // tweening DIRECTOR.progress fight each other for the rest of the
+  // race. One race, one clock.
+  if (raceRunning) return;
+
   // buildRacePositions() honours REPLAY_DATA (Phase 4): in replay
   // mode positions[0] is the real winner, in forecast it's our
   // weighted random pick passed in. Derive `winner` from positions[0]
@@ -440,18 +539,20 @@ function startRace() {
   STATE.simResult = { winner, positions };
   buildHorseObjects(positions);
 
-  raceDuration  = (BAND.timings && BAND.timings.raceDurationMs) || 46000;
-  raceTime      = 0;
-  raceRunning   = true;
-  raceTimeAccel = 1;
-  lastTimestamp = null;
+  frameClock  = 0;
+  raceRunning = true;
   firedCommentary.clear();
-  photoFinishFired = false;
+  _lbSampleTimer = 0;
+  STATE.finishMargin = null;
 
   buildLeaderboard();
   setPhaseTitle((BAND.phases && BAND.phases.raceStart) || "AND THEY'RE AWAY");
 
-  animFrame = requestAnimationFrame(raceLoop);
+  // The timeline is built and started here, and it is the only clock
+  // in the race from this point until crossTheLine() hands over.
+  masterTL = buildMasterTimeline();
+  startTicker();
+  masterTL.play(0);
 }
 
 function weightedRandom(runners) {
@@ -481,28 +582,6 @@ const REPLAY_DATA = (() => {
     return null;
   }
 })();
-
-// Real-distance baseLag override — flat.js' spread is expressed
-// as a "lag" (fraction of progress to subtract per rank). The
-// replay variant returns the cumulative-lengths gap as a
-// trackWidth fraction. 4px floor for photo finishes; null when
-// no parsed-distance data is available (caller falls through).
-// See experience.js for the parallel implementation.
-const REPLAY_MAX_TRACK_SPREAD = 0.18;
-const REPLAY_MIN_GAP_PX = 4;
-function replayBaseLag(horse, trackWidthPx) {
-  if (!REPLAY_DATA || !REPLAY_DATA.has_distances) return null;
-  const map = REPLAY_DATA.lengths_behind_winner;
-  const lengths = map && map[horse.runner.id];
-  if (lengths === undefined) return null;
-  if (lengths <= 0) return 0;
-  const max = REPLAY_DATA.max_lengths_behind || 1;
-  const gapFraction = (lengths / max) * REPLAY_MAX_TRACK_SPREAD;
-  const minGap = trackWidthPx > 0
-    ? REPLAY_MIN_GAP_PX / trackWidthPx
-    : 0.005;
-  return Math.max(gapFraction, minGap);
-}
 
 function buildRacePositions(winner) {
   // ── Replay short-circuit ─────────────────────────────────
@@ -534,33 +613,73 @@ function buildRacePositions(winner) {
   return [winner, ...sorted];
 }
 
-function buildHorseObjects(positions) {
-  const trackTop    = viewH * (TRK.laneTopRatio    || 0.24);
-  const trackBottom = viewH * (TRK.laneBottomRatio || 0.78);
-  const count       = positions.length;
-  const laneH       = (trackBottom - trackTop) / count;
-  const HORSE       = SHARED.horse;
+// ════════════════════════════════════════════════════════════════
+//  RACE MODEL
+// ════════════════════════════════════════════════════════════════
+// The model answers one question per frame: how many lengths is each
+// runner behind the leader right now? Screen position falls out of
+// that. Deficits are smoothed, never snapped, so a runner makes ground
+// or drops away instead of teleporting between ranks.
 
-  // Random lane assignment so the visual field is mixed at the start —
-  // not a perfect diagonal staircase by final position. The lane is
-  // purely visual; race progress is independent.
+// Final deficit behind the winner, in real horse lengths.
+// V1 squashed the Racing API distances into 18% of the track width,
+// which is why a thirty-length runaway used to look like a three-length
+// win. In world space we can afford the truth — the camera simply
+// leaves the tail of the field out of frame.
+const MAX_VISIBLE_LENGTHS = 46;
+
+function finalLengthsFor(runner, rank) {
+  if (REPLAY_DATA && REPLAY_DATA.has_distances) {
+    const raw = (REPLAY_DATA.lengths_behind_winner || {})[runner.id];
+    if (raw !== undefined && raw !== null) {
+      return Math.min(MAX_VISIBLE_LENGTHS, Math.max(0, Number(raw) || 0));
+    }
+  }
+  // Forecast, or a replay with no parsed distances: invent a plausible
+  // fan-out. Sprints finish tighter than stayers.
+  const per = STATE.raceBand === 'sprint' ? 0.85
+            : STATE.raceBand === 'mile'   ? 1.15
+            :                               1.45;
+  return rank === 0 ? 0
+       : Math.min(MAX_VISIBLE_LENGTHS, rank * per + Math.random() * per);
+}
+
+// Pace style shapes a horse's race without changing its result.
+// Front-runners spend the first half ahead of where they finish,
+// closers spend it behind. Without this the field glides in a fixed
+// order from flagfall and the race has no story to tell.
+function paceBiasFor(count) {
+  const roll   = Math.random();
+  const spread = 3 + count * 0.22;                                  // lengths
+  if (roll < 0.28) return -spread * (0.4 + Math.random() * 0.6);    // front-runner
+  if (roll < 0.62) return  spread * (0.4 + Math.random() * 0.7);    // held up
+  return (Math.random() - 0.5) * spread * 0.5;                      // handy
+}
+
+// Smoothstep — the fan-out curve for the field. Bunched at the gate,
+// fully spread at the line, with no kink in between.
+function smoothstep(edge0, edge1, x) {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+function buildHorseObjects(positions) {
+  const count = positions.length;
+
+  // Shuffle lane assignment so the field does not read as a staircase
+  // sorted by finishing position.
   const lanes = Array.from({ length: count }, (_, i) => i);
   for (let i = lanes.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [lanes[i], lanes[j]] = [lanes[j], lanes[i]];
   }
 
-  horses = positions.map((r, i) => {
-    const finalPos = i;
-    const lane = lanes[i];
+  const HORSE = SHARED.horse || {};
 
-    // Tight gate jitter — every horse breaks essentially level. Spread
-    // emerges from the race dynamics, not from a stagger at the start.
-    const startX = viewW * (TRK.startX || 0.05) + (Math.random() - 0.5) * 4;
-
-    // Surge timeline: 3–5 windows during the race where a horse boosts
-    // OR fades. Negative boosts model stumbles / tactical drops back —
-    // they let other horses overtake them on screen.
+  horses = positions.map((r, rank) => {
+    // Surge windows — 3-5 moments where a horse quickens or drops away.
+    // Magnitudes are now in LENGTHS, so a surge is a move you can see
+    // and the leaderboard can react to.
     const surges = [];
     const surgeCount = (HORSE.minSurges || 2) + 1 +
                        Math.floor(Math.random() * ((HORSE.maxExtraSurges || 2) + 1));
@@ -568,561 +687,737 @@ function buildHorseObjects(positions) {
       const sr = HORSE.surgeStartRange    || [0.05, 0.85];
       const dr = HORSE.surgeDurationRange || [0.04, 0.12];
       const br = HORSE.surgeBoostRange    || [0.5, 1.5];
-      // Bias to allow ~30% of surges to be fades (negative).
-      const sign = Math.random() < 0.30 ? -1 : 1;
+      const sign = Math.random() < 0.32 ? -1 : 1;
       surges.push({
         start:    sr[0] + Math.random() * (sr[1] - sr[0]),
         duration: dr[0] + Math.random() * (dr[1] - dr[0]),
-        boost:    sign * (br[0] + Math.random() * (br[1] - br[0])),
+        lengths:  sign * (br[0] + Math.random() * (br[1] - br[0])) * 2.4,
       });
     }
-    if (finalPos === 0 && HORSE.winnerFinalSurge) {
-      surges.push(HORSE.winnerFinalSurge);
+    if (rank === 0 && HORSE.winnerFinalSurge) {
+      const w = HORSE.winnerFinalSurge;
+      surges.push({ start: w.start, duration: w.duration, lengths: w.boost * 2.0 });
     }
-
-    // Per-horse gait variance — reviewer feedback (Phase 2):
-    //   "even a 5-10px variance would make it feel much more natural"
-    //
-    // Without per-horse variance, every horse bobs at the same rate
-    // and amplitude → 16 silhouettes moving in lockstep = a brown
-    // blob. With these three random offsets each horse has its own
-    // gait identity:
-    //   • bobRate:  speed of the up-down body bob (0.85-1.15× base)
-    //   • bobAmp:   amplitude of the bob (0.7-1.3× base of 2px)
-    //   • laneNudge: small per-horse y-offset (±3px) so adjacent-lane
-    //                horses don't sit at perfectly aligned y values.
-    //                Subtle but enough to break the grid-stack look.
-    const bobRate  = 0.85 + Math.random() * 0.30;   // 0.85-1.15
-    const bobAmp   = 0.70 + Math.random() * 0.60;   // 0.70-1.30
-    const laneNudge = (Math.random() - 0.5) * 6;     // ±3px
 
     return {
-      runner:       r,
-      x:            startX,
-      y:            trackTop + laneH * lane + laneH * 0.5 + laneNudge,
-      laneIdx:      lane,
-      finalPos,
-      progress:     0,
-      surges,
-      bobPhase:     Math.random() * Math.PI * 2,
-      legPhase:     Math.random() * Math.PI * 2,
-      bobRate:      bobRate,
-      bobAmp:       bobAmp,
-      lastX:        startX,
+      runner:        r,
+      finalLengths:  finalLengthsFor(r, rank),
+      paceBias:      paceBiasFor(count),
+      deficit:       0,      // live lengths behind the leader
+      travel:        0,      // lengths covered
+      worldX:        0,
+      lastWorldX:    0,
+      speed:         0,      // world px per ms — drives gait rate + dust
+      laneIdx:       lanes[rank],
+      laneT:         0,
+      y:             0,
+      depth:         1,
+      finalPos:      rank,
+      surges:        surges,
+      bobPhase:      Math.random() * Math.PI * 2,
+      legPhase:      Math.random() * Math.PI * 2,
+      bobRate:       0.88 + Math.random() * 0.26,
+      bobAmp:        0.75 + Math.random() * 0.50,
+      swayPhase:     Math.random() * Math.PI * 2,
+      lastDustCycle: null,
+      lbRank:        -1,     // last rank the leaderboard animated to
+      idGlow:        0,      // broadcast-identification marker opacity
     };
   });
+
+  relayoutLanes();
+  CAM.x    = 0;
+  CAM.zoom = 1;
 }
 
-function raceLoop(ts) {
-  if (!raceRunning) return;
-  if (!lastTimestamp) lastTimestamp = ts;
-
-  let rawDt = Math.min(ts - lastTimestamp, 50);
-  lastTimestamp = ts;
-
-  // Slow-motion final furlong — config-driven. We slow time, not motion,
-  // so commentary + leaderboard cadence stretch alongside the race.
-  const T = BAND.timings || {};
-  const slowFrom = T.slowMoStartProgress || 0.88;
-  const slowFactor = T.slowMoFactor || 0.55;
-  const progressPre = Math.min(raceTime / raceDuration, 1);
-
-  // End-rush: once the leader is at the line, override slow-mo and
-  // compress remaining time so the cinematic doesn't dangle for the
-  // back of the field. Set ONCE per race.
-  if (raceTimeAccel === 1 && horses[0] && horses[0].progress >= LEADER_NEAR_LINE) {
-    const remainingMs = raceDuration - raceTime;
-    if (remainingMs > END_RUSH_BUDGET_MS) {
-      raceTimeAccel = remainingMs / END_RUSH_BUDGET_MS;
-    }
-  }
-
-  let dt;
-  if (raceTimeAccel > 1) {
-    // End-rush overrides slow-mo — wrap up the climax cleanly.
-    dt = rawDt * raceTimeAccel;
-  } else if (progressPre >= slowFrom) {
-    dt = rawDt * slowFactor;
-  } else {
-    dt = rawDt;
-  }
-  raceTime += dt;
-  const progress = Math.min(raceTime / raceDuration, 1);
-
-  ctx.clearRect(0, 0, viewW, viewH);
-  drawSky(progress);
-
-  // Identify top 4 by current progress so the camera can frame them and
-  // the rest of the field can fade back during the closeup.
-  const sortedByProgress = horses.slice().sort((a, b) => b.progress - a.progress);
-  const top4 = sortedByProgress.slice(0, 4);
-  const top4Set = new Set(top4.map((h) => h.runner.id));
-
-  // Camera — three-mode TV-style cinematography (Sprint P4 #3).
-  //   Mode 1 (wide):     progress < closeupTrigger.  Static establishing shot.
-  //   Mode 2 (track):    closeupTrigger ≤ progress < tightTrigger.
-  //                      Soft follow on the top-4 bounding box.
-  //   Mode 3 (tight):    progress ≥ tightTrigger.
-  //                      Hard zoom on the LEADER's neighbourhood for the
-  //                      finish-line moment — frames just the winner +
-  //                      whoever's threatening them at the line.
-  // Smooth lerp + zoom limits keep transitions gentle, never snappy.
-  const closeupTrigger = T.closeupTriggerProgress || 0.78;
-  const tightTrigger   = T.tightZoomProgress     || 0.92;
-  const leader = sortedByProgress[0];
-  if (progress > tightTrigger && leader) {
-    // Mode 3 — tight on the leader. Frame the leader + ~140px of
-    // breathing room either side so a closing horse is still visible.
-    cameraTargetX = leader.x;
-    cameraTargetY = leader.y;
-    cameraTargetZoom = Math.min(2.8, 1.5);
-  } else if (progress > closeupTrigger && top4.length) {
-    // Mode 2 — soft track on the top-4 bounding box.
-    const xs = top4.map((h) => h.x);
-    const ys = top4.map((h) => h.y);
-    const minX = Math.min.apply(null, xs);
-    const maxX = Math.max.apply(null, xs);
-    const minY = Math.min.apply(null, ys);
-    const maxY = Math.max.apply(null, ys);
-    cameraTargetX = (minX + maxX) / 2;
-    cameraTargetY = (minY + maxY) / 2;
-    const padX = 260, padY = 100;
-    const spanX = (maxX - minX) + padX;
-    const spanY = (maxY - minY) + padY;
-    cameraTargetZoom = Math.min(viewW / spanX, viewH / spanY, 2.4);
-  } else {
-    // Mode 1 — wide establishing.
-    cameraTargetZoom = 1;
-    cameraTargetX = viewW / 2;
-    cameraTargetY = viewH / 2;
-  }
-  // Smooth lerp so the zoom ramps in/out, never snaps.
-  const lerp = 0.06;
-  cameraZoom += (cameraTargetZoom - cameraZoom) * lerp;
-  cameraX    += (cameraTargetX    - cameraX)    * lerp;
-  cameraY    += (cameraTargetY    - cameraY)    * lerp;
-
-  // Track + horses live inside the camera transform; sky + particles
-  // stay screen-space so the framing reads as a tight TV camera move.
-  ctx.save();
-  if (cameraZoom > 1.01) {
-    ctx.translate(viewW / 2, viewH / 2);
-    ctx.scale(cameraZoom, cameraZoom);
-    ctx.translate(-cameraX, -cameraY);
-  }
-  drawTrack();
-  drawFurlongPoles(progress);
-  // Photo-finish post — renders inside the camera transform so it
-  // stays in-track-coordinates and scales with the closeup zoom.
-  if (progress >= 0.80) _drawFinishLinePost();
-  updateHorses(progress, dt);
-  drawHorses(top4Set);
-  ctx.restore();
-
-  drawParticles(dt);
-
-  // Photo-finish hold (P5) — screen-space overlay drawn after the
-  // camera transform restores, so the FINISH! text always stays
-  // perfectly centered regardless of zoom.
-  updatePhotoFinish(progress);
-
-  fireCommentary(progress);
-  updateCommentary(dt);
-  updateLeaderboard(progress);
-
-  // Phase title — prefer the new 7-stage phaseTable when present,
-  // fall back to the legacy 4-band logic for band configs that
-  // haven't been migrated yet.
-  if (BAND.phaseTable && BAND.phaseTable.length) {
-    const pt = BAND.phaseTable;
-    let activePhase = pt[0];
-    for (let i = 1; i < pt.length; i++) {
-      if (progress >= pt[i].from) activePhase = pt[i];
-      else break;
-    }
-    setPhaseTitle(activePhase.label);
-    updatePhaseStrip(progress, pt, activePhase);
-  } else {
-    // Legacy 4-band fallback.
-    const finalAt = T.finalFurlongProgress || 0.88;
-    if (BAND.phases) {
-      if (progress > finalAt && BAND.phases.finale) {
-        setPhaseTitle(BAND.phases.finale);
-      } else if (BAND.phases.kick && T.kickProgress && progress > T.kickProgress) {
-        setPhaseTitle(BAND.phases.kick);
-      } else if (BAND.phases.turn && T.turnProgress && progress > T.turnProgress) {
-        setPhaseTitle(BAND.phases.turn);
-      } else if (BAND.phases.midRace && T.midRaceProgress && progress > T.midRaceProgress) {
-        setPhaseTitle(BAND.phases.midRace);
-      }
-    }
-  }
-
-  // Hide the Skip-to-Finish pill once we're already in the final
-  // 10 seconds — skipping further would do nothing.
-  if (raceDuration > 0 && raceDuration - raceTime <= SKIP_TO_FINISH_REMAINING_MS) {
-    const wrap = document.querySelector('.race-skip-wrap');
-    if (wrap && !wrap.classList.contains('race-skip-hidden')) {
-      wrap.classList.add('race-skip-hidden');
-    }
-  }
-
-  // P6 — the legacy DOM-based photo-finish trigger is now disabled.
-  // The new in-canvas updatePhotoFinish() (P5/P6) replaces it and
-  // routes to one of three result-aware overlays (photo finish for
-  // ≤head, distance headline for clear winners, dead-heat for DH).
-  // Keeping the old call here would draw a second "PHOTO FINISH"
-  // overlay on top of the new one regardless of margin.
-  //
-  // The old #flatPhotoFinish DOM element is left in the template
-  // (zero rendering cost when never .is-active'd) so a rollback to
-  // the old engine wouldn't need template changes.
-
-  if (progress >= 1) {
-    raceRunning = false;
-    raceFinish();
-    return;
-  }
-  animFrame = requestAnimationFrame(raceLoop);
+// Lane geometry is pure presentation, so it rebuilds on resize without
+// touching the race model. Lanes are laid out in DEPTH: lane 0 runs
+// against the far rail (higher on screen, drawn smaller), the last lane
+// runs nearest the camera. That one trick is most of why the field
+// reads as a three-dimensional pack instead of a row of icons.
+function relayoutLanes() {
+  if (!horses.length) return;
+  const n    = horses.length;
+  const band = WORLD.trackBotY - WORLD.trackTopY;
+  horses.forEach((h) => {
+    const t = n > 1 ? (h.laneIdx + 0.5) / n : 0.5;
+    h.laneT = t;
+    h.y     = WORLD.trackTopY + t * band;
+    h.depth = 0.78 + t * 0.38;
+  });
 }
 
-// ─── Drawing ────────────────────────────────────────────────────
-function drawSky(progress) {
-  const grad = ctx.createLinearGradient(0, 0, 0, viewH * 0.65);
-  grad.addColorStop(0, COL.skyTop    || '#7eb8e8');
-  grad.addColorStop(1, COL.skyBottom || '#c9a66a');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, viewW, viewH * 0.65);
+// Deficit smoothing time-constant. We smooth the DEFICIT rather than
+// the absolute position: a lagged absolute position would leave every
+// runner — the winner included — short of the line at the finish,
+// whereas the deficit is slow-moving and settles exactly on its target.
+const DEFICIT_TAU_MS = 320;
 
-  // Distant grandstand silhouette
-  ctx.fillStyle = 'rgba(20,30,50,0.55)';
-  ctx.fillRect(0, viewH * 0.55, viewW, viewH * 0.10);
-}
+function updateRaceModel(dt) {
+  const p = DIRECTOR.progress;
 
-function drawTrack() {
-  const top = viewH * (TRK.laneTopRatio    || 0.24);
-  const bot = viewH * (TRK.laneBottomRatio || 0.78);
+  // Where the front of the race is, in lengths.
+  const leaderTravel = p * WORLD.spanLengths;
 
-  ctx.fillStyle = COL.trackTurf || '#2d5e3a';
-  ctx.fillRect(0, top - 4, viewW, bot - top + 16);
+  // Fan-out: 5% of the final spread at the gate, 100% at the line.
+  const fan = (0.05 + 0.95 * smoothstep(0, 1, p)) * WORLD.spreadScale;
 
-  // Inside rail
-  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, top);
-  ctx.lineTo(viewW, top);
-  ctx.stroke();
+  // Early-pace distortion decays away by the three-quarter mark, so
+  // whatever shape the pace took, the result still lands exactly.
+  const paceWeight = 1 - smoothstep(0.10, 0.78, p);
 
-  // Outside rail
-  ctx.beginPath();
-  ctx.moveTo(0, bot);
-  ctx.lineTo(viewW, bot);
-  ctx.stroke();
+  // Surges taper to nothing over the last 8% so neither the finishing
+  // order nor the real margins are ever falsified by a bell curve.
+  const surgeWeight = 1 - smoothstep(0.92, 1, p);
 
-  // Finish line — tall thin black/white striped pole at finishX
-  const fx = viewW * (TRK.finishX || 0.94);
-  ctx.save();
-  for (let y = top - 14; y < bot + 18; y += 8) {
-    ctx.fillStyle = ((Math.floor(y / 8)) % 2 === 0) ? '#fff' : '#000';
-    ctx.fillRect(fx, y, 4, 8);
-  }
-  ctx.restore();
-}
-
-function drawFurlongPoles(progress) {
-  const top = viewH * (TRK.laneTopRatio || 0.24);
-  const startX = viewW * (TRK.startX  || 0.05);
-  const finishX = viewW * (TRK.finishX || 0.94);
-  const span = finishX - startX;
-  const step = TRK.furlongPoleEvery || 0.125;
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  for (let p = 0; p <= 1.0001; p += step) {
-    const x = startX + p * span;
-    ctx.fillRect(x - 1, top - 14, 2, 14);
-  }
-}
-
-function updateHorses(progress, dt) {
-  const TRK_START  = TRK.startX  || 0.05;
-  const TRK_FINISH = TRK.finishX || 0.94;
-  const trackSpan  = TRK_FINISH - TRK_START;
-
-  // Final-spread per band. Sprints stay tight (less time to spread);
-  // stayers fan out more. This is where horse[finalPos=N] lands at
-  // race end relative to the winner — measured as a fraction of the
-  // track span.
-  const baseSpread = STATE.raceBand === 'sprint' ? 0.014
-                  : STATE.raceBand === 'mile'   ? 0.020
-                  :                               0.026;
+  const k = 1 - Math.exp(-dt / DEFICIT_TAU_MS);
 
   horses.forEach((h) => {
-    h.lastX = h.x;
-
-    // Active surge windows — bell-curve over each so they ramp in/out
-    // smoothly rather than stepping. Negative surges = fades (drops back).
-    let surgeMod = 0;
-    h.surges.forEach((s) => {
-      if (progress >= s.start && progress <= s.start + s.duration) {
-        const t = (progress - s.start) / s.duration;
-        surgeMod += s.boost * Math.sin(t * Math.PI);
+    let surge = 0;
+    for (let i = 0; i < h.surges.length; i++) {
+      const s = h.surges[i];
+      if (p >= s.start && p <= s.start + s.duration) {
+        surge += s.lengths * Math.sin(((p - s.start) / s.duration) * Math.PI);
       }
-    });
-
-    // Field-spread profile:
-    //   • At progress=0    dampening = 0.10  → field bunched at the gate
-    //   • At progress=1.0  dampening = 1.00  → final spread asserted
-    // Final-pos lag pulls each horse toward its predetermined finish, but
-    // the surge term jitters everything in between so positions actually
-    // swap on screen mid-race.
-    const dampening = 0.10 + progress * 0.90;
-    // Replay mode with parsed real distances overrides the linear-
-    // by-rank baseLag with the runner's actual cumulative gap. Falls
-    // through to the rank formula on forecast routes / replays
-    // without parsed distance data.
-    const replayLag = replayBaseLag(h, viewW * trackSpan);
-    const baseLag   = replayLag !== null
-      ? replayLag
-      : h.finalPos * baseSpread;
-    const surgePush = surgeMod * 0.05;
-
-    // Candidate progress for this frame from raw race-progress, dampened
-    // lag and bell-curve surge. The MAX clamp below stops any horse from
-    // appearing to retreat — surges still create overtakes, but once a
-    // horse reaches a position it never visibly slides back. Without
-    // this, the winner overshoots the line on the surge peak then
-    // appears to drop back as the bell curve wanes, before crossing.
-    const candidate = Math.max(0, Math.min(1, progress - baseLag * dampening + surgePush));
-    h.progress = Math.max(h.progress, candidate);
-
-    h.x = viewW * TRK_START + h.progress * viewW * trackSpan;
-
-    // Per-horse gait variance — each horse bobs at its own rate
-    // (set in buildHorseObjects) so the pack reads as 16 individual
-    // animals instead of one synchronised bobbing blob.
-    h.bobPhase += dt * 0.014 * (h.bobRate || 1);
-    h.legPhase += dt * 0.022 * (h.bobRate || 1);
-  });
-}
-
-function drawHorses(top4Set) {
-  // Sort by x asc so frontmost draws last (on top).
-  const sorted = horses.slice().sort((a, b) => a.x - b.x);
-
-  // Podium = current top 3 by progress (drives label visibility).
-  const podium = new Set(
-    horses.slice().sort((a, b) => b.progress - a.progress).slice(0, 3).map((h) => h.runner.id)
-  );
-
-  // True closeup state — used to dim non-top-4 and grow labels.
-  const closeup = cameraZoom > 1.05;
-
-  // Winner-ring trigger (Sprint P4 #8) — once we're in slow-mo AND
-  // tight-zoom territory, paint a soft pulsing gold ring around the
-  // leader's silhouette. Reads as "this is the winner" without us
-  // having to put a chip on screen. Computed once per frame.
-  // progress is local to the race loop; recompute here cheaply from
-  // the master clock so drawHorses doesn't need a new arg.
-  const T = (BAND.timings) || {};
-  const progressForRing = raceDuration > 0
-    ? Math.min(raceTime / raceDuration, 1) : 0;
-  const slowMoActive = progressForRing >= (T.slowMoStartProgress || 0.88);
-  const leaderForRing = slowMoActive
-    ? horses.slice().sort((a, b) => b.progress - a.progress)[0]
-    : null;
-
-  sorted.forEach((h) => {
-    const isUser    = STATE.userPick && STATE.userPick.id === h.runner.id;
-    const isFox     = STATE.foxPick  && STATE.foxPick.name === h.runner.name;
-    const isLeader  = h === sorted[sorted.length - 1];
-    const isPodium  = podium.has(h.runner.id);
-    const isTop4    = top4Set && top4Set.has(h.runner.id);
-    const x = h.x;
-    const y = h.y;
-    // Per-horse bob amplitude — each horse rises by 1.4-2.6px instead
-    // of the old fixed 2px. Combined with bobRate, the field's gait
-    // visually de-syncs after ~2 seconds of racing.
-    const bob = Math.sin(h.bobPhase) * 2 * (h.bobAmp || 1);
-    const speed = Math.max(0, h.x - h.lastX);
-
-    // In closeup mode the camera is framed on the top 4. Everyone else
-    // is contextually present but visually receded — alpha 0.30 reads
-    // as "out of frame" without removing them from the canvas (so
-    // overtakes from behind into the top 4 read smoothly).
-    ctx.save();
-    if (closeup && !isTop4) ctx.globalAlpha = 0.30;
-
-    drawSpeedLines(x, y + bob, speed, isUser, isFox);
-
-    // Winner gold ring (Sprint P4 #8) — draw BEFORE the silhouette
-    // so it reads as a halo around the horse, not on top of it.
-    // Animates a soft pulsing radius using bobPhase for variation.
-    if (leaderForRing && leaderForRing.runner.id === h.runner.id) {
-      const pulse = 1 + Math.sin(h.bobPhase * 2) * 0.08;
-      const baseR = 36;
-      ctx.save();
-      ctx.shadowColor = 'rgba(212, 175, 55, 0.95)';
-      ctx.shadowBlur = 22 * pulse;
-      ctx.strokeStyle = 'rgba(212, 175, 55, 0.85)';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(x, y + bob, baseR * pulse, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
     }
 
-    drawHorseSilhouette(x, y + bob, h, isUser, isFox, isLeader);
-    ctx.restore();
-
-    // TV-style labelling — reviewer feedback fix (Phase 1, v2).
-    //
-    // BEFORE: ALL podium horses got labels at all times, plus ALL top-4
-    // got labels + 1st/2nd/3rd/4th pills during closeup. With horses
-    // physically clustered (which is most of the race), the labels
-    // stacked into an unreadable brown blob of text.
-    //
-    // NOW: only the LEADER, the viewer's vote, and Mr Fox's pick get
-    // floating labels — same rule everywhere (closeup AND wide). At
-    // most 3 labels on screen at any time, all editorially meaningful
-    // ("who's winning", "your pick", "the editor's pick"). The Live
-    // Positions leaderboard on the right is the single source of truth
-    // for identifying everyone else. Cuts visual noise by ~80% with
-    // no information lost.
-    const hasResultPillData = (
-      REPLAY_DATA && REPLAY_DATA.has_result
+    const target = Math.max(
+      0,
+      h.finalLengths * fan + h.paceBias * paceWeight - surge * surgeWeight
     );
-    const showLabel = isLeader || isUser || isFox;
-    if (!showLabel) return;
 
-    ctx.save();
-    if (closeup && !isTop4) ctx.globalAlpha = 0.30;
-    ctx.font = 'bold ' + (closeup ? '13' : '11') + 'px "DM Sans", sans-serif';
-    ctx.textAlign = 'center';
-    const labelY = y + bob - (closeup ? 22 : 18);
-    const name = h.runner.name;
-    const tw = ctx.measureText(name).width;
-    ctx.fillStyle = 'rgba(6,8,15,0.78)';
-    ctx.beginPath();
-    ctx.roundRect(x - tw / 2 - 8, labelY - 14, tw + 16, closeup ? 20 : 18, 4);
-    ctx.fill();
-    ctx.fillStyle = isUser ? COL.userLabel : isFox ? COL.foxLabel : '#ffffff';
-    ctx.fillText(name, x, labelY);
-    ctx.restore();
+    h.deficit += (target - h.deficit) * k;
+    h.travel   = Math.max(0, leaderTravel - h.deficit);
 
-    // Per-horse finish-position pill — RESTRICTED to replay mode AND only
-    // when we have a real beaten-distance string to attach. In forecast mode
-    // the position pills were pure noise (the leaderboard already covers it);
-    // in replay they carry editorial weight ("3rd · +1¼"). So we gate on
-    // REPLAY_DATA.has_result and only render for ranks 2-4 where the
-    // beaten distance adds new information.
-    if (closeup && isTop4 && hasResultPillData) {
-      const liveSorted = horses.slice().sort((a, b) => b.progress - a.progress);
-      const rank = liveSorted.indexOf(h) + 1;
-      const gap = rank > 1 ? (REPLAY_DATA.beaten_distances || {})[h.runner.id] : null;
-      if (rank >= 1 && rank <= 4 && (rank === 1 || gap)) {
-        const ord = rank === 1 ? 'st'
-                  : rank === 2 ? 'nd'
-                  : rank === 3 ? 'rd' : 'th';
-        const pillText = (rank === 1) ? (rank + ord) : (rank + ord + ' · +' + gap);
-        const rankColour = rank === 1 ? '#D4AF37'
-                         : rank === 2 ? '#C0C0C0'
-                         : rank === 3 ? '#CD7F32'
-                         : 'rgba(245,228,154,0.85)';
-        ctx.save();
-        ctx.font = 'bold 11px "DM Sans", sans-serif';
-        ctx.textAlign = 'center';
-        const pillW = ctx.measureText(pillText).width;
-        const pillY = y + bob + 32;
-        ctx.fillStyle = 'rgba(6,8,15,0.82)';
-        ctx.beginPath();
-        ctx.roundRect(x - pillW/2 - 7, pillY - 11, pillW + 14, 16, 4);
-        ctx.fill();
-        ctx.fillStyle = rankColour;
-        ctx.fillText(pillText, x, pillY);
-        ctx.restore();
-      }
+    h.lastWorldX = h.worldX;
+    h.worldX     = h.travel * WORLD.lengthPx;
+
+    // Instantaneous ground speed, lightly smoothed — the gait cycle and
+    // the hoof dust both key off it, so a spiky value would flicker.
+    const inst = dt > 0 ? (h.worldX - h.lastWorldX) / dt : 0;
+    h.speed += (inst - h.speed) * 0.2;
+
+    // Galloping micro-motion. Stride rate follows ground speed so the
+    // legs stay in sync with the travel, slow motion included.
+    const strideRate = 0.010 + Math.min(0.030, h.speed * 0.020);
+    h.bobPhase  += dt * strideRate * 0.62 * h.bobRate;
+    h.legPhase  += dt * strideRate * h.bobRate;
+    h.swayPhase += dt * 0.0032 * h.bobRate;
+  });
+
+  // The order is now stale by definition — every position just moved.
+  _rankedCacheAt = -1;
+}
+
+// After a seek the model and the camera are both many seconds behind
+// where the clock now is. Left alone the exponential smoothing would
+// spend a second visibly sliding everything into place; snapping is
+// both correct and invisible.
+function snapRaceState() {
+  updateRaceModel(100000);
+  // Zoom first: the focus clamp that keeps the leader in frame is
+  // computed against the zoom, so a stale one puts the leader outside
+  // the very frame it is supposed to guarantee.
+  CAM.zoom = DIRECTOR.zoom;
+  CAM.x    = principalGroupFocus() + viewW * 0.05 * DIRECTOR.progress;
+}
+
+let _rankedCache = [];
+let _rankedCacheAt = -1;
+function rankedHorses() {
+  // Ranking is wanted several times a frame; sorting 24 runners more
+  // than once per frame is pure waste.
+  if (_rankedCacheAt === frameClock) return _rankedCache;
+  _rankedCache   = horses.slice().sort((a, b) => b.travel - a.travel);
+  _rankedCacheAt = frameClock;
+  return _rankedCache;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  MASTER TIMELINE
+// ════════════════════════════════════════════════════════════════
+// One GSAP timeline is the single clock for the entire race. It owns
+// race progress, every camera parameter, the slow-motion ramp through
+// the final furlong, the scripted broadcast identifications and the
+// cinematic pause at the line. Nothing in the render loop advances
+// time — a frame is a pure function of what the timeline has written
+// into DIRECTOR.
+
+function buildMasterTimeline() {
+  const T         = BAND.timings || {};
+  const durationS = (T.raceDurationMs || 46000) / 1000;
+
+  const tl = gsap.timeline({
+    paused: true,
+    onUpdate:   () => syncRacePhase(DIRECTOR.progress),
+    onComplete: crossTheLine,
+  });
+
+  // Race progress is linear in timeline time, which keeps every label
+  // below expressible as a plain progress fraction.
+  tl.to(DIRECTOR, { progress: 1, duration: durationS, ease: 'none' }, 0);
+  RACE_PHASES.forEach((ph) => tl.addLabel(ph.key, durationS * ph.from));
+
+  // ── CRUISE ── wide, level, unhurried. The whole field is legible and
+  //    the camera keeps the principal group left of centre so there is
+  //    track ahead of them rather than behind.
+  tl.to(DIRECTOR, {
+    zoom: 1.05, anchorX: 0.50, groupBias: 0.12, vignette: 0.12,
+    shake: SHAKE * 0.2, camY: 0, fieldFade: 0,
+    duration: durationS * 0.45, ease: 'sine.inOut',
+  }, 'cruise');
+
+  // ── BUILD ── the camera starts taking a side. Framing tightens onto
+  //    the front half of the field and the ground moves faster past it.
+  tl.to(DIRECTOR, {
+    zoom: 1.20, anchorX: 0.46, groupBias: 0.45, vignette: 0.18,
+    shake: SHAKE * 0.6, camY: 4, fieldFade: 0.10,
+    duration: durationS * 0.27, ease: 'sine.inOut',
+  }, 'build');
+
+  // ── DRIVE ── down onto the principal group. Back markers recede, the
+  //    camera drops and starts to breathe with the gallop.
+  tl.to(DIRECTOR, {
+    zoom: 1.44, anchorX: 0.41, groupBias: 0.78, vignette: 0.26,
+    shake: SHAKE * 1.3, camY: 9, tilt: 0.004, fieldFade: 0.34,
+    duration: durationS * 0.18, ease: 'power2.in',
+  }, 'drive');
+
+  // ── LINE ── the dedicated final-furlong sequence.
+  addFinalFurlongSequence(tl, durationS);
+
+  // Broadcast identifications — four in a whole race, each resolved
+  // against the live order at the moment it fires.
+  tl.call(() => identifyRunner('leader',     'LEADS'),    null, durationS * 0.10);
+  tl.call(() => identifyRunner('interest',   null),       null, durationS * 0.52);
+  tl.call(() => identifyRunner('leader',     'IN FRONT'), null, durationS * 0.79);
+  tl.call(() => identifyRunner('challenger', 'CLOSING'),  null, durationS * 0.945);
+
+  return tl;
+}
+
+// ── The final furlong ───────────────────────────────────────────
+// A dedicated sequence, not simply more of the same but faster. The
+// camera drops to the rail and closes down onto the two or three
+// runners that can still win it, the world goes into slow motion, and
+// the winning post finally comes into shot from the right — it has been
+// out beyond the frame edge for the whole race until now.
+function addFinalFurlongSequence(tl, durationS) {
+  const seg = durationS * (1 - RACE_PHASES[3].from);
+
+  tl.to(DIRECTOR, {
+    zoom: 1.72, anchorX: 0.36, groupBias: 1, vignette: 0.34,
+    shake: SHAKE * 2.4, camY: 14, tilt: 0.009, fieldFade: 0.55,
+    duration: seg * 0.75, ease: 'power2.in',
+  }, 'line');
+
+  tl.call(() => {
+    setPhaseTitle('THE FINAL FURLONG');
+    const screen = document.getElementById('screen-race');
+    if (screen) screen.classList.add('is-final-furlong');
+  }, null, 'line');
+
+  // Slow motion. We slow the CLOCK, not the horses, so commentary,
+  // leaderboard and gait all stretch together. The ramp is tweened from
+  // a call() so the tween driving timeScale is not itself being scaled
+  // by the value it is changing.
+  if (!prefersReducedMotion) {
+    const slowTo = (BAND.timings && BAND.timings.slowMoFactor) || 0.55;
+    tl.call(() => {
+      gsap.to(tl, { timeScale: slowTo, duration: 1.0, ease: 'power2.out' });
+    }, null, 'line');
+  }
+}
+
+function syncRacePhase(p) {
+  let active = RACE_PHASES[0];
+  for (let i = 1; i < RACE_PHASES.length; i++) {
+    if (p >= RACE_PHASES[i].from) active = RACE_PHASES[i];
+    else break;
+  }
+  if (active.key === DIRECTOR.phase) return;
+  DIRECTOR.phase = active.key;
+  const screen = document.getElementById('screen-race');
+  if (screen) screen.dataset.racePhase = active.key;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  VIRTUAL CAMERA
+// ════════════════════════════════════════════════════════════════
+// The camera tracks a focus point somewhere between the centroid of the
+// principal racing group and the leader alone; DIRECTOR.groupBias
+// slides between the two as the race develops. It is exponentially
+// damped toward that focus, so it never snaps and never overshoots into
+// a visible wobble — the group stays broadly centred and the world
+// moves past it.
+const CAM_FOLLOW_TAU_MS = 240;
+
+function principalGroupFocus() {
+  const ranked = rankedHorses();
+  if (!ranked.length) return 0;
+  // The principal group is the front 40% of the field, floored at four
+  // runners and capped at ten — beyond that the tail drags the centroid
+  // backwards and the leaders creep off the right of frame.
+  const size = Math.min(ranked.length,
+                        Math.min(10, Math.max(4, Math.round(ranked.length * 0.4))));
+  let sum = 0;
+  for (let i = 0; i < size; i++) sum += ranked[i].worldX;
+  const centroid = sum / size;
+  let focus = centroid + (ranked[0].worldX - centroid) * DIRECTOR.groupBias;
+
+  // Hard floor: the leader never leaves the frame. On a runaway the
+  // group centroid sits thirty lengths behind the winner, and a camera
+  // that honoured it faithfully would spend the closing stages filming
+  // the horses that lost. Keep the group centred when the field is
+  // tight; follow the leader when it is not.
+  const headroom = (viewW * (1 - DIRECTOR.anchorX) - viewW * 0.14) / CAM.zoom;
+  return Math.max(focus, ranked[0].worldX - headroom);
+}
+
+function updateCamera(dt) {
+  // Look a little up the track as the pace lifts, so the viewer sees
+  // where the race is going rather than where it has been.
+  const target = principalGroupFocus() + viewW * 0.05 * DIRECTOR.progress;
+
+  const k = 1 - Math.exp(-dt / CAM_FOLLOW_TAU_MS);
+  CAM.x    += (target - CAM.x) * k;
+  CAM.zoom += (DIRECTOR.zoom - CAM.zoom) * k;
+
+  // Hoof rumble. Amplitude comes off the director so it ramps with the
+  // phases, and it is flat zero under prefers-reduced-motion.
+  if (DIRECTOR.shake > 0.01) {
+    const t = frameClock * 0.001;
+    CAM.shakeX = Math.sin(t * 27.3 + CAM.seed) * DIRECTOR.shake;
+    CAM.shakeY = Math.sin(t * 19.1 + CAM.seed * 1.7) * DIRECTOR.shake * 0.7;
+  } else {
+    CAM.shakeX = 0;
+    CAM.shakeY = 0;
+  }
+}
+
+// Push the world transform onto a context. Everything drawn between
+// this and ctx.restore() is in world coordinates: x is world px from
+// the stalls, y is the screen y of the lane.
+function pushWorldTransform(c) {
+  c.save();
+  c.translate(viewW * DIRECTOR.anchorX + CAM.shakeX,
+              WORLD.trackMidY + DIRECTOR.camY + CAM.shakeY);
+  if (DIRECTOR.tilt) c.rotate(DIRECTOR.tilt);
+  c.scale(CAM.zoom, CAM.zoom);
+  c.translate(-CAM.x, -WORLD.trackMidY);
+}
+
+function worldToScreenX(wx) {
+  return (wx - CAM.x) * CAM.zoom + viewW * DIRECTOR.anchorX + CAM.shakeX;
+}
+
+// Vertical projection. The backdrop is drawn on a separate surface with
+// no transform of its own, so it has to put the horizon exactly where
+// the world transform would — otherwise the turf climbs over the sky as
+// soon as the camera tightens.
+function worldToScreenY(wy) {
+  return WORLD.trackMidY + (wy - WORLD.trackMidY) * CAM.zoom
+       + DIRECTOR.camY + CAM.shakeY;
+}
+
+// World-x range currently inside the frame, plus padding. Used to cull
+// track furniture and horses — with a nine-screen world most of the
+// field is off-camera at any moment, so this is the difference between
+// drawing 24 horses a frame and drawing eight.
+function visibleWorldRange(pad) {
+  const left  = (viewW * DIRECTOR.anchorX)       / CAM.zoom;
+  const right = (viewW * (1 - DIRECTOR.anchorX)) / CAM.zoom;
+  return { min: CAM.x - left - pad, max: CAM.x + right + pad };
+}
+// ════════════════════════════════════════════════════════════════
+//  PARALLAX — SEVEN DEPTH PLANES
+// ════════════════════════════════════════════════════════════════
+// The horses barely move on screen. What moves is the world, and the
+// difference in rate between these planes is what sells the speed.
+//
+//   0.00  sky + sun haze                     backdrop canvas
+//   0.06  distant downland                   backdrop canvas
+//   0.17  grandstand + crowd                 backdrop canvas
+//   0.34  treeline / hedge                   backdrop canvas
+//   0.68  far running rail + ad boards       race canvas
+//   1.00  the turf the race is run on        race canvas
+//   1.32  foreground grass, in front         race canvas
+//
+// The three repeating mid-planes are pre-painted into offscreen tiles
+// once per resize and blitted after that. Repainting a grandstand from
+// paths every frame is the kind of thing that quietly costs 4ms.
+const PARALLAX = { hills: 0.06, stand: 0.17, trees: 0.34, farRail: 0.68, fore: 1.32 };
+
+const TILES = { hills: null, stand: null, trees: null, turf: null };
+
+function makeTile(w, h, paint) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const c = document.createElement('canvas');
+  c.width  = Math.max(1, Math.round(w * dpr));
+  c.height = Math.max(1, Math.round(h * dpr));
+  const g = c.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  paint(g, w, h);
+  return { canvas: c, w: w, h: h };
+}
+
+function buildBackdropTiles() {
+  const hillH  = Math.max(60,  viewH * 0.14);
+  const standH = Math.max(80,  viewH * 0.20);
+  const treeH  = Math.max(46,  viewH * 0.10);
+
+  // ── Distant downland ──
+  TILES.hills = makeTile(760, hillH, (g, w, h) => {
+    g.fillStyle = 'rgba(122,150,172,0.55)';
+    g.beginPath();
+    g.moveTo(0, h);
+    g.lineTo(0, h * 0.55);
+    for (let x = 0; x <= w; x += 40) {
+      g.lineTo(x, h * (0.42 + 0.20 * Math.sin(x * 0.0091) + 0.08 * Math.sin(x * 0.031)));
+    }
+    g.lineTo(w, h);
+    g.closePath();
+    g.fill();
+  });
+
+  // ── Grandstand + crowd ──
+  TILES.stand = makeTile(540, standH, (g, w, h) => {
+    const roofY = h * 0.16;
+    const deckY = h * 0.40;
+    // Roof
+    g.fillStyle = 'rgba(58,72,94,0.95)';
+    g.beginPath();
+    g.moveTo(6, roofY + 12);
+    g.lineTo(w * 0.5, roofY - 6);
+    g.lineTo(w - 6, roofY + 12);
+    g.lineTo(w - 6, roofY + 22);
+    g.lineTo(6, roofY + 22);
+    g.closePath();
+    g.fill();
+    // Terrace body — lighter than the roof so the two read apart, with
+    // the seating rake shaded in.
+    const terrace = g.createLinearGradient(0, roofY + 22, 0, h);
+    terrace.addColorStop(0, 'rgba(46,58,78,0.96)');
+    terrace.addColorStop(1, 'rgba(72,86,106,0.96)');
+    g.fillStyle = terrace;
+    g.fillRect(6, roofY + 22, w - 12, h - roofY - 22);
+    // Crowd speckle — cheap, and the only thing that makes a stand
+    // read as full rather than as a grey box.
+    for (let i = 0; i < 900; i++) {
+      const cx = 12 + Math.random() * (w - 24);
+      const cy = deckY + Math.random() * (h - deckY - 6);
+      const warm = Math.random();
+      g.fillStyle = warm > 0.88 ? 'rgba(226,196,110,0.75)'
+                  : warm > 0.60 ? 'rgba(226,232,240,0.55)'
+                  :               'rgba(150,166,190,0.55)';
+      g.fillRect(cx, cy, 2.2, 2.2);
+    }
+    // Support columns
+    g.fillStyle = 'rgba(30,40,58,0.55)';
+    for (let x = 40; x < w - 20; x += 96) g.fillRect(x, roofY + 22, 3, h - roofY - 22);
+    // Rooflight strip along the front of the roof
+    g.fillStyle = 'rgba(245,239,222,0.30)';
+    g.fillRect(6, roofY + 20, w - 12, 2.5);
+  });
+
+  // ── Treeline / hedge ──
+  TILES.trees = makeTile(430, treeH, (g, w, h) => {
+    g.fillStyle = 'rgba(48,84,58,0.95)';
+    for (let i = 0; i < 16; i++) {
+      const cx = (i / 16) * w + (i % 3) * 9;
+      const r  = h * (0.34 + ((i * 37) % 11) / 24);
+      g.beginPath();
+      g.ellipse(cx, h - r * 0.35, r * 0.9, r, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.fillStyle = 'rgba(34,64,44,1)';
+    g.fillRect(0, h - h * 0.28, w, h * 0.28);
+  });
+
+  // ── Turf tile for the track plane ──
+  // Mown stripes plus a grain of divot marks. Tiled in WORLD px, so it
+  // scrolls at exactly the rate the horses travel.
+  const turfW = 320;
+  const turfH = Math.max(40, Math.round(viewH * 0.60));
+  TILES.turf = makeTile(turfW, turfH, (g, w, h) => {
+    g.fillStyle = COL.trackTurf || '#2d5e3a';
+    g.fillRect(0, 0, w, h);
+    // Mower stripes, alternating light and dark down the straight.
+    g.fillStyle = 'rgba(255,255,255,0.055)';
+    g.fillRect(0, 0, w / 2, h);
+    // Grain
+    for (let i = 0; i < 160; i++) {
+      g.fillStyle = Math.random() > 0.5
+        ? 'rgba(226,244,206,0.05)' : 'rgba(0,0,0,0.05)';
+      g.fillRect(Math.random() * w, Math.random() * h, 2 + Math.random() * 6, 1.5);
     }
   });
 }
 
-function drawSpeedLines(x, y, speed, isUser, isFox) {
-  // Speed lines trail behind the horse, scaled by velocity — gives the
-  // sense of motion without a per-frame motion-blur composite.
-  if (speed < 0.4) return;
-  const count = SHARED.speedLineCount || 4;
+// Tiles are laid out in SCREEN space, scaled by the camera zoom so a
+// backdrop plane magnifies with everything else, and offset by
+// CAM.x × factor × zoom so its scroll rate stays in proportion to the
+// turf no matter how tight the framing gets.
+function drawTiled(c, tile, bottomY, factor, alpha) {
+  if (!tile) return;
+  const s = CAM.zoom;
+  const w = tile.w * s;
+  const h = tile.h * s;
+  const offsetPx = CAM.x * factor * s;
+  c.save();
+  c.globalAlpha = alpha;
+  let x = -(((offsetPx % w) + w) % w);
+  for (; x < viewW + w; x += w) c.drawImage(tile.canvas, x, bottomY - h, w, h);
+  c.restore();
+}
+
+// The backdrop lives on #particleCanvas, which sits behind the race
+// canvas in the stacking order. Keeping it on its own surface means the
+// track plane can clear and redraw without touching the sky.
+function drawBackdrop() {
+  pCtx.clearRect(0, 0, viewW, viewH);
+
+  const horizon = worldToScreenY(WORLD.horizonY);
+
+  // Sky — a daylight gradient that only deepens at the very top of
+  // frame. The band the viewer actually looks at, just above the
+  // grandstand roofline, stays bright.
+  const warm = DIRECTOR.progress;
+  const skyBottom = Math.max(horizon + viewH * 0.10, viewH * 0.30);
+  const sky = pCtx.createLinearGradient(0, 0, 0, skyBottom);
+  sky.addColorStop(0,    '#4d88bd');
+  sky.addColorStop(0.42, COL.skyTop    || '#7eb8e8');
+  sky.addColorStop(0.72, '#a9cbe6');
+  sky.addColorStop(0.90, '#d8dcd2');
+  sky.addColorStop(1,    COL.skyBottom || '#c9a66a');
+  pCtx.fillStyle = sky;
+  pCtx.fillRect(0, 0, viewW, skyBottom + 2);
+
+  // Low sun haze sitting just above the horizon.
+  const haze = pCtx.createRadialGradient(
+    viewW * 0.72, horizon - viewH * 0.06, 0,
+    viewW * 0.72, horizon - viewH * 0.06, viewW * 0.42
+  );
+  haze.addColorStop(0, 'rgba(255,240,205,' + (0.34 + warm * 0.16).toFixed(3) + ')');
+  haze.addColorStop(1, 'rgba(255,232,180,0)');
+  pCtx.fillStyle = haze;
+  pCtx.fillRect(0, 0, viewW, horizon + viewH * 0.10);
+
+  // Each plane sits ON the horizon and scrolls at its own rate. The
+  // treeline overlaps it slightly so there is no seam where the turf
+  // starts.
+  drawTiled(pCtx, TILES.hills, horizon + 6,  PARALLAX.hills, 0.85);
+  drawTiled(pCtx, TILES.stand, horizon + 10, PARALLAX.stand, 0.95);
+  drawTiled(pCtx, TILES.trees, horizon + Math.max(14, viewH * 0.05),
+            PARALLAX.trees, 1);
+}
+
+// ════════════════════════════════════════════════════════════════
+//  TRACK PLANE
+// ════════════════════════════════════════════════════════════════
+
+// Far rail, running-rail posts and advertising boards. Drawn on the
+// race canvas but offset at 0.68 rather than 1.0, so the far side of
+// the track slides past more slowly than the turf underfoot — the
+// depth cue that makes the track look wide.
+function drawFarRail() {
+  const y = WORLD.trackTopY;
+  // Drawing inside the world transform means geometry at world x lands
+  // at rate 1.0. Shifting the whole plane by +CAM.x × (1 − factor)
+  // cancels part of that back out, leaving it scrolling at `factor`.
+  const shift = CAM.x * (1 - PARALLAX.farRail);
+
   ctx.save();
-  ctx.strokeStyle = isUser ? COL.userPick : isFox ? COL.foxPick : (COL.speedLine || 'rgba(255,255,255,0.45)');
-  ctx.lineWidth = 1.4;
-  ctx.lineCap = 'round';
-  for (let i = 0; i < count; i++) {
-    const dy = (i - (count - 1) / 2) * 5;
-    const length = Math.min(48, speed * (8 + i * 2));
-    ctx.globalAlpha = 0.85 - i * 0.18;
+  ctx.translate(shift, 0);
+  const vis  = visibleWorldRange(viewW);
+  const step = WORLD.lengthPx * 3.2;
+  const from = Math.floor((vis.min - shift) / step) * step;
+  const to   = vis.max - shift;
+
+  // Advertising board band behind the rail. Deliberately low contrast —
+  // it is scenery at depth, not a headline.
+  ctx.fillStyle = 'rgba(28,40,56,0.42)';
+  ctx.fillRect(from - step, y - 22, to - from + step * 2, 13);
+  ctx.fillStyle = 'rgba(212,175,55,0.10)';
+  for (let x = from; x < to; x += step * 4) {
+    ctx.fillRect(x, y - 22, step * 1.7, 13);
+  }
+
+  // Running rail
+  ctx.strokeStyle = 'rgba(255,255,255,0.62)';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(from - step, y - 6);
+  ctx.lineTo(to, y - 6);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(240,244,250,0.38)';
+  for (let x = from; x < to; x += step) ctx.fillRect(x, y - 6, 1.6, 7);
+  ctx.restore();
+}
+
+function drawTurf() {
+  const vis = visibleWorldRange(240);
+  const top = WORLD.trackTopY - 8;
+  const bot = viewH * 1.4;   // run the turf off the bottom of frame
+
+  if (TILES.turf) {
+    const tw = TILES.turf.w;
+    let x = Math.floor(vis.min / tw) * tw;
+    for (; x < vis.max; x += tw) {
+      ctx.drawImage(TILES.turf.canvas, x, top, tw, bot - top);
+    }
+  } else {
+    ctx.fillStyle = COL.trackTurf || '#2d5e3a';
+    ctx.fillRect(vis.min, top, vis.max - vis.min, bot - top);
+  }
+
+  // Depth lighting — the far side of the track sits in cooler, hazier
+  // light; the turf under the camera is warm and saturated. Without a
+  // gradient here the whole ground reads as one flat sheet of green.
+  const shade = ctx.createLinearGradient(0, top, 0, bot);
+  shade.addColorStop(0,    'rgba(146,176,186,0.17)');
+  shade.addColorStop(0.30, 'rgba(146,176,186,0.03)');
+  shade.addColorStop(1,    'rgba(6,14,10,0.32)');
+  ctx.fillStyle = shade;
+  ctx.fillRect(vis.min, top, vis.max - vis.min, bot - top);
+}
+
+// Furlong markers count DOWN to the line, the way a real track does.
+// They are the clearest read the viewer gets on how much race is left,
+// and because they live in world space they sweep past at full rate.
+function drawFurlongMarkers() {
+  const vis   = visibleWorldRange(200);
+  const every = WORLD.spanPx * (TRK.furlongPoleEvery || 0.125);
+  const y     = WORLD.trackTopY;
+
+  let i = Math.max(0, Math.floor(vis.min / every));
+  for (; i * every <= vis.max; i++) {
+    const x = i * every;
+    if (x > WORLD.spanPx - every * 0.4) break;   // the post takes over here
+    const left = Math.round((WORLD.spanPx - x) / every);
+    if (left <= 0) continue;
+
+    ctx.fillStyle = 'rgba(245,239,222,0.85)';
+    ctx.fillRect(x - 1.5, y - 40, 3, 34);
+    ctx.fillStyle = 'rgba(11,14,21,0.82)';
     ctx.beginPath();
-    ctx.moveTo(x - 14,           y + dy);
-    ctx.lineTo(x - 14 - length,  y + dy);
+    ctx.roundRect(x - 11, y - 58, 22, 18, 3);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(245,239,222,0.35)';
+    ctx.lineWidth = 1;
     ctx.stroke();
+    ctx.fillStyle = 'rgba(245,239,222,0.92)';
+    ctx.font = 'bold 11px "DM Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(String(left), x, y - 45);
+  }
+}
+
+// The winning post. It lives at the far end of the world and is drawn
+// only when it is genuinely in shot, which for a nine-screen race means
+// the last few seconds. In V1 the finish line was pinned at 94% of the
+// viewport from the moment the race started, so the viewer stared at
+// the destination for forty seconds; here it arrives.
+function drawWinningPost() {
+  const x = WORLD.spanPx;
+  const vis = visibleWorldRange(160);
+  if (x < vis.min || x > vis.max) return;
+
+  const top = WORLD.trackTopY;
+  const bot = WORLD.trackBotY;
+
+  // Painted line across the turf
+  ctx.save();
+  for (let y = top - 6; y < bot + 26; y += 9) {
+    ctx.fillStyle = (Math.floor(y / 9) % 2 === 0) ? 'rgba(255,255,255,0.92)'
+                                                  : 'rgba(14,18,26,0.92)';
+    ctx.fillRect(x - 2, y, 4, 9);
+  }
+
+  // Post + gold finial on the far side
+  ctx.fillStyle   = '#f5efde';
+  ctx.strokeStyle = 'rgba(11,14,21,0.85)';
+  ctx.lineWidth   = 1.2;
+  ctx.beginPath();
+  ctx.rect(x - 3, top - 92, 6, 92);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = COL.gold || '#D4AF37';
+  ctx.beginPath();
+  ctx.arc(x, top - 96, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Gantry banner
+  ctx.fillStyle   = 'rgba(11,14,21,0.94)';
+  ctx.strokeStyle = COL.gold || '#D4AF37';
+  ctx.lineWidth   = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(x - 58, top - 128, 116, 24, 4);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = COL.gold || '#D4AF37';
+  ctx.font = 'bold 13px "DM Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('THE LINE', x, top - 111);
+  ctx.restore();
+}
+
+// Foreground plane — grass sweeping past in FRONT of the field at
+// better than track rate. Deliberately soft and low-contrast: it reads
+// as depth of field rather than as scenery.
+function drawForegroundPlane() {
+  if (prefersReducedMotion) return;
+  const off  = CAM.x * PARALLAX.fore * CAM.zoom;
+  const tw   = 190;
+  const yTop = viewH - Math.max(28, viewH * 0.07);
+
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = 'rgba(14,32,22,0.9)';
+  ctx.fillRect(0, viewH - 10, viewW, 10);
+
+  ctx.strokeStyle = 'rgba(18,44,28,0.85)';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  let x = -(((off % tw) + tw) % tw);
+  for (; x < viewW + tw; x += tw) {
+    for (let i = 0; i < 5; i++) {
+      const gx = x + i * 34;
+      const gh = 14 + ((i * 53) % 17);
+      ctx.beginPath();
+      ctx.moveTo(gx, viewH);
+      ctx.quadraticCurveTo(gx + 5, yTop + gh * 0.4, gx + 12, yTop);
+      ctx.stroke();
+    }
   }
   ctx.restore();
 }
 
-// Coat tones — single hardcoded brown, jockey silks differentiate.
-const HORSE_COAT       = '#3a2510';
-const HORSE_COAT_SHADE = '#1f1408';
-
-// ── Sprint P5 — hoof-strike dust particles (heavy mode) ─────────────
-// Spawned at each gallop-cycle ground contact: off-hind (cyc≈0.00),
-// the diagonal pair off-fore + lead-hind (cyc≈0.20), and lead-fore
-// (cyc≈0.40). Tracked per-horse via h.lastDustCycle so we spawn
-// once per strike rather than every frame between strikes.
-function _spawnHoofDust(x, y, h, cyc) {
-  const STRIKES = [0.00, 0.20, 0.40];
-  const prevCyc = h.lastDustCycle == null ? cyc : h.lastDustCycle;
-  h.lastDustCycle = cyc;
-
-  for (const strike of STRIKES) {
-    // Did this strike cross between last frame and this frame?
-    // Handle the 0.0 wrap-around (prev = 0.9, current = 0.05) carefully.
-    const crossed = (prevCyc > strike) ?
-      (cyc < prevCyc && cyc >= strike) || (cyc < strike && cyc < prevCyc - 0.5)
-      : (cyc >= strike && prevCyc < strike);
-    if (!crossed) continue;
-
-    // Spawn 2-3 dust puffs at the hoof position (slightly behind the
-    // horse since the hoof has just struck and is about to lift).
-    const puffs = 2 + (Math.random() < 0.5 ? 1 : 0);
-    for (let i = 0; i < puffs; i++) {
-      const dustX = x - 14 - Math.random() * 8;
-      const dustY = y + 18 + Math.random() * 3;
-      particles.push({
-        x:    dustX,
-        y:    dustY,
-        vx:   -1 - Math.random() * 1.6,
-        vy:   -0.6 - Math.random() * 1.2,
-        g:    -0.04,                     // negative gravity = floats up
-        life: 0.6 + Math.random() * 0.4,
-        size: 5 + Math.random() * 4,
-        colour: 'rgba(170,150,120,0.55)',
-        rot: 0,
-        rotSpeed: 0,
-      });
-    }
+// Screen-space vignette + the flash at the line. Both are director
+// values, so they ramp with the phases rather than being switched on.
+function drawAtmosphere() {
+  if (DIRECTOR.vignette > 0.01) {
+    const vg = ctx.createRadialGradient(
+      viewW * 0.5, viewH * 0.5, Math.min(viewW, viewH) * 0.28,
+      viewW * 0.5, viewH * 0.5, Math.max(viewW, viewH) * 0.72
+    );
+    vg.addColorStop(0, 'rgba(2,4,9,0)');
+    vg.addColorStop(1, 'rgba(2,4,9,' + DIRECTOR.vignette.toFixed(3) + ')');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, viewW, viewH);
+  }
+  if (DIRECTOR.flash > 0.005) {
+    ctx.fillStyle = 'rgba(255,252,240,' + (DIRECTOR.flash * 0.85).toFixed(3) + ')';
+    ctx.fillRect(0, 0, viewW, viewH);
   }
 }
-
-
-// ── Sprint P6 — result-aware finish scene ──────────────────────────
-// At the moment of crossing, compute the winning margin and route to
-// the right overlay:
-//   • margin ≤ head        → PHOTO FINISH  (the existing dramatic overlay)
-//   • dead heat             → DEAD HEAT (side-by-side winners)
-//   • margin > head         → WON BY X LENGTHS (newspaper-style)
-//   • forecast no-result    → simulated margin from final X positions
-const PHOTO_FINISH_HOLD_MS = 1500;
-let photoFinishStartedAt = null;   // ms timestamp of freeze start
-let photoFinishFrozen = false;     // true while held
-let photoFinishMargin = null;      // {lengths, source, winners} cached at trigger
-
+// ════════════════════════════════════════════════════════════════
+//  MARGINS
+// ════════════════════════════════════════════════════════════════
+// Turning the Racing API beaten-distance strings into numbers and back
+// into racing copy. Used by the finish overlay, the roll call and the
+// reveal podium, so it lives between the world and the screens.
 
 // Parse the Racing API beaten-distance string into a numeric lengths
 // value. Handles: 'nse', 'sh', 'hd', 'nk', '½', '1¼', '2', '5', 'dist',
@@ -1213,7 +1508,7 @@ function _formatBeatenDistanceCompact(lengths) {
 //   source      — 'result' | 'forecast' — drives copy + chip styling
 //   winners     — array of horse names — usually [winner] or [dh1, dh2]
 function _computeWinningMargin() {
-  const ranked = horses.slice().sort((a, b) => b.progress - a.progress);
+  const ranked = rankedHorses();
   if (ranked.length < 1) return null;
   const winnerName = ranked[0].runner.name;
 
@@ -1240,279 +1535,311 @@ function _computeWinningMargin() {
 
   // ── Forecast mode — derive from final X positions ──
   // ~28px per length is calibrated against the existing track scale.
-  const rankedByX = horses.slice().sort((a, b) => b.x - a.x);
-  if (rankedByX.length < 2) {
+  // World space measures the gap in lengths directly — no pixels-per-
+  // length fudge factor, because a length IS the unit the model runs in.
+  if (ranked.length < 2) {
     return { lengths: null, source: 'forecast', winners: [winnerName] };
   }
-  const xGap = rankedByX[0].x - rankedByX[1].x;
-  const PIXELS_PER_LENGTH = 28;
-  const lengths = Math.max(0, xGap / PIXELS_PER_LENGTH);
+  const lengths = Math.max(0, ranked[1].deficit - ranked[0].deficit);
   return { lengths: lengths, source: 'forecast', winners: [winnerName] };
 }
+// ════════════════════════════════════════════════════════════════
+//  THE FIELD
+// ════════════════════════════════════════════════════════════════
+// Three things changed here from V1, and all three came straight off
+// the review:
+//
+//   • No trails. drawSpeedLines is gone. Speed now comes from the
+//     parallax planes moving past a broadly stationary pack, which is
+//     how a real camera shot reads. Streaks welded to a sprite are
+//     what made it look like a browser game.
+//   • No persistent labels. There is no name chip, no rank pill and no
+//     pulsing gold ring on any runner at any point. Identification is
+//     the broadcast lower-third plus, briefly, a thin ground marker.
+//   • Depth. Runners are drawn far-lane-first and scaled by lane, so
+//     the pack overlaps and occludes the way a real field does.
 
-function _drawFinishLinePost() {
-  // Draws a finish-line post + banner on the right edge of the
-  // canvas. Static — just a visual anchor for the photo-finish moment.
-  const T = SHARED.track || {};
-  const finishX = viewW * (T.finishX || 0.94);
-  const postTopY = viewH * 0.35;
-  const postBottomY = viewH * 0.82;
+// Coat tones — one hardcoded brown for every runner. The jockey silks
+// are what tell them apart, exactly as they do on a real racecourse.
+const HORSE_COAT       = '#3a2510';
+const HORSE_COAT_SHADE = '#1f1408';
 
-  // White vertical post
-  ctx.save();
-  ctx.fillStyle = '#ffffff';
-  ctx.strokeStyle = '#0b0e15';
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.rect(finishX - 3, postTopY, 6, postBottomY - postTopY);
-  ctx.fill();
-  ctx.stroke();
+function drawField() {
+  const vis    = visibleWorldRange(140);
+  const ranked = rankedHorses();
+  const leader = ranked[0];
 
-  // Gold finial cap
-  ctx.fillStyle = '#D4AF37';
-  ctx.beginPath();
-  ctx.arc(finishX, postTopY - 2, 4.5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#7a5a08';
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  // Far lanes first so nearer horses occlude them.
+  const drawList = horses
+    .filter((h) => h.worldX >= vis.min && h.worldX <= vis.max)
+    .sort((a, b) => a.laneT - b.laneT);
 
-  // Banner — "FINISH" with gold border
-  const banW = 96, banH = 22;
-  ctx.fillStyle = 'rgba(11, 14, 21, 0.92)';
-  ctx.strokeStyle = '#D4AF37';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.roundRect(finishX - banW / 2, postTopY - banH - 16, banW, banH, 4);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = '#D4AF37';
-  ctx.font = 'bold 13px "DM Sans", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('FINISH', finishX, postTopY - banH - 16 + 15);
-  ctx.restore();
-}
+  // The principal group stays fully lit; the tail recedes as the
+  // director closes the frame down. Nobody is removed — a horse coming
+  // through from the back still reads.
+  const groupSize = Math.min(ranked.length, Math.max(4, Math.round(ranked.length * 0.4)));
+  const inGroup = new Set();
+  for (let i = 0; i < groupSize; i++) inGroup.add(ranked[i].runner.id);
 
+  drawList.forEach((h) => {
+    const isUser = STATE.userPick && STATE.userPick.id === h.runner.id;
+    const isFox  = STATE.foxPick  && STATE.foxPick.name === h.runner.name;
 
-function _drawPhotoFinishOverlay() {
-  // Big "PHOTO FINISH" text overlay during the freeze hold. Cinema
-  // poster level — centered, large serif, gold-tinted with a slight
-  // glow. Fades in over the first 0.3s, holds, fades out.
-  if (!photoFinishStartedAt) return;
-  const elapsed = (performance.now() - photoFinishStartedAt);
-  const fadeIn  = Math.min(1, elapsed / 300);
-  const fadeOut = Math.max(0, 1 - (elapsed - (PHOTO_FINISH_HOLD_MS - 300)) / 300);
-  const alpha = Math.max(0, Math.min(fadeIn, fadeOut));
-  if (alpha <= 0) return;
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-
-  // Subtle vignette to push focus inward
-  const vg = ctx.createRadialGradient(
-    viewW / 2, viewH / 2, viewW * 0.18,
-    viewW / 2, viewH / 2, viewW * 0.65
-  );
-  vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
-  ctx.fillStyle = vg;
-  ctx.fillRect(0, 0, viewW, viewH);
-
-  // Eyebrow chip
-  ctx.fillStyle = 'rgba(11, 14, 21, 0.78)';
-  ctx.strokeStyle = '#D4AF37';
-  ctx.lineWidth = 1.2;
-  const ew = 130, eh = 22;
-  const ex = viewW / 2 - ew / 2, ey = viewH * 0.28;
-  ctx.beginPath();
-  ctx.roundRect(ex, ey, ew, eh, 999);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = '#D4AF37';
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 10.5px "DM Sans", sans-serif';
-  ctx.fillText('📸 PHOTO FINISH', viewW / 2, ey + 15);
-
-  // Big "FINISH!" headline
-  ctx.fillStyle = '#f5efde';
-  ctx.shadowColor = 'rgba(212, 175, 55, 0.65)';
-  ctx.shadowBlur = 18;
-  ctx.font = 'bold 64px "Playfair Display", Georgia, serif';
-  ctx.fillText('FINISH!', viewW / 2, viewH * 0.42);
-
-  ctx.restore();
-}
-
-
-// ── Distance overlay — newspaper-style "WON BY X LENGTHS" ──────
-// Drawn instead of the photo-finish overlay when the winning margin
-// is greater than a head. Same fade timing + vignette as the photo
-// finish; different copy + chip styling so the eye distinguishes
-// "tight" finishes from "clear" ones at a glance.
-function _drawDistanceOverlay(margin) {
-  if (!photoFinishStartedAt) return;
-  const elapsed = (performance.now() - photoFinishStartedAt);
-  const fadeIn  = Math.min(1, elapsed / 300);
-  const fadeOut = Math.max(0, 1 - (elapsed - (PHOTO_FINISH_HOLD_MS - 300)) / 300);
-  const alpha = Math.max(0, Math.min(fadeIn, fadeOut));
-  if (alpha <= 0) return;
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-
-  // Subtle vignette
-  const vg = ctx.createRadialGradient(
-    viewW / 2, viewH / 2, viewW * 0.18,
-    viewW / 2, viewH / 2, viewW * 0.65
-  );
-  vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
-  ctx.fillStyle = vg;
-  ctx.fillRect(0, 0, viewW, viewH);
-
-  // Eyebrow chip — "★ WINNER" instead of "📸 PHOTO FINISH"
-  ctx.fillStyle = 'rgba(11, 14, 21, 0.78)';
-  ctx.strokeStyle = '#D4AF37';
-  ctx.lineWidth = 1.2;
-  const ew = 110, eh = 22;
-  const ex = viewW / 2 - ew / 2, ey = viewH * 0.28;
-  ctx.beginPath();
-  ctx.roundRect(ex, ey, ew, eh, 999);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = '#D4AF37';
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 10.5px "DM Sans", sans-serif';
-  ctx.fillText('★ WINNER', viewW / 2, ey + 15);
-
-  // "WON BY" small superscript
-  ctx.fillStyle = 'rgba(245, 239, 222, 0.62)';
-  ctx.font = 'bold 14px "DM Sans", sans-serif';
-  ctx.fillText('WON BY', viewW / 2, viewH * 0.36);
-
-  // Big "X LENGTHS" headline
-  const distText = (margin && margin.lengths != null)
-    ? _formatBeatenDistance(margin.lengths)
-    : 'A CLEAR MARGIN';
-  // Auto-size: shorter strings get the full 64px treatment, longer
-  // ones (e.g. THREE-QUARTERS OF A LENGTH) downsize to fit.
-  const fontSize = distText.length > 18 ? 40 : distText.length > 12 ? 52 : 64;
-  ctx.fillStyle = '#f5efde';
-  ctx.shadowColor = 'rgba(212, 175, 55, 0.65)';
-  ctx.shadowBlur = 18;
-  ctx.font = 'bold ' + fontSize + 'px "Playfair Display", Georgia, serif';
-  ctx.fillText(distText, viewW / 2, viewH * 0.46);
-
-  // Winner name underneath — italic Iowan so it reads as caption
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#D4AF37';
-  ctx.font = 'italic 22px "Iowan Old Style", Charter, Georgia, serif';
-  const winnerName = (margin && margin.winners && margin.winners[0]) || '';
-  if (winnerName) {
-    ctx.fillText(winnerName, viewW / 2, viewH * 0.54);
-  }
-
-  ctx.restore();
-}
-
-
-// ── Dead-heat overlay — side-by-side winners ──────────────────
-function _drawDeadHeatOverlay(margin) {
-  if (!photoFinishStartedAt) return;
-  const elapsed = (performance.now() - photoFinishStartedAt);
-  const fadeIn  = Math.min(1, elapsed / 300);
-  const fadeOut = Math.max(0, 1 - (elapsed - (PHOTO_FINISH_HOLD_MS - 300)) / 300);
-  const alpha = Math.max(0, Math.min(fadeIn, fadeOut));
-  if (alpha <= 0) return;
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-
-  // Vignette
-  const vg = ctx.createRadialGradient(
-    viewW / 2, viewH / 2, viewW * 0.18,
-    viewW / 2, viewH / 2, viewW * 0.65
-  );
-  vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
-  ctx.fillStyle = vg;
-  ctx.fillRect(0, 0, viewW, viewH);
-
-  // Eyebrow chip — dead-heat themed
-  ctx.fillStyle = 'rgba(11, 14, 21, 0.78)';
-  ctx.strokeStyle = '#D4AF37';
-  ctx.lineWidth = 1.2;
-  const ew = 130, eh = 22;
-  const ex = viewW / 2 - ew / 2, ey = viewH * 0.28;
-  ctx.beginPath();
-  ctx.roundRect(ex, ey, ew, eh, 999);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = '#D4AF37';
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 10.5px "DM Sans", sans-serif';
-  ctx.fillText('🤝 DEAD HEAT', viewW / 2, ey + 15);
-
-  // Big headline
-  ctx.fillStyle = '#f5efde';
-  ctx.shadowColor = 'rgba(212, 175, 55, 0.65)';
-  ctx.shadowBlur = 18;
-  ctx.font = 'bold 56px "Playfair Display", Georgia, serif';
-  ctx.fillText('DEAD HEAT', viewW / 2, viewH * 0.42);
-
-  // Two winners side by side, joined by an ampersand
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#D4AF37';
-  ctx.font = 'italic 22px "Iowan Old Style", Charter, Georgia, serif';
-  const names = (margin && margin.winners) || [];
-  if (names.length >= 2) {
-    ctx.fillText(names[0] + '  &  ' + names[1], viewW / 2, viewH * 0.52);
-  } else if (names.length === 1) {
-    ctx.fillText(names[0], viewW / 2, viewH * 0.52);
-  }
-
-  ctx.restore();
-}
-
-
-// Public entry — called from the race loop after drawing horses.
-// Returns true when the race is in photo-finish hold (simulation
-// should freeze; race loop should not advance the clock).
-function updatePhotoFinish(progress) {
-  if (!photoFinishStartedAt && progress >= 0.999) {
-    photoFinishStartedAt = performance.now();
-    photoFinishFrozen = true;
-    photoFinishMargin = _computeWinningMargin();
-  }
-  if (photoFinishFrozen) {
-    const elapsed = performance.now() - photoFinishStartedAt;
-    const m = photoFinishMargin;
-    // Route to the right overlay based on the cached margin.
-    if (m && m.lengths === -1) {
-      _drawDeadHeatOverlay(m);
-    } else if (m && m.lengths != null && m.lengths <= 0.20) {
-      _drawPhotoFinishOverlay();    // photo finish (≤ head)
-    } else if (m && m.lengths != null) {
-      _drawDistanceOverlay(m);      // clear winner with margin
-    } else {
-      _drawPhotoFinishOverlay();    // defensive fallback
+    ctx.save();
+    if (!inGroup.has(h.runner.id) && DIRECTOR.fieldFade > 0) {
+      ctx.globalAlpha = 1 - DIRECTOR.fieldFade * 0.72;
     }
-    if (elapsed >= PHOTO_FINISH_HOLD_MS) {
-      photoFinishFrozen = false;
+
+    // Restrained identification. A thin arc of the runner's own silk
+    // colour on the turf beneath them, and only while the broadcast
+    // lower-third is naming them — it fades with idGlow. The viewer's
+    // pick and the Fox pick get a permanent but very quiet version of
+    // the same mark: no text, no box, no glow around the animal.
+    const markAlpha = Math.max(h.idGlow, (isUser || isFox) ? 0.5 : 0);
+    if (markAlpha > 0.01) {
+      drawGroundMarker(h, markAlpha, isUser ? (COL.userLabel || '#D4AF37')
+                                   : isFox  ? (COL.foxLabel  || '#E8A050')
+                                   :          (h.runner.silk || '#f5efde'));
+    }
+
+    drawHorseSilhouette(h.worldX, h.y, h, WORLD.horseScale * h.depth);
+    ctx.restore();
+  });
+}
+
+// A short bar on the turf beneath the hooves, in the runner's own silk
+// colour. Deliberately the least emphatic mark that still works: an
+// ellipse or a glow around the animal is the arcade treatment we are
+// getting rid of, and a floating chip is the label we just removed.
+function drawGroundMarker(h, alpha, colour) {
+  const s = WORLD.horseScale * h.depth;
+  ctx.save();
+  ctx.globalAlpha *= Math.min(1, alpha) * 0.75;
+  ctx.fillStyle = colour;
+  const w = 30 * s;
+  ctx.fillRect(h.worldX - w / 2, h.y + 24 * s, w, Math.max(1.5, 2 * s));
+  ctx.restore();
+}
+
+// ── Hoof dust ───────────────────────────────────────────────────
+// Spawned at each gallop ground-contact beat and drawn in WORLD space,
+// so a divot stays where it was kicked up and the camera leaves it
+// behind. In V1 the dust lived in screen space on a canvas stacked
+// underneath an opaque track, which is why nobody ever saw it.
+const MAX_PARTICLES = 160;
+
+function _spawnHoofDust(wx, y, h, cyc, artScale) {
+  if (prefersReducedMotion) return;
+  if (particles.length > MAX_PARTICLES) return;
+  if (h.speed < 0.02) return;
+
+  const STRIKES = [0.00, 0.20, 0.40];
+  const prevCyc = h.lastDustCycle == null ? cyc : h.lastDustCycle;
+  h.lastDustCycle = cyc;
+
+  for (const strike of STRIKES) {
+    const crossed = (prevCyc > strike)
+      ? (cyc < prevCyc && cyc >= strike) || (cyc < strike && cyc < prevCyc - 0.5)
+      : (cyc >= strike && prevCyc < strike);
+    if (!crossed) continue;
+
+    const puffs = Math.random() < 0.55 ? 1 : 0;
+    for (let i = 0; i < puffs; i++) {
+      particles.push({
+        x:      wx - 16 * artScale - Math.random() * 10 * artScale,
+        y:      y + 19 * artScale + Math.random() * 3,
+        // Kicked backwards hard enough to be left behind by a galloping
+        // horse — without this the puffs pool under the animal and read
+        // as a pale halo rather than as ground being torn up.
+        vx:     -3.2 - Math.random() * 3.4,
+        vy:     -0.35 - Math.random() * 0.8,
+        g:      -0.02,
+        life:   0.45 + Math.random() * 0.3,
+        size:   (2.6 + Math.random() * 2.6) * artScale,
+        depth:  artScale,
+      });
     }
   }
-  return photoFinishFrozen;
 }
 
-// Reset between races (called from the race-start path).
-function _resetPhotoFinish() {
-  photoFinishStartedAt = null;
-  photoFinishFrozen = false;
-  photoFinishMargin = null;
+// Dust is drawn inside the world transform, between the far lanes and
+// the near ones, so it sits in the pack rather than on top of it.
+function drawHoofDust(dt) {
+  const step = Math.max(0.5, Math.min(2.5, dt / 16.67));
+  particles = particles.filter((p) => {
+    p.vy += p.g * step;
+    p.x  += p.vx * step;
+    p.y  += p.vy * step;
+    p.life -= 0.014 * step;
+    if (p.life <= 0) return false;
+    ctx.globalAlpha = p.life * 0.20;
+    ctx.fillStyle = 'rgb(186,170,140)';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    return true;
+  });
+  ctx.globalAlpha = 1;
 }
 
+// ════════════════════════════════════════════════════════════════
+//  BROADCAST IDENTIFICATION
+// ════════════════════════════════════════════════════════════════
+// The replacement for the floating name chips. A lower-third slides in
+// from the left, names one runner, and leaves — the way a director cuts
+// to a name super when there is something worth saying about a horse.
+// Four in a race, ~2.6s each.
+//
+// The element is created from JS rather than declared in index.html, so
+// nothing has to move into the Django template (ARCHITECTURE.md §10).
+const BROADCAST_ID_MS = 2600;
+let _bcastEl = null;
+let _bcastTween = null;
 
-function drawHorseSilhouette(x, y, h, isUser, isFox, isLeader) {
+function broadcastEl() {
+  if (_bcastEl && _bcastEl.isConnected) return _bcastEl;
+  const screen = document.getElementById('screen-race');
+  if (!screen) return null;
+  const el = document.createElement('div');
+  el.className = 'bcast-id';
+  el.id = 'broadcastId';
+  el.setAttribute('aria-live', 'polite');
+  screen.appendChild(el);
+  _bcastEl = el;
+  return el;
+}
+
+// role: 'leader' | 'challenger' | 'interest'
+function identifyRunner(role, tag) {
+  if (!raceRunning || !horses.length) return;
+  const ranked = rankedHorses();
+  let h = null;
+  let label = tag;
+
+  if (role === 'leader') {
+    h = ranked[0];
+  } else if (role === 'challenger') {
+    h = ranked[1] || ranked[0];
+  } else {
+    // Something the viewer has a reason to care about: their own pick,
+    // then the Fox pick, then whoever is making the most ground.
+    const pick = STATE.userPick && horses.find((x) => x.runner.id === STATE.userPick.id);
+    const fox  = STATE.foxPick  && horses.find((x) => x.runner.name === STATE.foxPick.name);
+    if (pick)      { h = pick; label = label || 'YOUR PICK'; }
+    else if (fox)  { h = fox;  label = label || 'FOX PICK';  }
+    else           { h = ranked[Math.min(2, ranked.length - 1)]; label = label || 'IN TOUCH'; }
+  }
+  if (!h) return;
+  showBroadcastId(h, label || 'IN FRONT');
+}
+
+function showBroadcastId(h, tag) {
+  const el = broadcastEl();
+  if (!el) return;
+
+  el.innerHTML =
+    '<span class="bcast-id__silk">' + renderCapSvg(h.runner) + '</span>' +
+    '<span class="bcast-id__body">' +
+      '<span class="bcast-id__name">' + h.runner.name + '</span>' +
+      '<span class="bcast-id__meta">' + h.runner.jockey + ' &middot; ' + h.runner.odds + '</span>' +
+    '</span>' +
+    '<span class="bcast-id__tag">' + tag + '</span>';
+
+  if (_bcastTween) _bcastTween.kill();
+  const tl = gsap.timeline();
+  tl.fromTo(el, { opacity: 0, x: -26 },
+                { opacity: 1, x: 0, duration: 0.42, ease: 'power3.out' });
+  tl.to(el, { opacity: 0, x: -14, duration: 0.34, ease: 'power2.in' },
+        '+=' + (BROADCAST_ID_MS / 1000));
+  _bcastTween = tl;
+
+  // Matching ground marker under that runner, for exactly as long as
+  // the lower-third is up.
+  gsap.killTweensOf(h);
+  gsap.fromTo(h, { idGlow: 0 }, {
+    idGlow: 0.85, duration: 0.4, ease: 'power2.out',
+    onComplete: () => gsap.to(h, {
+      idGlow: 0, duration: 0.5, delay: BROADCAST_ID_MS / 1000, ease: 'power2.in',
+    }),
+  });
+}
+
+function clearBroadcastId() {
+  if (_bcastTween) { _bcastTween.kill(); _bcastTween = null; }
+  if (_bcastEl) { _bcastEl.innerHTML = ''; gsap.set(_bcastEl, { opacity: 0 }); }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  RENDER LOOP
+// ════════════════════════════════════════════════════════════════
+// Runs on gsap.ticker rather than a private requestAnimationFrame, so
+// the timeline and the renderer are stepped by the same clock in the
+// same order every frame. A frame reads state and draws; it never
+// advances time and never decides anything about the race.
+
+function renderFrame() {
+  if (!raceRunning) return;
+
+  const dt = Math.min(gsap.ticker.deltaRatio() * 16.667, 50);
+  frameClock += dt;
+
+  updateRaceModel(dt);
+  updateCamera(dt);
+
+  drawBackdrop();
+
+  ctx.clearRect(0, 0, viewW, viewH);
+  pushWorldTransform(ctx);
+  drawTurf();
+  drawFarRail();
+  drawFurlongMarkers();
+  drawWinningPost();
+  drawHoofDust(dt);
+  drawField();
+  ctx.restore();
+
+  drawForegroundPlane();
+  drawAtmosphere();
+
+  // DOM overlays — cheap, and each throttles itself.
+  const p = DIRECTOR.progress;
+  fireCommentary(p);
+  updateCommentary(dt);
+  updateLeaderboard(dt);
+  updateRacePhaseTitle(p);
+}
+
+// The editorial phase title and strip still come from BAND.phaseTable,
+// which is tuned in the seed JSON. The final-furlong label is owned by
+// the master timeline, so we stop overwriting it once we are past it.
+function updateRacePhaseTitle(progress) {
+  const pt = BAND.phaseTable;
+  if (!pt || !pt.length) return;
+  let active = pt[0];
+  for (let i = 1; i < pt.length; i++) {
+    if (progress >= pt[i].from) active = pt[i];
+    else break;
+  }
+  if (DIRECTOR.phase !== 'line') setPhaseTitle(active.label);
+  updatePhaseStrip(progress, pt, active);
+}
+
+function startTicker() {
+  if (tickerRunning) return;
+  gsap.ticker.add(renderFrame);
+  tickerRunning = true;
+}
+
+function stopTicker() {
+  if (!tickerRunning) return;
+  gsap.ticker.remove(renderFrame);
+  tickerRunning = false;
+}
+// ════════════════════════════════════════════════════════════════
+//  THE HORSE
+// ════════════════════════════════════════════════════════════════
+
+function drawHorseSilhouette(x, y, h, artScale) {
   // ════════════════════════════════════════════════════════════════
   // SPRINT P5 — anatomically richer silhouette + 4-beat gallop cycle.
   //
@@ -1529,10 +1856,21 @@ function drawHorseSilhouette(x, y, h, isUser, isFox, isLeader) {
   //   • Anatomy detail: defined eye, ear, nostril, mouth-open in
   //     slow-mo, muscle shadow on the haunches + shoulder
   //
-  // Heavy mode (Q2=Heavy chosen): hoof-strike dust particles spawned
-  // by _spawnHoofDust() at each ground-contact beat.
+  // V2 additions on top of that:
+  //   • scale — the viewport's horse size multiplied by the lane's
+  //     distance from camera. Far-rail runners draw smaller, near-side
+  //     runners larger. It is the single cheapest thing that turns a
+  //     row of icons into a pack.
+  //   • Micro-motion — a body roll and a head nod driven off swayPhase,
+  //     a few degrees and a couple of pixels. Not visible as an effect;
+  //     very visible by its absence.
+  //   • Nothing decorative is attached to the animal any more: no ring,
+  //     no aura, no trail, no label. Identification happens elsewhere.
+  //
+  // Hoof-strike dust particles are spawned by _spawnHoofDust() at each
+  // ground-contact beat, in world space.
   // ════════════════════════════════════════════════════════════════
-  const scale = 0.95;
+  const scale = artScale || 1;
 
   // ── 4-beat gallop math ─────────────────────────────────────
   // legPhase advances each frame in the race loop. We map it onto
@@ -1570,26 +1908,27 @@ function drawHorseSilhouette(x, y, h, isUser, isFox, isLeader) {
     ? Math.sin((cyc - 0.60) / 0.40 * Math.PI) : 0;
   const bodyLift = -suspensionPhase * 2.2;
 
-  const sinT = Math.sin(h.legPhase);  // legacy for mane sway
-  const cosT = Math.cos(h.legPhase);
-
   // ── Slow-mo / finish detection — drives whip raise + mouth-open ──
-  const progressNow = raceDuration > 0
-    ? Math.min(raceTime / raceDuration, 1) : 0;
+  const progressNow = DIRECTOR.progress;
   const inFinalStretch = progressNow >= 0.85;
   const inSlowMo       = progressNow >= 0.88;
 
   const silk  = h.runner.silk  || COL.silkDefault;
   const silk2 = h.runner.silk2 || COL.silk2Default;
 
-  // ── HEAVY: hoof-strike dust particles ───────────────────────
-  // Spawn a small dust puff at each ground-contact beat. Tracked
-  // per-horse via h.lastDustCycle so we don't spam the particle
-  // system every frame between strikes.
-  _spawnHoofDust(x, y, h, cyc);
+  // ── Hoof-strike dust ────────────────────────────────────────
+  // Spawned in WORLD coordinates at each ground-contact beat, tracked
+  // per-horse via h.lastDustCycle so we do not spam the particle system
+  // every frame between strikes.
+  _spawnHoofDust(x, y, h, cyc, scale);
+
+  // Galloping micro-motion: the body rolls a degree or two with the
+  // stride and the whole animal rises fractionally through suspension.
+  const roll = Math.sin(h.swayPhase) * 0.018 + Math.sin(h.legPhase) * 0.010;
 
   ctx.save();
-  ctx.translate(x, y + bodyLift);
+  ctx.translate(x, y + bodyLift * scale);
+  ctx.rotate(roll);
   ctx.scale(scale, scale);
 
   // ── Track shadow (compresses during suspension) ──────────
@@ -1599,20 +1938,6 @@ function drawHorseSilhouette(x, y, h, isUser, isFox, isLeader) {
   ctx.beginPath();
   ctx.ellipse(0, 22 - bodyLift, shadowW, 4, 0, 0, Math.PI * 2);
   ctx.fill();
-
-  // ── Selection glow ─────────────────────────────────────
-  if (isUser || isFox || isLeader) {
-    const glow = isUser ? 'rgba(212,175,55,0.42)' :
-                 isFox  ? 'rgba(220,130,30,0.38)' :
-                          'rgba(255,255,255,0.22)';
-    const grd = ctx.createRadialGradient(0, 0, 4, 0, 0, 38);
-    grd.addColorStop(0, glow);
-    grd.addColorStop(1, 'transparent');
-    ctx.fillStyle = grd;
-    ctx.beginPath();
-    ctx.ellipse(2, 0, 38, 20, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
 
   // ── Back legs (off-hind + lead-hind) ────────────────────
   // Each hind leg renders as a hip→hock→hoof segment so the
@@ -1849,46 +2174,6 @@ function drawHorseSilhouette(x, y, h, isUser, isFox, isLeader) {
 
   ctx.restore();
 }
-
-// ─── Particles ──────────────────────────────────────────────────
-function spawnConfetti(x, y, count, colour) {
-  for (let i = 0; i < count; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const sp = 2 + Math.random() * 6;
-    particles.push({
-      x, y,
-      vx: Math.cos(a) * sp,
-      vy: Math.sin(a) * sp - 4,
-      g: 0.18 + Math.random() * 0.1,
-      life: 1,
-      size: 4 + Math.random() * 4,
-      colour,
-      rot: Math.random() * Math.PI,
-      rotSpeed: (Math.random() - 0.5) * 0.4,
-    });
-  }
-}
-
-function drawParticles(dt) {
-  pCtx.clearRect(0, 0, viewW, viewH);
-  particles = particles.filter((p) => {
-    p.vy += p.g;
-    p.x += p.vx;
-    p.y += p.vy;
-    p.rot += p.rotSpeed;
-    p.life -= 0.012;
-    if (p.life <= 0 || p.y > viewH + 30) return false;
-    pCtx.save();
-    pCtx.globalAlpha = p.life;
-    pCtx.translate(p.x, p.y);
-    pCtx.rotate(p.rot);
-    pCtx.fillStyle = p.colour;
-    pCtx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.5);
-    pCtx.restore();
-    return true;
-  });
-}
-
 // ─── Commentary ─────────────────────────────────────────────────
 function fireCommentary(progress) {
   (BAND.commentary || []).forEach((c) => {
@@ -1903,10 +2188,7 @@ function fireCommentary(progress) {
 // state. Mirror of the same helper in experience.js.
 function _renderCommentary(template) {
   if (!template || template.indexOf('{') === -1) return template;
-  const liveLeader = horses.reduce(
-    (best, h) => (h.progress > (best ? best.progress : -1)) ? h : best,
-    null
-  );
+  const liveLeader = rankedHorses()[0] || null;
   const leaderName = liveLeader ? liveLeader.runner.name : '';
   const userName   = (STATE.userPick && STATE.userPick.name) || '';
   const foxName    = (STATE.foxPick  && STATE.foxPick.name)  || '';
@@ -2093,47 +2375,74 @@ function buildLeaderboard() {
   });
 }
 
-function updateLeaderboard() {
+// Live Positions is now animated rather than rewritten. V1 wrote
+// row.style.transform on every row on every frame and let a CSS
+// transition try to catch up, which produced a permanently-in-flight
+// panel where nothing read as a change. Here the ranking is sampled a
+// few times a second, and a row is only touched when its rank actually
+// moves — at which point GSAP slides it, the position number flips, and
+// the row briefly carries a direction class so the eye is drawn to the
+// change instead of to the constant motion.
+const LB_SAMPLE_MS   = 220;
+const LB_SLIDE_S     = 0.45;
+let   _lbSampleTimer = 0;
+
+function updateLeaderboard(dt) {
   const c = document.getElementById('raceLeaderboard');
   if (!c) return;
 
-  // Mobile: shift the leaderboard panel from top-right to left
-  // once the race is past halfway. Keeps the finishing line
-  // unobscured on narrow viewports. Mirrors experience.js' logic
-  // so jumps + flat behave identically.
-  const isMobile = window.innerWidth <= 768;
-  if (isMobile) {
-    const lb = document.querySelector('.race-leaderboard');
-    if (lb && raceDuration > 0) {
-      const progress = raceTime / raceDuration;
-      if (progress >= 0.5) lb.classList.add('lb-shifted-left');
-      else lb.classList.remove('lb-shifted-left');
-    }
-  }
+  _lbSampleTimer -= dt;
+  if (_lbSampleTimer > 0) return;
+  _lbSampleTimer = LB_SAMPLE_MS;
 
-  const rowH = _lbRowHeightPx();
-  const ranked = horses.slice().sort((a, b) => b.progress - a.progress);
+  // V1 slid this panel to the left edge halfway through the race so it
+  // would not cover the finish line, which in V1 was pinned near the
+  // right edge of the viewport for the whole race. In V2 the line is in
+  // world space and arrives at the camera anchor — left of centre — so
+  // the old shift moves the panel INTO the finish rather than out of
+  // it. The panel now stays where it starts.
+
+  const rowH   = _lbRowHeightPx();
+  const ranked = rankedHorses();
+
   ranked.forEach((h, rank) => {
+    if (h.lbRank === rank) return;          // nothing moved — leave it alone
+
     const row = c.querySelector('[data-runner="' + h.runner.id + '"]');
     if (!row) return;
+    const climbed = h.lbRank >= 0 && rank < h.lbRank;
+    const fell    = h.lbRank >= 0 && rank > h.lbRank;
+    h.lbRank = rank;
+
     const inView = rank < LB_VISIBLE_ROWS;
-    if (inView) {
-      row.style.transform = 'translateY(' + (rank * rowH) + 'px)';
-      row.style.opacity = '1';
-      row.style.zIndex = String(LB_VISIBLE_ROWS - rank);
-      const pos = row.querySelector('.race-lb-pos');
-      if (pos) {
-        pos.textContent = rank + 1;
-        pos.className = 'race-lb-pos p' + (rank + 1);
-      }
-    } else {
-      row.style.transform = 'translateY(' + (LB_VISIBLE_ROWS * rowH) + 'px)';
-      row.style.opacity = '0';
-      row.style.zIndex = '0';
+    gsap.to(row, {
+      y:        (inView ? rank : LB_VISIBLE_ROWS) * rowH,
+      opacity:  inView ? 1 : 0,
+      duration: LB_SLIDE_S,
+      ease:     'power3.out',
+      overwrite: 'auto',
+    });
+    row.style.zIndex = String(inView ? LB_VISIBLE_ROWS - rank : 0);
+
+    if (!inView) return;
+
+    const pos = row.querySelector('.race-lb-pos');
+    if (pos) {
+      pos.className = 'race-lb-pos p' + (rank + 1);
+      // Flip the number rather than swapping the text under the reader.
+      gsap.fromTo(pos,
+        { y: climbed ? 8 : fell ? -8 : 0, opacity: 0.2 },
+        { y: 0, opacity: 1, duration: 0.32, ease: 'power2.out',
+          onStart: () => { pos.textContent = rank + 1; } });
+    }
+
+    if (climbed || fell) {
+      const cls = climbed ? 'is-climbing' : 'is-falling';
+      row.classList.add(cls);
+      gsap.delayedCall(0.65, () => row.classList.remove(cls));
     }
   });
 }
-
 // ─── Phase title ───────────────────────────────────────────────
 let lastPhaseTitle = '';
 function setPhaseTitle(text) {
@@ -2145,71 +2454,128 @@ function setPhaseTitle(text) {
   el.textContent = text;
 }
 
-// ─── Photo finish ──────────────────────────────────────────────
-// Photo-finish gate — runs only at the moment the engine is about
-// to fire the overlay. Replay mode: read the 1st-to-2nd gap from
-// REPLAY_DATA.lengths_behind_winner; skip if > 1.0 lengths. Forecast
-// mode: always fire (we have no real result to compare against).
-const PHOTO_FINISH_MAX_GAP_LENGTHS = 1.0;
-function _shouldFirePhotoFinish() {
-  if (!REPLAY_DATA || !REPLAY_DATA.has_result || !REPLAY_DATA.has_distances) {
-    return true;
-  }
-  const order = REPLAY_DATA.result_order || [];
-  if (order.length < 2) return true;
-  const secondId = order[1];
-  const gap = (REPLAY_DATA.lengths_behind_winner || {})[secondId];
-  if (gap === undefined) return true;
-  return gap <= PHOTO_FINISH_MAX_GAP_LENGTHS;
+// ════════════════════════════════════════════════════════════════
+//  CROSSING THE LINE
+// ════════════════════════════════════════════════════════════════
+// The moment the race is decided is its own sequence, not a fade. In
+// order:
+//
+//   1. A single frame of flash as the field hits the line.
+//   2. A held shot. The horses stop, the camera does not — it keeps
+//      drifting in on the winner for the better part of a second with
+//      nothing on screen but the result of the race. This pause is the
+//      whole point of the sequence; take it out and the finish reads
+//      as an animation ending rather than a race being won.
+//   3. The result card, sized to the actual margin.
+//   4. Out to the roll call.
+//
+// Like everything else in the race, it is one GSAP timeline.
+const FINISH_PAUSE_S = 0.85;   // silence between the line and the card
+const RESULT_HOLD_S  = 2.30;
+
+function crossTheLine() {
+  const margin = _computeWinningMargin();
+  STATE.finishMargin = margin;
+  setPhaseTitle('PAST THE POST');
+  clearBroadcastId();
+
+  finishTL = gsap.timeline({ onComplete: () => raceFinish(margin) });
+
+  // 1 — the flash
+  finishTL.to(DIRECTOR, { flash: 1, duration: 0.06, ease: 'none' }, 0);
+  finishTL.to(DIRECTOR, { flash: 0, duration: 0.55, ease: 'power2.out' }, 0.06);
+
+  // 2 — the held shot. Slow, continuous, and completely uneventful.
+  const drift = prefersReducedMotion ? 0 : 1;
+  finishTL.to(DIRECTOR, {
+    zoom:     DIRECTOR.zoom + 0.24 * drift,
+    camY:     DIRECTOR.camY + 9 * drift,
+    tilt:     DIRECTOR.tilt + 0.004 * drift,
+    vignette: 0.46,
+    duration: 2.6, ease: 'sine.out',
+  }, 0);
+
+  // 3 — the result card
+  finishTL.call(() => showResultCard(margin), null, FINISH_PAUSE_S);
+  finishTL.call(() => hideResultCard(), null, FINISH_PAUSE_S + RESULT_HOLD_S);
+  finishTL.to({}, { duration: FINISH_PAUSE_S + RESULT_HOLD_S + 0.5 }, 0);
 }
 
-function triggerPhotoFinish() {
-  const el = document.getElementById('flatPhotoFinish');
+// ── Result card ─────────────────────────────────────────────────
+// A DOM lower-third rather than canvas text: it stays sharp at every
+// pixel ratio, reflows on a phone without a font-size table, and the
+// entry animation is a GSAP timeline like everything else. Created
+// from JS so index.html and the Django template are untouched.
+let _resultEl = null;
+
+function resultCardEl() {
+  if (_resultEl && _resultEl.isConnected) return _resultEl;
+  const screen = document.getElementById('screen-race');
+  if (!screen) return null;
+  const el = document.createElement('div');
+  el.className = 'race-result';
+  el.id = 'raceResult';
+  screen.appendChild(el);
+  _resultEl = el;
+  return el;
+}
+
+function showResultCard(margin) {
+  const el = resultCardEl();
   if (!el) return;
-  el.classList.add('is-active');
-  setTimeout(() => el.classList.remove('is-active'),
-    (SHARED.photoFinishHoldMs || 900) + 400);
+
+  const lengths = margin && margin.lengths;
+  const names   = (margin && margin.winners) || [];
+  const isDH    = lengths === -1;
+  const isPhoto = !isDH && lengths != null && lengths <= 0.20;
+
+  const eyebrow = isDH    ? 'DEAD HEAT'
+                : isPhoto ? 'PHOTO FINISH'
+                :           'WINNER';
+  const headline = isDH ? names.slice(0, 2).join('  &  ')
+                        : (names[0] || '');
+  const sub = isDH ? 'Nothing between them'
+            : (lengths != null ? 'Won by ' + _formatBeatenDistance(lengths).toLowerCase()
+                               : 'Won on the line');
+
+  el.innerHTML =
+    '<span class="race-result__eyebrow">' + eyebrow + '</span>' +
+    '<span class="race-result__name">' + headline + '</span>' +
+    '<span class="race-result__margin">' + sub + '</span>';
+  el.classList.toggle('race-result--photo', isPhoto || isDH);
+
+  gsap.timeline()
+    .set(el, { display: 'flex' })
+    .fromTo(el, { opacity: 0, y: 18 },
+                { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' })
+    .fromTo(el.querySelectorAll('span'),
+            { opacity: 0, y: 10 },
+            { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease: 'power2.out' }, 0.06);
 }
 
-// ─── Race finish + reveal ──────────────────────────────────────
-function raceFinish() {
-  const winner = STATE.simResult.winner;
+function hideResultCard() {
+  if (!_resultEl) return;
+  gsap.to(_resultEl, {
+    opacity: 0, y: -10, duration: 0.4, ease: 'power2.in',
+    onComplete: () => { if (_resultEl) _resultEl.style.display = 'none'; },
+  });
+}
+
+// ─── Race finish → roll call ───────────────────────────────────
+function raceFinish(margin) {
+  raceRunning = false;
+  stopTicker();
+
+  const winner    = STATE.simResult.winner;
   const positions = STATE.simResult.positions;
-  const T = BAND.timings || {};
 
-  // Particles are drawn on the un-transformed pCanvas, so bursts need
-  // SCREEN-space coordinates. During closeup the camera is zoomed and
-  // the leader appears at viewW/2 + (canvasX - cameraX) × cameraZoom.
-  const winnerHorse = horses.find((h) => h.runner.id === winner.id);
-  let burstX, burstY;
-  if (winnerHorse && cameraZoom > 1.05) {
-    burstX = viewW / 2 + (winnerHorse.x - cameraX) * cameraZoom;
-    burstY = viewH / 2 + (winnerHorse.y - cameraY) * cameraZoom;
-  } else {
-    burstX = viewW * (TRK.finishX || 0.94);
-    burstY = viewH * 0.5;
-  }
+  const line = (margin && margin.lengths === -1)
+    ? `${winner.name} — a dead heat!`
+    : `${winner.name} wins it.`;
+  setCommentaryText(line);
 
-  const bursts = T.raceEndConfettiBursts || 7;
-  const interval = T.raceEndConfettiIntervalMs || 170;
-  for (let i = 0; i < bursts; i++) {
-    setTimeout(() => {
-      spawnConfetti(burstX, burstY, 22, COL.gold || '#D4AF37');
-      spawnConfetti(burstX, burstY, 18, COL.goldLight || '#F5E49A');
-      spawnConfetti(burstX, burstY, 12, '#ffffff');
-    }, i * interval);
-  }
-
-  setCommentaryText(`${winner.name} wins! What a race!`);
-  showSubtitle(`${winner.name} — the winner!`, T.winnerHoldMs || 3800);
-
-  setTimeout(() => {
-    if (animFrame) cancelAnimationFrame(animFrame);
-    pCtx.clearRect(0, 0, viewW, viewH);
-    runRollCall(positions, winner);
-  }, T.winnerHoldMs || 3800);
+  runRollCall(positions, winner);
 }
-
 // ─── Roll Call ──────────────────────────────────────────────────
 // Post-race walkthrough of every finisher, LAST → FIRST. Mirrors
 // experience.js — Phase 3 will hoist into a shared module. Reuses
@@ -2462,24 +2828,49 @@ window.replayExperience = function () {
   if (rcStage) rcStage.innerHTML = '';
   const rcProgress = document.getElementById('rollcallProgress');
   if (rcProgress) rcProgress.innerHTML = '';
-  // Race-engine state
-  particles = [];
-  horses = [];
-  raceTime = 0;
+
+  // ── Race engine ──
+  // Kill the timelines first: they write into DIRECTOR every tick, so
+  // resetting the director while one is still alive gets overwritten
+  // on the very next frame.
+  if (masterTL) { masterTL.kill(); masterTL = null; }
+  if (finishTL) { finishTL.kill(); finishTL = null; }
+  gsap.killTweensOf(DIRECTOR);
+  horses.forEach((h) => gsap.killTweensOf(h));
+  stopTicker();
+
   raceRunning = false;
-  photoFinishFired = false;
+  particles   = [];
+  horses      = [];
+  frameClock  = 0;
   lastPhaseTitle = '';
   firedCommentary.clear();
-  _resetPhotoFinish();   // P5 — clear the in-canvas photo-finish hold state
-  if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+  _lbSampleTimer = 0;
+  _rankedCache   = [];
+  _rankedCacheAt = -1;
+  STATE.finishMargin = null;
+
+  Object.assign(DIRECTOR, {
+    progress: 0, zoom: 1, anchorX: 0.50, camY: 0, tilt: 0, shake: 0,
+    vignette: 0.10, groupBias: 0.12, fieldFade: 0, flash: 0, reveal: 0,
+    phase: 'cruise',
+  });
+  CAM.x = 0; CAM.zoom = 1; CAM.shakeX = 0; CAM.shakeY = 0;
+
   pCtx.clearRect(0, 0, viewW, viewH);
   ctx.clearRect(0, 0, viewW, viewH);
 
-  // Camera back to neutral so the next race opens on the wide track.
-  cameraZoom = 1; cameraX = viewW / 2; cameraY = viewH / 2;
-  cameraTargetZoom = 1; cameraTargetX = viewW / 2; cameraTargetY = viewH / 2;
+  // Race-screen overlays
+  const raceScreen = document.getElementById('screen-race');
+  if (raceScreen) {
+    raceScreen.classList.remove('is-final-furlong');
+    delete raceScreen.dataset.racePhase;
+  }
+  clearBroadcastId();
+  if (_resultEl) { _resultEl.style.display = 'none'; gsap.set(_resultEl, { opacity: 0 }); }
+  const strip = document.getElementById('phaseStrip');
+  if (strip) strip.remove();
 
-  // Overlays
   const stalls = document.getElementById('flatStalls');
   if (stalls) stalls.classList.remove('is-opening', 'is-hidden');
   const photo = document.getElementById('flatPhotoFinish');
@@ -2505,3 +2896,8 @@ window.replayExperience = function () {
 
   showScreen('intro');
 };
+
+// First layout. Deliberately the last statement in the module: resize()
+// populates the parallax tile cache, and `const TILES` is declared far
+// below this point in source order.
+resize();
