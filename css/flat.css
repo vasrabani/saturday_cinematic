@@ -720,7 +720,10 @@
 .race-result {
   position: absolute;
   left: 50%;
-  top: 46%;
+  /* High in the frame on purpose: the finish shot now has eight or nine
+     horses running through the middle of it, and a card centred at 46%
+     sat straight on top of them. */
+  top: 27%;
   transform: translate(-50%, -50%);
   z-index: 12;
   display: none;
@@ -752,7 +755,7 @@
 
 .race-result__name {
   font-family: 'Playfair Display', Georgia, serif;
-  font-size: clamp(30px, 6vw, 68px);
+  font-size: clamp(28px, 5vw, 58px);
   font-weight: 900;
   line-height: 1.05;
   color: #F5EFDE;
@@ -849,7 +852,7 @@
   }
   .bcast-id__silk { width: 18px; height: 18px; }
   .bcast-id__tag  { font-size: 8px; letter-spacing: 0.12em; padding: 2px 6px; }
-  .race-result    { padding: 16px 20px 20px; width: min(92vw, 520px); }
+  .race-result    { padding: 16px 20px 20px; width: min(92vw, 520px); top: 24%; }
 }
 
 @media (max-width: 480px) {

@@ -310,6 +310,7 @@ const DIRECTOR = {
   fieldFade: 0,      // how far the back markers recede
   flash:     0,      // white flash at the line
   reveal:    0,      // finish-card reveal 0 → 1
+  runOut:    0,      // lengths run on past the post after the line
   phase:     'cruise',
 };
 
@@ -659,11 +660,12 @@ function finalLengthsFor(runner, rank) {
   }
   // Forecast, or a replay with no parsed distances: invent a plausible
   // fan-out. Sprints finish tighter than stayers.
-  const per = STATE.raceBand === 'sprint' ? 0.85
-            : STATE.raceBand === 'mile'   ? 1.15
-            :                               1.45;
-  return rank === 0 ? 0
-       : Math.min(MAX_VISIBLE_LENGTHS, rank * per + Math.random() * per);
+  const band = STATE.raceBand === 'sprint' ? 0.86
+             : STATE.raceBand === 'mile'   ? 0.95
+             :                               1.05;
+  if (rank === 0) return 0;
+  const lengths = band * (0.42 * Math.pow(rank, 1.45) + Math.random() * 0.3);
+  return Math.min(MAX_VISIBLE_LENGTHS, lengths);
 }
 
 // Pace style shapes a horse's race without changing its result.
@@ -721,9 +723,27 @@ function buildHorseObjects(positions) {
       surges.push({ start: w.start, duration: w.duration, lengths: w.boost * 2.0 });
     }
 
+    const finalLengths = finalLengthsFor(r, rank);
+
+    // The finish duel. The placed horses get a surge timed at the top of
+    // the straight that all but wipes out their deficit, so they draw
+    // upsides the leader and the last furlong is a question rather than
+    // a formality. surgeWeight collapses to zero by the line, so the
+    // margin the payload specifies is still exactly what gets drawn.
+    if (rank >= 1 && rank <= 2 && finalLengths > 0.15) {
+      // Capped, and deliberately. Sized purely off the final margin, a
+      // runaway would have the runner-up close thirteen lengths and then
+      // shed them again in the last few strides, which looks like the
+      // horse stopping rather than the winner going away. Three and a
+      // half lengths is enough to make a close race a question without
+      // rewriting a one-sided one.
+      const closing = Math.min(finalLengths * (rank === 1 ? 0.95 : 0.75), 3.5);
+      surges.push({ start: 0.84 + rank * 0.02, duration: 0.15, lengths: closing });
+    }
+
     return {
       runner:        r,
-      finalLengths:  finalLengthsFor(r, rank),
+      finalLengths:  finalLengths,
       paceBias:      paceBiasFor(count),
       deficit:       0,      // live lengths behind the leader
       travel:        0,      // lengths covered
@@ -778,8 +798,10 @@ const DEFICIT_TAU_MS = 320;
 function updateRaceModel(dt) {
   const p = DIRECTOR.progress;
 
-  // Where the front of the race is, in lengths.
-  const leaderTravel = p * WORLD.spanLengths;
+  // Where the front of the race is, in lengths. runOut carries the field
+  // on past the winning post after the line — horses do not stop dead on
+  // it, and it is what gives the placed runners somewhere to finish.
+  const leaderTravel = p * WORLD.spanLengths + DIRECTOR.runOut;
 
   // Fan-out: 5% of the final spread at the gate, 100% at the line.
   const fan = (0.05 + 0.95 * smoothstep(0, 1, p)) * WORLD.spreadScale;
@@ -928,8 +950,8 @@ function addFinalFurlongSequence(tl, durationS) {
   const seg = durationS * (1 - RACE_PHASES[3].from);
 
   tl.to(DIRECTOR, {
-    zoom: 1.72, anchorX: 0.36, groupBias: 1, vignette: 0.34,
-    shake: SHAKE * 2.4, camY: 14, tilt: 0.009, fieldFade: 0.55,
+    zoom: 1.52, anchorX: 0.42, groupBias: 0.94, vignette: 0.34,
+    shake: SHAKE * 2.4, camY: 12, tilt: 0.009, fieldFade: 0.45,
     duration: seg * 0.75, ease: 'power2.in',
   }, 'line');
 
@@ -999,7 +1021,17 @@ function principalGroupFocus() {
 function updateCamera(dt) {
   // Look a little up the track as the pace lifts, so the viewer sees
   // where the race is going rather than where it has been.
-  const target = principalGroupFocus() + viewW * 0.05 * DIRECTOR.progress;
+  let target = principalGroupFocus() + viewW * 0.05 * DIRECTOR.progress;
+
+  // While the field is running through the line, keep the winning post
+  // in shot. On a blanket finish the group centroid IS the winner, so
+  // the camera follows them ten lengths past the post and the line
+  // itself slides off the left edge — exactly the moment the viewer
+  // most wants to see it.
+  if (DIRECTOR.runOut > 0.01) {
+    const maxAhead = (viewW * DIRECTOR.anchorX - viewW * 0.10) / CAM.zoom;
+    target = Math.min(target, WORLD.spanPx + maxAhead);
+  }
 
   const k = 1 - Math.exp(-dt / CAM_FOLLOW_TAU_MS);
   CAM.x    += (target - CAM.x) * k;
@@ -2732,8 +2764,13 @@ function setPhaseTitle(text) {
 //   4. Out to the roll call.
 //
 // Like everything else in the race, it is one GSAP timeline.
-const FINISH_PAUSE_S = 0.85;   // silence between the line and the card
-const RESULT_HOLD_S  = 2.30;
+// How far the field runs on past the post. Ten lengths puts eight or
+// nine runners through the line behind the winner before everything
+// settles, which is what makes the finish read as a race rather than as
+// one horse arriving.
+const RUN_OUT_LENGTHS = 10;
+const FINISH_PAUSE_S  = 2.45;  // line → placings settle → held beat → card
+const RESULT_HOLD_S   = 2.30;
 
 function crossTheLine() {
   const margin = _computeWinningMargin();
@@ -2743,21 +2780,43 @@ function crossTheLine() {
 
   finishTL = gsap.timeline({ onComplete: () => raceFinish(margin) });
 
-  // 1 — the flash
+  // 1 — the flash as the winner hits the line
   finishTL.to(DIRECTOR, { flash: 1, duration: 0.06, ease: 'none' }, 0);
   finishTL.to(DIRECTOR, { flash: 0, duration: 0.55, ease: 'power2.out' }, 0.06);
 
-  // 2 — the held shot. Slow, continuous, and completely uneventful.
-  const drift = prefersReducedMotion ? 0 : 1;
+  // 2 — the run-out. The field carries on past the post and decelerates,
+  //     which is both what horses actually do and what gives the placed
+  //     runners somewhere to finish. Twelve lengths is enough for eight
+  //     or nine of them to come through behind the winner.
   finishTL.to(DIRECTOR, {
-    zoom:     DIRECTOR.zoom + 0.24 * drift,
-    camY:     DIRECTOR.camY + 9 * drift,
-    tilt:     DIRECTOR.tilt + 0.004 * drift,
-    vignette: 0.46,
-    duration: 2.6, ease: 'sine.out',
+    runOut: RUN_OUT_LENGTHS,
+    duration: prefersReducedMotion ? 0.6 : 2.2,
+    ease: 'power2.out',
   }, 0);
 
-  // 3 — the result card
+  // 3 — and the camera opens up to show them do it. Through the final
+  //     furlong the shot is tight on the leader; at the line it widens
+  //     and falls back off the winner onto the group, which is the cut a
+  //     broadcast director makes to show you the placings. Without this
+  //     the winner runs on alone and everyone else finishes off-frame.
+  finishTL.to(DIRECTOR, {
+    zoom: 1.08, anchorX: 0.62, groupBias: 0.1, fieldFade: 0.10,
+    camY: 4, tilt: 0.003, vignette: 0.28,
+    duration: 1.5, ease: 'power2.out',
+  }, 0.05);
+
+  // 4 — the held shot. Everything has settled; the camera drifts and
+  //     nothing else happens. This pause is the whole point of the
+  //     sequence — take it out and the finish reads as an animation
+  //     ending rather than a race being won.
+  const drift = prefersReducedMotion ? 0 : 1;
+  finishTL.to(DIRECTOR, {
+    zoom: 1.08 + 0.10 * drift,
+    vignette: 0.42,
+    duration: 1.6, ease: 'sine.out',
+  }, 1.55);
+
+  // 5 — the result card
   finishTL.call(() => showResultCard(margin), null, FINISH_PAUSE_S);
   finishTL.call(() => hideResultCard(), null, FINISH_PAUSE_S + RESULT_HOLD_S);
   finishTL.to({}, { duration: FINISH_PAUSE_S + RESULT_HOLD_S + 0.5 }, 0);
@@ -3115,7 +3174,7 @@ window.replayExperience = function () {
   Object.assign(DIRECTOR, {
     progress: 0, zoom: 1, anchorX: 0.50, camY: 0, tilt: 0, shake: 0,
     vignette: 0.10, groupBias: 0.12, fieldFade: 0, flash: 0, reveal: 0,
-    phase: 'cruise',
+    runOut: 0, phase: 'cruise',
   });
   CAM.x = 0; CAM.zoom = 1; CAM.shakeX = 0; CAM.shakeY = 0;
 
