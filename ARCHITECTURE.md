@@ -307,11 +307,26 @@ The horses are drawn procedurally in `drawHorseSilhouette()` as a chain of ellip
 - **Legibility at all scales**: the same code renders convincingly at phone width (250px lane widths) and desktop (900px+).
 - **Cheap**: canvas + simple geometry keeps this at 60fps on mid-range phones.
 
+**Proportions carry this drawing, not detail.** A thoroughbred is leggy and shallow through the body: the legs are about as long as the barrel is deep, the girth is deep but narrow, and there is a pronounced tuck-up at the flank. Draw it with a round belly and short legs and you get a pony however good the shading is — which is exactly what the first V2 attempt produced. The local grid the paths are laid out on:
+
+```
+y = -30   top of the jockey's cap
+y = -14   withers / topline
+y =  +2   belly (tucked up)
+y = +28   ground line
+x = -40   tip of the streaming tail
+x = +48   muzzle
+```
+
+That span is what makes `HORSE_ART_LENGTH` the definition of a "length" everywhere else in the engine — get the drawing's proportions wrong and every gap the Racing API gives us is drawn at the wrong size.
+
 Each horse has:
 
-- **Body geometry** — a chain of ellipses (torso, neck, head) with a mane and tail.
-- **A gallop cycle** — legs are animated by a phase offset per horse, cycling at ~4Hz. Adjacent horses get slightly different cycles so they don't visually sync ("lane jitter + stride variance").
-- **A silk overlay on the jockey** — mini SVG cap drawn on top, matching that runner's silk fields.
+- **A coat** — `coatFor()` gives each runner a bay / dark bay / chestnut / liver chestnut / black / grey, hashed from the runner id so the same horse looks the same on every replay, and weighted the way a real field looks (mostly bay and chestnut, with the grey and the black as the two that catch the eye). Bays and blacks get black points on mane, tail and lower legs. A field of 24 identical brown horses was the single most artificial thing about V1.
+- **Articulated legs** — forearm / cannon / hoof, with a real hock angle on the hind pair: the hock kicks backward behind the quarters and the cannon runs down and forward. Drawn as a straight line a leg reads as a stick. The off-side pair is drawn first, darker and at lower alpha, so the near pair reads in front of it.
+- **A gallop cycle** — the 4-beat transverse gallop, with legs animated by a phase offset per horse. Adjacent horses get slightly different cycles so they don't visually sync ("lane jitter + stride variance").
+- **A saddle cloth with the runner's number** — where the number lives on a real racecourse. This is the quiet identification the brief asked for: it travels with the horse and needs no floating chip.
+- **A jockey in the runner's real silks** — the crouch is a `Path2D` that the runner's actual `silk_pattern` (hooped / striped / halved / quartered / starred / solid) is clipped into, so the rider matches the racecard, the leaderboard cap and the podium.
 - **Micro-motion** — a body roll and a head nod driven off `swayPhase`, a couple of degrees and a couple of pixels. Not visible as an effect; very visible by its absence.
 - **Depth** — runners are scaled by their lane's distance from the camera and drawn far-lane-first, so the pack overlaps and occludes the way a real field does.
 - **Hoof dust** — divots kicked up at each ground-contact beat, spawned and drawn in *world* space so the camera leaves them behind.
@@ -322,8 +337,13 @@ Each horse has:
 - **Persistent labels.** No name chip, no rank pill on any runner at any point. See § 6.8.
 - **Highlight rings.** No pulsing gold ring, no radial aura around the leader or the viewer's pick.
 
-The two most valuable levers for a designer looking at horse aesthetics:
+**Level of detail.** Below `scale >= 0.72` — a phone, or a runner against the far rail — the eye glint, the bridle, the goggles, the cheek plane and half the mane strands are sub-pixel, and across 24 runners they cost real time. The `detail` flag drops them. The silhouette, the coat, the silks and the number always draw, because those are what carry at any size.
+
+Two traps worth not repeating, both of which turned the animal into an unreadable dark mass on earlier passes: filling the head in the shade colour rather than the coat colour, and running the mane strokes over the poll. A horse without a readable head does not read as a horse.
+
+The most valuable levers for a designer looking at horse aesthetics:
 - `drawHorseSilhouette()` — the anatomy itself.
+- `HORSE_COATS` / `coatFor()` — the palette and how often each colour comes up.
 - `_spawnHoofDust()` — density, size and colour of the divots.
 
 ### 6.7 Parallax — seven depth planes
@@ -336,11 +356,13 @@ The horses barely move on screen. What moves is the world, and the difference in
 | 0.06 | distant downland | `#particleCanvas` |
 | 0.17 | grandstand + crowd | `#particleCanvas` |
 | 0.34 | treeline / hedge | `#particleCanvas` |
-| 0.68 | far running rail + advertising boards | `#raceCanvas` |
+| 0.68 | rail-side spectators, running rail + advertising boards | `#raceCanvas` |
 | 1.00 | the turf the race is run on | `#raceCanvas` |
 | 1.32 | foreground grass, in front of the field | `#raceCanvas` |
 
-The three repeating mid-planes are pre-painted into offscreen tiles once per resize and blitted after that — repainting a grandstand from paths every frame is the kind of thing that quietly costs 4ms.
+The repeating planes are pre-painted into offscreen tiles once per resize and blitted after that — repainting a grandstand from paths every frame is the kind of thing that quietly costs 4ms.
+
+**The crowd is two separate planes, and it needs to be.** The grandstand tile (0.17) seats its crowd in rows on a raked terrace, each spectator a head and a pair of shoulders, densest at the front and thinning toward the back — which is both how a stand fills up and what makes it read as people rather than as texture. But a stand on the horizon is scenery; what makes a racecourse feel attended is people close to the action, so `TILES.railCrowd` puts a row of spectators right behind the running rail at 0.68, with the advertising boards drawn in front of them so the boards cut them off at the waist the way a real one does. The rail crowd is scaled by `WORLD.horseScale`: they are people standing next to horses, so on a phone they have to shrink by the same factor the horses do.
 
 Two gotchas if you add a plane:
 
@@ -395,7 +417,7 @@ CSS lives in two files that split responsibilities on subject, not scope:
 
 ### `css/experience.css` (shared cinematic chrome)
 
-- Screen layout — every `.screen` positioning, fade behaviour, active state
+- Screen layout — every `.screen` positioning, fade behaviour, active state, **and the rule that lets a screen scroll itself**. Every screen is a fixed, full-viewport pane and the body never scrolls, because the race is a canvas that has to fill the window. The content screens (intro, roll call, reveal) are ordinary stacked content though, and at a small window, a high browser zoom or a short landscape phone they are simply taller than the pane — at which point `overflow: visible` on a fixed element put the overspill somewhere no scrollbar on the page could reach it. `.screen` is now `overflow-y: auto` with `justify-content: safe center`; the `safe` half matters just as much, because plain `center` on an overflowing flex column pushes the first child off the *top* of the scroll box, where a scrollbar cannot reach it either. `#screen-race` opts out — it is a full-bleed canvas and must never scroll.
 - Button primitives (`.reveal-btn`, `.rollcall-skip-btn`, etc.)
 - Typography scale (intro title, kicker, meta chips)
 - Roll call visual grammar (rows, positions, silks, spacing)
@@ -509,6 +531,9 @@ This sandbox is designed to feel identical to production so you can iterate conf
 | Bootstrap | `index.html` static file, `fetch()` a JSON fixture | Django template server-renders payload + `#replayData` | HTML structure changes need a template task in the main repo. Vas moves the change into `cinematic/templates/cinematic/flat.html` |
 | Data source | Three static fixtures in `data/` | Live race data from the app's DB + Racing API sync | Data-shape changes need a matching Python model/serializer change in the main repo |
 | GSAP + flat.js load | Dynamic `<script>` injection after `#replayData` is in place | Static `<script src>` tags in `<head>` (server has already rendered `#replayData`) | Don't undo the dynamic pattern in the sandbox — it exists to defend against a specific bug. Production doesn't need it |
+| Nav bar | None. `index.html` sets `:root { --nav-h: 0px }` | A real 60px site nav; `base.css` sets `--nav-h` | Sandbox-only. `experience.css` keeps a `var(--nav-h, 60px)` fallback so that if the variable ever went missing in production the experience would not slide up underneath the nav |
+| Asset caching | `index.html` stamps `?v=<timestamp>` onto the stylesheets and the engine scripts | Django asset versioning | Sandbox-only, and it must not be copied. `python -m http.server` sends no `Cache-Control`, so without it browsers heuristically cache `flat.css` and `flat.js` and you review code you edited ten minutes ago |
+| Scenario picker | `.sandbox-picker`, styled entirely inside `index.html` | Not present | Keep its styling in `index.html`. Positioning it from `flat.css` does not even work — the inline `<style>` block comes after the stylesheet links and wins |
 
 Everything under `css/`, `img/`, and `js/flat.js` translates directly. Copy the file, done.
 
@@ -592,6 +617,8 @@ Nothing else. The engine will pick it up automatically.
 - **Real distances are capped at `MAX_VISIBLE_LENGTHS` (46).** A Racing API "distance" beaten would otherwise put the tail of the field two full screens behind, which costs render time for horses nobody can see.
 - **`WORLD.spreadScale` is a lens, not a lie.** On a narrow viewport the field is pulled in so a phone does not show four horses and a lot of grass. Finishing order and relative gaps are untouched; only the overall fan-out is scaled.
 - **The camera has a hard floor that keeps the leader in frame.** On a runaway the group centroid sits thirty lengths behind the winner. Honouring it faithfully would mean filming the horses that lost.
+- **`getNavH()` cannot use `||` for its fallback.** It reads `--nav-h` and falls back to 60px when the variable is absent — but `parseInt('0px') || 60` is `60`, so a page that legitimately has no nav bar still had 60px carved off the bottom of the canvas and a dead band across the top of every screen. It tests `Number.isFinite` instead. Any other zero-valued CSS variable read this way has the same trap.
+- **A resize is not free during a race.** Reallocating the canvas backing store clears it, and runner positions are stored in lengths but `CAM.x` is world *pixels* — so `resize()` rescales the camera by the change in `WORLD.lengthPx` and repaints once. Without the rescale, a browser zoom mid-race leaves the camera pointing at empty track while the field jumps somewhere else.
 - **The Fox overlay** (a small avatar that appears with certain race narratives) is a DOM element the race screen manages, not a canvas draw. Look for `fox` in `flat.js` for the trigger logic.
 
 ---
