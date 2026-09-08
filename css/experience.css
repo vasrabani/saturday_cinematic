@@ -21,6 +21,20 @@ body.page-experience {
 }
 
 /* ── SCREENS ────────────────────────────────────── */
+/* Every screen is a fixed, full-viewport pane and the body never
+   scrolls, because the race is a canvas that has to fill the window.
+   The catch is that the content screens (intro, roll call, reveal) are
+   ordinary stacked content: at a small window, a tall zoom level, or a
+   short landscape phone they are simply taller than the pane, and with
+   `overflow: visible` on a fixed element the overspill is unreachable —
+   there is no scrollbar anywhere on the page to recover it. That is why
+   the RUN THE RACE button used to disappear when you zoomed in.
+
+   Fix: each screen scrolls itself when it has to. `safe center` is the
+   important half — plain `justify-content: center` on an overflowing
+   flex column pushes the first child off the TOP of the scroll box,
+   where no scrollbar can reach it either. `safe` falls back to `center`
+   on browsers that don't know it, which is the behaviour we had. */
 .screen {
   position: fixed;
   top: var(--nav-h, 60px);
@@ -31,13 +45,29 @@ body.page-experience {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  justify-content: safe center;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   opacity: 0;
   pointer-events: none;
   z-index: 10;
 }
+/* Direct children must keep their height in a scrolling flex column —
+   without this they compress instead of overflowing, and the layout
+   collapses rather than becoming scrollable. */
+.screen > * { flex-shrink: 0; }
+
 .screen.active {
   opacity: 1;
   pointer-events: all;
+}
+
+/* The race screen is the exception: it is a full-bleed canvas with
+   absolutely-positioned overlays, so it must never scroll. */
+#screen-race {
+  overflow: hidden;
 }
 
 /* ── SCREEN 0: INTRO ────────────────────────────── */
