@@ -401,11 +401,17 @@ if (REPLAY_DATA && REPLAY_DATA.has_result) {
 if (REPLAY_DATA.has_distances) {
    lengths = lengths_behind_winner[runner.id]    // the real margin
 } else {
-   lengths = rank * perBandSpacing + jitter      // a plausible fan-out
+   lengths = band * 0.42 * rank^1.45 + jitter    // a plausible fan-out
 }
 ```
 
-The engine then runs the same model, the same camera and the same timeline for both paths. The user cannot tell from the animation itself which mode is active — that's the point.
+The engine then runs the same model, the same camera and the same timeline for both paths.
+
+**Why `rank^1.45` and not `rank`.** A linear fan-out finished second a length and a half back and eighth eleven lengths adrift, which is a procession — and it made Skip to Finish drop you into a race that was already decided. Real fields do not spread linearly: the placed horses finish close together and the tail strings out behind them. The exponent gives that shape, under half a length back in second while still leaving thirty-odd for the back markers.
+
+**The finish duel.** `buildHorseObjects()` gives the second and third runners a surge timed at the top of the straight, sized off their final margin, which all but wipes out their deficit so they draw upsides the leader. Because it rides on the ordinary surge machinery — and `surgeWeight` collapses to zero over the last 8% — the margin the payload specifies is still exactly what gets drawn at the line. The closing sequence of a typical race now runs: level at 79%, winner a half-length up at 87%, level again at 93%, winner asserting to the true margin by the line.
+
+It is **capped at 3.5 lengths**, and that matters. Sized purely off the final margin, a thirteen-length runaway would have the runner-up close the whole way and then shed it again in the last few strides — which reads as the second horse stopping rather than the winner going away. The cap makes a close race a question without rewriting a one-sided one: `race-runaway` still finishes with the winner alone and thirteen clear. The user cannot tell from the animation itself which mode is active — that's the point.
 
 `replay_data.has_distances = false` puts the replay path into a hybrid mode: the winner and finishing order are honoured, but per-horse gaps are invented (the runaway fixture is this case).
 
@@ -493,9 +499,11 @@ Three things fall out of it for free, and each was a bug or a limitation in V1:
 `crossTheLine()` builds `finishTL`, in order:
 
 1. A single frame of flash as the field hits the line.
-2. **A held shot.** The horses stop, the camera does not — it keeps drifting in on the winner for the better part of a second with nothing on screen but the result of the race. This pause is the whole point of the sequence; take it out and the finish reads as an animation ending rather than a race being won.
-3. The result card, sized to the actual margin: PHOTO FINISH under a head, DEAD HEAT when the API says so, otherwise WINNER with the margin spelled out.
-4. Out to the roll call.
+2. **The run-out.** `DIRECTOR.runOut` tweens to `RUN_OUT_LENGTHS` (10) on a `power2.out`, and `updateRaceModel` adds it to the leader's travel. The whole field carries on past the winning post and decelerates, because horses do not stop dead on the line — and because the placed runners need somewhere to finish. Ten lengths is enough for eight or nine of them to come through behind the winner.
+3. **The camera opens up.** Through the final furlong the shot is tight on the leader; at the line it widens to zoom 1.08 and the focus falls back off the winner onto the group (`groupBias` → 0.1). This is the cut a broadcast director makes to show you the placings, and without it the winner runs on alone while everyone else finishes off-frame. `updateCamera()` also clamps the focus so the post stays at least 10% in from the left edge while `runOut` is non-zero — on a blanket finish the group centroid *is* the winner, so an unclamped camera follows them past the post and the line slides out of shot at exactly the moment the viewer wants it.
+4. **A held shot.** Everything has settled; the camera drifts and nothing else happens. This pause is the whole point of the sequence; take it out and the finish reads as an animation ending rather than a race being won.
+5. The result card, sized to the actual margin: PHOTO FINISH under a head, DEAD HEAT when the API says so, otherwise WINNER with the margin spelled out. It sits high in the frame (`top: 27%`) because the finish shot now has most of a field running through the middle of it.
+6. Out to the roll call.
 
 ### 8.5 The leaderboard
 
@@ -627,7 +635,7 @@ Nothing else. The engine will pick it up automatically.
 
 If you're picking up work fresh:
 
-1. Run `python -m http.server 8080` and watch `race`, then `race-close-finish`, then `race-runaway` end-to-end. Understand what changes between them.
+1. Run `python serve.py` and watch `race`, then `race-close-finish`, then `race-runaway` end-to-end. Understand what changes between them. (Use `serve.py` rather than `python -m http.server` — it disables caching, without which the browser will happily serve you a stale engine while you wonder why your change did nothing.)
 2. Open `js/flat.js` and scan the section headers (they're commented every ~50 lines). You don't need to understand every function — just know where each concern lives.
 3. Pick something small first — a colour tweak, a font-weight change on the reveal screen, a slight change to the speed lines. Ship it as a scoped PR. Vas will merge and integrate to production, and you'll see the shape of the review loop.
 4. From there, take on bigger visual work.
