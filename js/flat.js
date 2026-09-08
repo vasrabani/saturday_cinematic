@@ -184,7 +184,13 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
 let viewW = 0, viewH = 0;
 
 function getNavH() {
-  return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--nav-h')) || 60;
+  // `parseInt(...) || 60` was wrong: a legitimate --nav-h of 0 is falsy,
+  // so a page with no nav bar (this sandbox) still had 60px carved off
+  // the bottom of the canvas. Only fall back when the value is genuinely
+  // absent or unparseable.
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--nav-h');
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : 60;
 }
 
 // How many viewport-widths of ground the camera covers between the
@@ -239,6 +245,8 @@ function resize() {
   // the fill rate for a difference nobody can see at this line weight,
   // and it is the single biggest lever on holding 60fps.
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const prevLengthPx = WORLD.lengthPx;
+
   viewW = window.innerWidth;
   viewH = window.innerHeight - getNavH();
   for (const c of [canvas, pCanvas]) {
@@ -250,8 +258,22 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   pCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   layoutWorld();
+
+  // Runner positions are stored in lengths, so they survive a resize on
+  // their own — but CAM.x is world PIXELS, and layoutWorld() just moved
+  // what a pixel is worth. Rescale it, or a browser zoom mid-race leaves
+  // the camera pointing at empty track while the field jumps elsewhere.
+  if (prevLengthPx > 0 && WORLD.lengthPx !== prevLengthPx) {
+    CAM.x *= WORLD.lengthPx / prevLengthPx;
+  }
+
   buildBackdropTiles();
   relayoutLanes();
+
+  // A resize reallocates the canvas backing store, which clears it. The
+  // race loop repaints on the next tick, but every other phase would be
+  // left staring at a blank canvas, so repaint once here.
+  if (raceRunning) renderFrame();
 }
 window.addEventListener('resize', resize);
 
@@ -1048,7 +1070,7 @@ function visibleWorldRange(pad) {
 // paths every frame is the kind of thing that quietly costs 4ms.
 const PARALLAX = { hills: 0.06, stand: 0.17, trees: 0.34, farRail: 0.68, fore: 1.32 };
 
-const TILES = { hills: null, stand: null, trees: null, turf: null };
+const TILES = { hills: null, stand: null, trees: null, turf: null, railCrowd: null };
 
 function makeTile(w, h, paint) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1064,7 +1086,7 @@ function makeTile(w, h, paint) {
 function buildBackdropTiles() {
   const hillH  = Math.max(60,  viewH * 0.14);
   const standH = Math.max(80,  viewH * 0.20);
-  const treeH  = Math.max(46,  viewH * 0.10);
+  const treeH  = Math.max(30,  viewH * 0.058);
 
   // ── Distant downland ──
   TILES.hills = makeTile(760, hillH, (g, w, h) => {
@@ -1081,43 +1103,79 @@ function buildBackdropTiles() {
   });
 
   // ── Grandstand + crowd ──
+  // The crowd is the thing that makes a racecourse look like a
+  // racecourse. V1 scattered 340 grey 2px dots and it read as noise on
+  // a wall. Here they sit in rows on a raked terrace, each a head and a
+  // pair of shoulders, densest at the rail and thinning toward the back
+  // — which is both how a stand fills up and what makes it read as
+  // people rather than texture.
   TILES.stand = makeTile(540, standH, (g, w, h) => {
-    const roofY = h * 0.16;
-    const deckY = h * 0.40;
-    // Roof
-    g.fillStyle = 'rgba(58,72,94,0.95)';
+    const roofY = h * 0.13;
+    const deckY = h * 0.36;
+
+    // Roof, with a lit leading edge
+    g.fillStyle = 'rgba(64,80,104,0.96)';
     g.beginPath();
-    g.moveTo(6, roofY + 12);
-    g.lineTo(w * 0.5, roofY - 6);
-    g.lineTo(w - 6, roofY + 12);
-    g.lineTo(w - 6, roofY + 22);
-    g.lineTo(6, roofY + 22);
+    g.moveTo(4, roofY + 14);
+    g.lineTo(w * 0.5, roofY - 8);
+    g.lineTo(w - 4, roofY + 14);
+    g.lineTo(w - 4, roofY + 26);
+    g.lineTo(4, roofY + 26);
     g.closePath();
     g.fill();
-    // Terrace body — lighter than the roof so the two read apart, with
-    // the seating rake shaded in.
-    const terrace = g.createLinearGradient(0, roofY + 22, 0, h);
-    terrace.addColorStop(0, 'rgba(46,58,78,0.96)');
-    terrace.addColorStop(1, 'rgba(72,86,106,0.96)');
+    g.fillStyle = 'rgba(248,244,232,0.34)';
+    g.fillRect(4, roofY + 24, w - 8, 2.5);
+
+    // Terrace, shaded under the roof and lighter toward the front
+    const terrace = g.createLinearGradient(0, roofY + 26, 0, h);
+    terrace.addColorStop(0, 'rgba(38,48,66,0.98)');
+    terrace.addColorStop(1, 'rgba(78,92,114,0.98)');
     g.fillStyle = terrace;
-    g.fillRect(6, roofY + 22, w - 12, h - roofY - 22);
-    // Crowd speckle — cheap, and the only thing that makes a stand
-    // read as full rather than as a grey box.
-    for (let i = 0; i < 900; i++) {
-      const cx = 12 + Math.random() * (w - 24);
-      const cy = deckY + Math.random() * (h - deckY - 6);
-      const warm = Math.random();
-      g.fillStyle = warm > 0.88 ? 'rgba(226,196,110,0.75)'
-                  : warm > 0.60 ? 'rgba(226,232,240,0.55)'
-                  :               'rgba(150,166,190,0.55)';
-      g.fillRect(cx, cy, 2.2, 2.2);
+    g.fillRect(4, roofY + 26, w - 8, h - roofY - 26);
+
+    // Step lines, so the rake reads
+    g.strokeStyle = 'rgba(16,22,34,0.30)';
+    g.lineWidth = 1;
+    const rows = 9;
+    for (let r = 0; r < rows; r++) {
+      const ry = deckY + (h - deckY - 4) * (r / rows);
+      g.beginPath();
+      g.moveTo(6, ry);
+      g.lineTo(w - 6, ry);
+      g.stroke();
     }
-    // Support columns
-    g.fillStyle = 'rgba(30,40,58,0.55)';
-    for (let x = 40; x < w - 20; x += 96) g.fillRect(x, roofY + 22, 3, h - roofY - 22);
-    // Rooflight strip along the front of the roof
-    g.fillStyle = 'rgba(245,239,222,0.30)';
-    g.fillRect(6, roofY + 20, w - 12, 2.5);
+
+    // The crowd itself
+    const SKIN = ['#d8ae86', '#b9855c', '#8a5c3a', '#e8c8a6', '#6b4526'];
+    const TOPS = ['#c8d2e0', '#8f9bb0', '#5f6b80', '#a8b6c8', '#d6dae2',
+                  '#7b6355', '#9c8570', '#b34b3f', '#3f5f7a', '#d4af37'];
+    for (let r = 0; r < rows; r++) {
+      const ry   = deckY + (h - deckY - 6) * (r / rows) + 3;
+      // Front rows are nearer, so bigger, and packed tighter.
+      const size = 2.9 - (r / rows) * 1.1;
+      const step = size * 2.5;
+      // Back rows thin out; a stand is never uniformly full.
+      const fill = 0.94 - (r / rows) * 0.34;
+      for (let cx = 8; cx < w - 8; cx += step) {
+        if (Math.random() > fill) continue;
+        const jx = cx + (Math.random() - 0.5) * size;
+        const jy = ry + (Math.random() - 0.5) * 1.4;
+        // Shoulders
+        g.fillStyle = TOPS[(Math.random() * TOPS.length) | 0];
+        g.beginPath();
+        g.ellipse(jx, jy + size * 0.95, size * 0.95, size * 0.8, 0, Math.PI, 0);
+        g.fill();
+        // Head
+        g.fillStyle = SKIN[(Math.random() * SKIN.length) | 0];
+        g.beginPath();
+        g.arc(jx, jy, size * 0.55, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+
+    // Roof supports, drawn over the crowd so they sit in front
+    g.fillStyle = 'rgba(26,34,50,0.5)';
+    for (let x = 46; x < w - 24; x += 104) g.fillRect(x, roofY + 26, 3.5, h - roofY - 26);
   });
 
   // ── Treeline / hedge ──
@@ -1132,6 +1190,46 @@ function buildBackdropTiles() {
     }
     g.fillStyle = 'rgba(34,64,44,1)';
     g.fillRect(0, h - h * 0.28, w, h * 0.28);
+  });
+
+  // ── Rail-side spectators ──
+  // People standing AT the rail, in among the running rail posts. The
+  // grandstand alone reads as scenery on the horizon; this is the row
+  // that puts a crowd close enough to the action to matter, and it
+  // scrolls at the far-rail rate rather than the horizon rate.
+  TILES.railCrowd = makeTile(300, 34, (g, w, h) => {
+    const SKIN = ['#d8ae86', '#b9855c', '#8a5c3a', '#e8c8a6'];
+    const COATS = ['#2f3d52', '#4a5568', '#6b3f36', '#8a9099', '#243244',
+                   '#7a6a52', '#a8452f', '#d4af37', '#c8cdd6'];
+    const n = 26;
+    for (let i = 0; i < n; i++) {
+      const cx = 6 + (i / n) * (w - 12) + (Math.random() - 0.5) * 6;
+      const base = h - 2 - Math.random() * 1.5;
+      const tall = 13 + Math.random() * 4;
+      // Body
+      g.fillStyle = COATS[(Math.random() * COATS.length) | 0];
+      g.beginPath();
+      g.moveTo(cx - 2.4, base);
+      g.lineTo(cx - 1.9, base - tall * 0.62);
+      g.lineTo(cx + 1.9, base - tall * 0.62);
+      g.lineTo(cx + 2.4, base);
+      g.closePath();
+      g.fill();
+      // Head
+      g.fillStyle = SKIN[(Math.random() * SKIN.length) | 0];
+      g.beginPath();
+      g.arc(cx, base - tall * 0.62 - 2.1, 2.0, 0, Math.PI * 2);
+      g.fill();
+      // A few have an arm up
+      if (Math.random() < 0.18) {
+        g.strokeStyle = g.fillStyle;
+        g.lineWidth = 1.1;
+        g.beginPath();
+        g.moveTo(cx + 1.6, base - tall * 0.55);
+        g.lineTo(cx + 3.4, base - tall * 0.9);
+        g.stroke();
+      }
+    }
   });
 
   // ── Turf tile for the track plane ──
@@ -1207,8 +1305,8 @@ function drawBackdrop() {
   // treeline overlaps it slightly so there is no seam where the turf
   // starts.
   drawTiled(pCtx, TILES.hills, horizon + 6,  PARALLAX.hills, 0.85);
-  drawTiled(pCtx, TILES.stand, horizon + 10, PARALLAX.stand, 0.95);
-  drawTiled(pCtx, TILES.trees, horizon + Math.max(14, viewH * 0.05),
+  drawTiled(pCtx, TILES.stand, horizon + 2, PARALLAX.stand, 0.97);
+  drawTiled(pCtx, TILES.trees, horizon + Math.max(14, viewH * 0.045),
             PARALLAX.trees, 1);
 }
 
@@ -1234,9 +1332,29 @@ function drawFarRail() {
   const from = Math.floor((vis.min - shift) / step) * step;
   const to   = vis.max - shift;
 
-  // Advertising board band behind the rail. Deliberately low contrast —
+  // Rail-side spectators, standing behind the boards. Tiled at the same
+  // depth as the rail so they track with it, and drawn before the boards
+  // so the boards cut them off at the waist the way a real one does.
+  if (TILES.railCrowd) {
+    const rc = TILES.railCrowd;
+    // Scaled by the world's horse size, not drawn at tile resolution:
+    // these are people standing next to horses, so on a phone they have
+    // to shrink by the same factor the horses do or the rail ends up
+    // lined with giants.
+    const cs = WORLD.horseScale;
+    const cw = rc.w * cs, ch = rc.h * cs;
+    let cx = Math.floor((vis.min - shift) / cw) * cw;
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    for (; cx < to; cx += cw) {
+      ctx.drawImage(rc.canvas, cx, y - 22 - ch + 5 * cs, cw, ch);
+    }
+    ctx.restore();
+  }
+
+  // Advertising board band in front of them. Deliberately low contrast —
   // it is scenery at depth, not a headline.
-  ctx.fillStyle = 'rgba(28,40,56,0.42)';
+  ctx.fillStyle = 'rgba(28,40,56,0.62)';
   ctx.fillRect(from - step, y - 22, to - from + step * 2, 13);
   ctx.fillStyle = 'rgba(212,175,55,0.10)';
   for (let x = from; x < to; x += step * 4) {
@@ -1835,341 +1953,485 @@ function stopTicker() {
   gsap.ticker.remove(renderFrame);
   tickerRunning = false;
 }
+
 // ════════════════════════════════════════════════════════════════
 //  THE HORSE
 // ════════════════════════════════════════════════════════════════
+// A thoroughbred in profile at full gallop, drawn from paths. No sprite
+// sheet: a production race can field 24 runners with silks we have
+// never rendered before, so the whole animal is procedural and takes
+// its colours from the payload.
+//
+// PROPORTIONS matter more than detail here, and they are what the first
+// pass got wrong. A thoroughbred is leggy and shallow through the body:
+// the legs are about as long as the barrel is deep, the girth is deep
+// but narrow, and there is a pronounced tuck-up at the flank. Draw it
+// with a round belly and short legs and you get a pony, however good
+// the shading is. The local grid used below:
+//
+//        y = -30  ── top of the jockey's cap
+//        y = -14  ── withers / topline
+//        y =  +2  ── belly (tucked up)
+//        y = +28  ── ground line
+//        x = -40  ── tip of the streaming tail
+//        x = +48  ── muzzle
+//
+// so the animal is roughly 74 units nose to tail, which is what makes
+// HORSE_ART_LENGTH the definition of a "length" everywhere else.
+//
+// The build, front to back:
+//   • Coat        — a real field is not 24 identical brown horses. Each
+//                   runner gets a bay / dark bay / chestnut / liver
+//                   chestnut / black / grey, picked deterministically
+//                   from the runner id so the same horse looks the same
+//                   on every replay. Bays and blacks get black points
+//                   (mane, tail, lower legs); everyone gets a lighter
+//                   underline where the light bounces off the turf.
+//   • Legs        — articulated forearm / cannon / hoof, with the
+//                   off-side pair drawn first in a darker tone so the
+//                   near pair reads in front of them.
+//   • Number cloth— the saddle cloth carries the runner's number, the
+//                   way it does on a real racecourse. This is the quiet
+//                   identification the brief asked for: it travels with
+//                   the horse and needs no floating chip.
+//   • Jockey      — a crouched rider whose silks are the runner's ACTUAL
+//                   silk pattern (hooped / striped / halved / quartered
+//                   / starred / solid), clipped to the torso so it
+//                   matches the racecard, the leaderboard cap and the
+//                   podium.
+//
+// Motion is the 4-beat transverse gallop from V1, kept because it is
+// correct, plus V2's body roll and a stride rate that follows ground
+// speed.
+
+// Coat palettes: body / shade (muscle shadow) / points (mane, tail,
+// lower legs) / belly (lit underline).
+const HORSE_COATS = [
+  { name: 'bay',            body: '#7a4a1e', shade: '#54300f', points: '#1a1008', belly: '#9c6330' },
+  { name: 'dark bay',       body: '#553219', shade: '#37200c', points: '#140c06', belly: '#71491f' },
+  { name: 'chestnut',       body: '#9c5423', shade: '#6f3a14', points: '#8a4718', belly: '#bd7038' },
+  { name: 'liver chestnut', body: '#68361a', shade: '#46230f', points: '#552a12', belly: '#875028' },
+  { name: 'black',          body: '#33271d', shade: '#1d1611', points: '#0d0a07', belly: '#493829' },
+  { name: 'grey',           body: '#a9a39e', shade: '#7d7671', points: '#5a534e', belly: '#c6c0bb' },
+];
+
+// Deterministic per-runner coat. Same horse, same colour, every replay.
+function coatFor(runner) {
+  const id = String((runner && runner.id) || (runner && runner.name) || '');
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  // Weighted the way a real field looks: mostly bay and chestnut, with
+  // the grey and the black as the two that catch your eye.
+  const WEIGHTS = [0, 0, 0, 1, 1, 2, 2, 3, 4, 5];
+  return HORSE_COATS[WEIGHTS[hash % WEIGHTS.length]];
+}
+
+// One leg: shoulder/hip -> knee/hock -> hoof. The upper segment is
+// drawn heavier than the cannon so the limb tapers like a real one.
+function drawLeg(c, ox, oy, kx, ky, fx, fy, colour, w) {
+  c.strokeStyle = colour;
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+  c.lineWidth = w * 2.0;
+  c.beginPath();
+  c.moveTo(ox, oy);
+  c.lineTo(kx, ky);
+  c.stroke();
+  c.lineWidth = w * 0.85;
+  c.beginPath();
+  c.moveTo(kx, ky);
+  c.lineTo(fx, fy);
+  c.stroke();
+  c.fillStyle = '#16120e';
+  c.beginPath();
+  c.ellipse(fx, fy + 0.4, w * 1.0, w * 0.7, 0, 0, Math.PI * 2);
+  c.fill();
+}
 
 function drawHorseSilhouette(x, y, h, artScale) {
-  // ════════════════════════════════════════════════════════════════
-  // SPRINT P5 — anatomically richer silhouette + 4-beat gallop cycle.
-  //
-  // Replaces the previous 2-phase Muybridge silhouette with:
-  //   • Proper 4-beat transverse gallop:
-  //       beat 1 — off-hind strikes
-  //       beat 2 — lead-hind + off-fore (diagonal) strike together
-  //       beat 3 — lead-fore strikes alone
-  //       beat 4 — suspension (all four off ground, body lifted)
-  //   • Streaming mane (10 strokes flowing back behind the neck)
-  //   • Streaming tail (5 strands flowing back)
-  //   • Jockey whip raised during the slow-mo final furlong
-  //   • Body bob driven by gait phase (slight rise during suspension)
-  //   • Anatomy detail: defined eye, ear, nostril, mouth-open in
-  //     slow-mo, muscle shadow on the haunches + shoulder
-  //
-  // V2 additions on top of that:
-  //   • scale — the viewport's horse size multiplied by the lane's
-  //     distance from camera. Far-rail runners draw smaller, near-side
-  //     runners larger. It is the single cheapest thing that turns a
-  //     row of icons into a pack.
-  //   • Micro-motion — a body roll and a head nod driven off swayPhase,
-  //     a few degrees and a couple of pixels. Not visible as an effect;
-  //     very visible by its absence.
-  //   • Nothing decorative is attached to the animal any more: no ring,
-  //     no aura, no trail, no label. Identification happens elsewhere.
-  //
-  // Hoof-strike dust particles are spawned by _spawnHoofDust() at each
-  // ground-contact beat, in world space.
-  // ════════════════════════════════════════════════════════════════
   const scale = artScale || 1;
 
-  // ── 4-beat gallop math ─────────────────────────────────────
-  // legPhase advances each frame in the race loop. We map it onto
-  // a 0-1 cycle position, then derive per-leg foot heights + body
-  // bob from that. Each leg's vertical position is a sin curve
-  // offset by its position in the gallop sequence:
-  //   off-hind:  offset 0.00 — strikes ground first
-  //   lead-hind: offset 0.20 — strikes with off-fore (diagonal)
-  //   off-fore:  offset 0.20
-  //   lead-fore: offset 0.40 — strikes alone
-  //   then all four lift into suspension at 0.60-1.00
-  const cyc = (h.legPhase / (Math.PI * 2)) % 1;   // 0..1 cycle position
-  const gallopY = (offset) => {
-    // Sinusoidal "leg up/down" — 0 when grounded, negative when lifted.
+  // ── 4-beat transverse gallop ────────────────────────────────
+  //   off-hind   0.00  strikes first
+  //   lead-hind  0.20  strikes with the off-fore (the diagonal pair)
+  //   off-fore   0.20
+  //   lead-fore  0.40  strikes alone
+  //   0.60-1.00        suspension, all four off the ground
+  const cyc = (h.legPhase / (Math.PI * 2)) % 1;
+  const lift = (offset) => {
     const pos = ((cyc - offset) + 1) % 1;
-    // pos 0-0.4 = on ground (foot tucked back, gathering forward)
-    // pos 0.4-0.7 = swing forward (foot extended ahead)
-    // pos 0.7-1.0 = striking down (foot returning to ground)
-    if (pos < 0.4) return 0;                            // grounded
-    if (pos < 0.7) return -Math.sin((pos - 0.4) / 0.3 * Math.PI) * 7; // lift + forward
-    return -Math.sin((1 - pos) / 0.3 * Math.PI) * 7;    // dropping back to ground
+    if (pos < 0.4) return 0;
+    if (pos < 0.7) return -Math.sin((pos - 0.4) / 0.3 * Math.PI) * 10;
+    return -Math.sin((1 - pos) / 0.3 * Math.PI) * 10;
   };
-  const gallopX = (offset) => {
-    // Foot reaches forward then sweeps back — sin curve in x.
-    const pos = ((cyc - offset) + 1) % 1;
-    return Math.cos(pos * Math.PI * 2) * 5;
-  };
-  const offHindOffset  = 0.00;
-  const leadHindOffset = 0.20;
-  const offForeOffset  = 0.20;
-  const leadForeOffset = 0.40;
+  const reach = (offset) => Math.cos(((cyc - offset) + 1) % 1 * Math.PI * 2) * 7;
 
-  // Body bob — slight rise during the suspension phase.
-  const suspensionPhase = (cyc > 0.60 && cyc < 1.00)
+  const OFF_HIND = 0.00, LEAD_HIND = 0.20, OFF_FORE = 0.20, LEAD_FORE = 0.40;
+
+  const suspension = (cyc > 0.60 && cyc < 1.00)
     ? Math.sin((cyc - 0.60) / 0.40 * Math.PI) : 0;
-  const bodyLift = -suspensionPhase * 2.2;
+  const bodyLift = -suspension * 2.8;
 
-  // ── Slow-mo / finish detection — drives whip raise + mouth-open ──
-  const progressNow = DIRECTOR.progress;
+  const progressNow    = DIRECTOR.progress;
   const inFinalStretch = progressNow >= 0.85;
   const inSlowMo       = progressNow >= 0.88;
 
+  const coat  = h.coat || (h.coat = coatFor(h.runner));
   const silk  = h.runner.silk  || COL.silkDefault;
   const silk2 = h.runner.silk2 || COL.silk2Default;
+  const pat   = h.runner.silk_pattern || 'solid';
 
-  // ── Hoof-strike dust ────────────────────────────────────────
-  // Spawned in WORLD coordinates at each ground-contact beat, tracked
-  // per-horse via h.lastDustCycle so we do not spam the particle system
-  // every frame between strikes.
   _spawnHoofDust(x, y, h, cyc, scale);
 
-  // Galloping micro-motion: the body rolls a degree or two with the
-  // stride and the whole animal rises fractionally through suspension.
-  const roll = Math.sin(h.swayPhase) * 0.018 + Math.sin(h.legPhase) * 0.010;
+  // Body roll and the suspension rise. A couple of degrees, a couple of
+  // pixels — invisible as an effect, very visible by its absence.
+  const roll = Math.sin(h.swayPhase) * 0.015 + Math.sin(h.legPhase) * 0.008;
+  const detail = scale >= 0.72;
 
   ctx.save();
   ctx.translate(x, y + bodyLift * scale);
   ctx.rotate(roll);
   ctx.scale(scale, scale);
 
-  // ── Track shadow (compresses during suspension) ──────────
-  const shadowAlpha = 0.32 - suspensionPhase * 0.18;
-  const shadowW    = 28 - suspensionPhase * 6;
-  ctx.fillStyle = 'rgba(0,0,0,' + shadowAlpha + ')';
+  // ── Ground shadow (tightens as the horse leaves the ground) ──
+  ctx.fillStyle = 'rgba(0,0,0,' + (0.28 - suspension * 0.16).toFixed(3) + ')';
   ctx.beginPath();
-  ctx.ellipse(0, 22 - bodyLift, shadowW, 4, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 28 - bodyLift, 26 - suspension * 6, 3.2, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // ── Back legs (off-hind + lead-hind) ────────────────────
-  // Each hind leg renders as a hip→hock→hoof segment so the
-  // gallop posture reads as actual leg articulation, not lines.
-  ctx.strokeStyle = HORSE_COAT_SHADE;
-  ctx.lineWidth = 3;
+  // ── Off-side legs ───────────────────────────────────────────
+  // Drawn first and darker, so the near pair reads in front of them.
+  // That one trick is most of what gives the animal depth.
+  ctx.globalAlpha = 0.7;
+  drawLeg(ctx, -12, -6,
+          -21 + reach(OFF_HIND) * 0.35, 9 + lift(OFF_HIND) * 0.35,
+          -13 + reach(OFF_HIND),        28 + lift(OFF_HIND),
+          coat.points, 1.55);
+  drawLeg(ctx, 16, -5,
+          18 + reach(OFF_FORE) * 0.5, 11 + lift(OFF_FORE) * 0.4,
+          19 + reach(OFF_FORE),       28 + lift(OFF_FORE),
+          coat.points, 1.55);
+  ctx.globalAlpha = 1;
+
+  // ── Tail ────────────────────────────────────────────────────
+  // Streaming straight back off the dock, level with the topline, not
+  // hanging. Drawn before the body so it comes out from behind.
+  const tailSway = Math.sin(h.bobPhase * 1.15) * 1.8;
+  ctx.strokeStyle = coat.points;
   ctx.lineCap = 'round';
-  const offHindFootY  = 28 + gallopY(offHindOffset);
-  const offHindFootX  = -10 + gallopX(offHindOffset);
-  const leadHindFootY = 28 + gallopY(leadHindOffset);
-  const leadHindFootX = -8 + gallopX(leadHindOffset);
-  // off-hind — thigh + cannon
+  ctx.lineWidth = 1.9;
   ctx.beginPath();
-  ctx.moveTo(-9, 6);
-  ctx.lineTo((-9 + offHindFootX) / 2, (6 + offHindFootY) / 2 - 1);
-  ctx.lineTo(offHindFootX, offHindFootY);
+  ctx.moveTo(-19, -10);
+  ctx.bezierCurveTo(-26, -9 + tailSway, -32, -5 + tailSway * 0.7,
+                    -37, 2 + tailSway * 0.4);
   ctx.stroke();
-  // lead-hind
-  ctx.beginPath();
-  ctx.moveTo(-7, 7);
-  ctx.lineTo((-7 + leadHindFootX) / 2, (7 + leadHindFootY) / 2 - 0.5);
-  ctx.lineTo(leadHindFootX, leadHindFootY);
-  ctx.stroke();
-
-  // ── Torso ───────────────────────────────────────────────
-  ctx.fillStyle = HORSE_COAT;
-  ctx.beginPath();
-  ctx.moveTo(-16, 1);
-  ctx.bezierCurveTo(-15, -7, -4, -9, 8, -8);
-  ctx.bezierCurveTo(18, -8, 22, -4, 22, 0);
-  ctx.bezierCurveTo(22, 4, 18, 7, 10, 7);
-  ctx.bezierCurveTo(2, 8, -8, 7, -16, 4);
-  ctx.closePath();
-  ctx.fill();
-
-  // Muscle-tone highlight on the shoulder
-  ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  ctx.beginPath();
-  ctx.moveTo(-10, -4);
-  ctx.bezierCurveTo(-4, -7, 8, -7, 16, -5);
-  ctx.bezierCurveTo(14, -3, 0, -3, -10, -4);
-  ctx.closePath();
-  ctx.fill();
-
-  // Haunch muscle shadow (new — adds dimensional read on the rump)
-  ctx.fillStyle = 'rgba(0,0,0,0.18)';
-  ctx.beginPath();
-  ctx.ellipse(-12, 1, 5, 6, 0.4, 0, Math.PI * 2);
-  ctx.fill();
-
-  // ── Neck + head (extended gallop pose) ──────────────────
-  ctx.fillStyle = HORSE_COAT;
-  ctx.beginPath();
-  ctx.moveTo(20, -2);
-  ctx.bezierCurveTo(26, -6, 32, -9, 36, -10);
-  ctx.bezierCurveTo(38, -9, 38, -6, 36, -5);
-  ctx.bezierCurveTo(30, -3, 22, 0, 22, 2);
-  ctx.closePath();
-  ctx.fill();
-  // Head
-  ctx.beginPath();
-  ctx.ellipse(37, -10, 5, 3.5, 0.35, 0, Math.PI * 2);
-  ctx.fill();
-  // Muzzle
-  ctx.beginPath();
-  ctx.ellipse(41, -8, 2.5, 1.8, 0.5, 0, Math.PI * 2);
-  ctx.fill();
-  // Eye + eye-glint highlight
-  ctx.fillStyle = '#000';
-  ctx.beginPath();
-  ctx.arc(37, -11, 0.7, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.beginPath();
-  ctx.arc(37.2, -11.2, 0.25, 0, Math.PI * 2);
-  ctx.fill();
-  // Ear
-  ctx.fillStyle = HORSE_COAT;
-  ctx.beginPath();
-  ctx.moveTo(34, -13);
-  ctx.lineTo(35, -15);
-  ctx.lineTo(36, -13);
-  ctx.closePath();
-  ctx.fill();
-  // Nostril
-  ctx.fillStyle = '#0a0a0a';
-  ctx.beginPath();
-  ctx.ellipse(42, -7.5, 0.6, 0.4, 0.5, 0, Math.PI * 2);
-  ctx.fill();
-  // Mouth — opens in slow-mo (effort mode)
-  if (inSlowMo) {
-    ctx.fillStyle = '#2a0a0a';
+  ctx.lineWidth = 0.85;
+  for (let i = 0; detail && i < 4; i++) {
+    const sp = -1 + i * 1.1;
     ctx.beginPath();
-    ctx.ellipse(42.5, -6.5, 1.6, 0.9, 0.5, 0, Math.PI * 2);
+    ctx.moveTo(-19.5, -10 + sp * 0.25);
+    ctx.quadraticCurveTo(-28 - i * 0.7, -6 + sp + tailSway * 0.6,
+                         -36 - i * 1.1, 3 + sp * 1.2 + tailSway * 0.3);
+    ctx.stroke();
+  }
+
+  // ── Barrel ──────────────────────────────────────────────────
+  // Deep at the girth, shallow and tucked up at the flank, well muscled
+  // over the quarters. Shallower and longer than it looks like it should
+  // be — that is what makes it a racehorse rather than a cob.
+  ctx.fillStyle = coat.body;
+  ctx.beginPath();
+  ctx.moveTo(-20, -9);                                 // dock
+  ctx.bezierCurveTo(-21, -14, -14, -16, -4, -15);      // croup
+  ctx.bezierCurveTo(6, -15, 13, -15, 18, -13);         // back to withers
+  ctx.bezierCurveTo(22, -12, 24, -8, 23, -4);          // point of shoulder
+  ctx.bezierCurveTo(22, 0, 18, 3, 13, 3);              // girth
+  ctx.bezierCurveTo(7, 4, 1, 3, -3, 1);                // belly, tucked up
+  ctx.bezierCurveTo(-10, -1, -16, -3, -19, -5);        // flank -> stifle
+  ctx.closePath();
+  ctx.fill();
+
+  // Lit topline
+  ctx.fillStyle = 'rgba(255,255,255,0.11)';
+  ctx.beginPath();
+  ctx.moveTo(-15, -13);
+  ctx.bezierCurveTo(-6, -16, 8, -16, 18, -13);
+  ctx.bezierCurveTo(8, -14, -6, -14, -15, -13);
+  ctx.closePath();
+  ctx.fill();
+
+  // Lighter underline
+  ctx.fillStyle = coat.belly;
+  ctx.globalAlpha = 0.45;
+  ctx.beginPath();
+  ctx.moveTo(-3, 1);
+  ctx.bezierCurveTo(4, 4, 10, 4, 15, 2);
+  ctx.bezierCurveTo(9, 6, 1, 5, -3, 1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Quarters and shoulder — the two big muscle masses
+  ctx.fillStyle = coat.shade;
+  ctx.globalAlpha = 0.5;
+  ctx.beginPath();
+  ctx.ellipse(-13, -8, 6.5, 6, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(18, -7, 4.2, 5.5, -0.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // ── Neck and head ───────────────────────
+  // The neck is long and TAPERS — deep where it leaves the withers,
+  // narrow at the throat — and the head is a long wedge carried out in
+  // front of it. Two mistakes in the earlier passes are worth not
+  // repeating: filling the head in the shade colour and running the
+  // mane over the poll both turn the whole top of the animal into one
+  // dark mass, and a horse without a readable head does not read as a
+  // horse at all.
+  ctx.fillStyle = coat.body;
+  ctx.beginPath();
+  ctx.moveTo(11, -13);                                  // withers
+  ctx.bezierCurveTo(20, -20, 30, -26, 39, -29);         // crest
+  ctx.bezierCurveTo(41, -29.5, 42, -27.5, 41, -26);     // poll
+  ctx.bezierCurveTo(34, -22, 27, -15, 23, -6);          // throat
+  ctx.bezierCurveTo(18, -7, 13, -9, 11, -13);           // chest
+  ctx.closePath();
+  ctx.fill();
+
+  // Head — a long wedge, same coat as the neck so it reads as one
+  // animal, separated by a jawline rather than by a colour change.
+  ctx.beginPath();
+  ctx.moveTo(39.5, -29.5);                              // poll
+  ctx.bezierCurveTo(45, -30, 50, -28.5, 53, -25.5);     // forehead
+  ctx.bezierCurveTo(55, -23.5, 55, -21.5, 52.5, -20.8); // nose
+  ctx.bezierCurveTo(48, -19.8, 43, -21.5, 40, -24.5);   // muzzle -> jaw
+  ctx.closePath();
+  ctx.fill();
+
+  if (detail) {
+    // Jawline: the shadow under the cheek that separates head from neck.
+    ctx.strokeStyle = coat.shade;
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(40.4, -28.4);
+    ctx.quadraticCurveTo(41.6, -24.6, 45, -22.4);
+    ctx.stroke();
+
+    // Cheekbone highlight, so the head has a plane instead of reading flat
+    ctx.fillStyle = coat.belly;
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath();
+    ctx.ellipse(46, -25.6, 4.2, 2.4, -0.28, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Ears — coat coloured with a dark inner, at the poll
+  ctx.fillStyle = coat.body;
+  ctx.beginPath();
+  ctx.moveTo(38.8, -29.2); ctx.lineTo(38.4, -33.4); ctx.lineTo(40.8, -29.6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(41.2, -29.4); ctx.lineTo(42.4, -33); ctx.lineTo(43.6, -28.8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = coat.points;
+  ctx.beginPath();
+  ctx.moveTo(39.2, -29.6); ctx.lineTo(39.0, -32); ctx.lineTo(40.1, -29.8);
+  ctx.closePath();
+  ctx.fill();
+
+  // Eye
+  ctx.fillStyle = '#0b0906';
+  ctx.beginPath();
+  ctx.ellipse(44.6, -27, 1.05, 0.85, 0.15, 0, Math.PI * 2);
+  ctx.fill();
+  if (detail) {
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.beginPath();
+    ctx.arc(44.9, -27.3, 0.34, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // ── Flowing mane (streams back behind the neck) ─────────
-  ctx.strokeStyle = HORSE_COAT_SHADE;
-  ctx.lineWidth = 1.4;
-  ctx.lineCap = 'round';
-  const manePulse = Math.sin(h.bobPhase * 1.5) * 1.5;
-  for (let i = 0; i < 10; i++) {
-    const baseX = 26 - i * 1.1;
-    const baseY = -8 + Math.sin(i * 0.5) * 0.6;
-    // Each strand streams back proportional to its index
-    const endX = baseX - 8 - i * 0.5;
-    const endY = baseY + 0 + i * 0.3 + manePulse * (0.4 + i * 0.08);
+  // Muzzle, nostril, and an open mouth under maximum effort
+  ctx.fillStyle = coat.name === 'grey' ? '#6a625d' : '#2a1a10';
+  ctx.beginPath();
+  ctx.ellipse(52.6, -22.4, 2.1, 1.7, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#0a0806';
+  ctx.beginPath();
+  ctx.ellipse(52.2, -23.8, 0.62, 0.44, 0.35, 0, Math.PI * 2);
+  ctx.fill();
+  if (inSlowMo) {
+    ctx.fillStyle = '#2e0d0d';
     ctx.beginPath();
-    ctx.moveTo(baseX, baseY);
-    ctx.quadraticCurveTo(baseX - 4, baseY - 1 + manePulse * 0.3, endX, endY);
-    ctx.stroke();
+    ctx.ellipse(51.6, -21, 1.5, 0.85, 0.28, 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  // ── Flowing tail (streams back behind the rump) ─────────
-  ctx.strokeStyle = HORSE_COAT_SHADE;
-  ctx.lineWidth = 4;
-  ctx.lineCap = 'round';
-  const tailPulse = Math.sin(h.bobPhase * 1.2) * 2;
-  ctx.beginPath();
-  ctx.moveTo(-16, 1);
-  ctx.bezierCurveTo(-22, -1 + tailPulse, -28, 1 + tailPulse * 0.6, -32, 5 + tailPulse * 0.3);
-  ctx.stroke();
-  // Tail strands (5 finer lines for that streaming-in-wind look)
+  // ── Mane ───────────────────────────────
+  // Short strokes streaming off the crest, stopping short of the poll
+  // so they never cover the head.
+  ctx.strokeStyle = coat.points;
   ctx.lineWidth = 1.2;
-  for (let i = 0; i < 5; i++) {
-    const yOff = -1 + i * 1.4;
+  ctx.lineCap = 'round';
+  const manePulse = Math.sin(h.bobPhase * 1.5) * 1.4;
+  const maneN = detail ? 9 : 5;
+  for (let i = 0; i < maneN; i++) {
+    const t  = i / (maneN - 1);
+    const bx = 36 - t * 23;
+    const by = -27.5 + t * 13;
     ctx.beginPath();
-    ctx.moveTo(-18 - i * 1.5, yOff);
-    ctx.quadraticCurveTo(
-      -25 - i * 2, 1 + i + tailPulse * 0.5,
-      -32 - i * 1.5, 5 + i + tailPulse * 0.2
-    );
+    ctx.moveTo(bx, by);
+    ctx.quadraticCurveTo(bx - 3.5, by - 1.2 + manePulse * 0.25,
+                         bx - 6.5, by + 1.4 + manePulse * (0.3 + t * 0.5));
     ctx.stroke();
   }
 
-  // ── Front legs (lead-fore + off-fore) ───────────────────
-  ctx.strokeStyle = HORSE_COAT_SHADE;
-  ctx.lineWidth = 3;
-  ctx.lineCap = 'round';
-  const leadForeFootY = 26 + gallopY(leadForeOffset);
-  const leadForeFootX = 22 + gallopX(leadForeOffset);
-  const offForeFootY  = 26 + gallopY(offForeOffset);
-  const offForeFootX  = 20 + gallopX(offForeOffset);
-  // lead-fore — shoulder + knee + hoof
-  ctx.beginPath();
-  ctx.moveTo(18, 5);
-  ctx.lineTo((18 + leadForeFootX) / 2, (5 + leadForeFootY) / 2 - 0.5);
-  ctx.lineTo(leadForeFootX, leadForeFootY);
-  ctx.stroke();
-  // off-fore
-  ctx.beginPath();
-  ctx.moveTo(16, 5);
-  ctx.lineTo((16 + offForeFootX) / 2, (5 + offForeFootY) / 2);
-  ctx.lineTo(offForeFootX, offForeFootY);
-  ctx.stroke();
+  // Bridle — cheekpiece and a rein running back to the hands
+  if (detail) {
+    ctx.strokeStyle = 'rgba(18,13,9,0.8)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(47.4, -28.6);
+    ctx.lineTo(50.4, -22.4);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(50.2, -23);
+    ctx.quadraticCurveTo(37, -19.5, 26, -13);
+    ctx.stroke();
+  }
 
-  // ── Jockey (aero crouch) ────────────────────────────────
+  // ── Saddle cloth ────────────────────────────────────────────
+  // Small, cream rather than white, sitting under the saddle on the
+  // upper flank — the identification that travels with the horse.
+  const num = h.runner.number;
+  if (num != null) {
+    ctx.fillStyle = 'rgba(232,226,212,0.92)';
+    ctx.beginPath();
+    ctx.moveTo(-1.5, -13.2);
+    ctx.lineTo(6, -13.6);
+    ctx.lineTo(6.8, -6.2);
+    ctx.lineTo(-2.4, -5.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(30,26,20,0.22)';
+    ctx.lineWidth = 0.35;
+    ctx.stroke();
+    ctx.fillStyle = '#1b2028';
+    ctx.font = '700 6.4px "DM Sans", Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(num), 2.2, -9.6);
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  // ── Near-side legs ──────────────────────────────────────────
+  drawLeg(ctx, -13, -7,
+          -22 + reach(LEAD_HIND) * 0.4, 9 + lift(LEAD_HIND) * 0.4,
+          -14 + reach(LEAD_HIND),       28 + lift(LEAD_HIND),
+          coat.points, 1.8);
+  drawLeg(ctx, 18, -6,
+          20 + reach(LEAD_FORE) * 0.55, 11 + lift(LEAD_FORE) * 0.45,
+          21 + reach(LEAD_FORE),        28 + lift(LEAD_FORE),
+          coat.points, 1.8);
+
+  // ── Jockey ──────────────────────────────────────────────────
+  // Up out of the saddle, weight over the withers, backside high, head
+  // low between the hands.
+  const torso = new Path2D();
+  torso.moveTo(-3, -16);
+  torso.bezierCurveTo(-1, -24, 8, -28, 15, -25);
+  torso.bezierCurveTo(18, -23.5, 17.5, -20, 13.5, -18.5);
+  torso.bezierCurveTo(7, -16.5, 1, -15.5, -3, -16);
+  torso.closePath();
+
   ctx.fillStyle = silk;
-  ctx.beginPath();
-  ctx.moveTo(-2, -9);
-  ctx.bezierCurveTo(2, -16, 12, -17, 18, -13);
-  ctx.bezierCurveTo(20, -11, 18, -9, 14, -8);
-  ctx.bezierCurveTo(8, -8, 0, -8, -2, -9);
-  ctx.closePath();
-  ctx.fill();
+  ctx.fill(torso);
 
-  // Silk colour-block stripe
+  // The runner's real silk pattern, clipped to the jockey's back so it
+  // matches the racecard, the leaderboard cap and the podium.
+  ctx.save();
+  ctx.clip(torso);
   ctx.fillStyle = silk2;
-  ctx.beginPath();
-  ctx.moveTo(3, -15);
-  ctx.lineTo(13, -13);
-  ctx.lineTo(12, -10);
-  ctx.lineTo(2, -12);
-  ctx.closePath();
-  ctx.fill();
+  if (pat === 'hooped') {
+    for (let i = -29; i < -14; i += 3.6) ctx.fillRect(-6, i, 28, 1.8);
+  } else if (pat === 'striped') {
+    for (let i = -3; i < 18; i += 4.5) ctx.fillRect(i, -30, 1.8, 18);
+  } else if (pat === 'halved') {
+    ctx.fillRect(6, -30, 16, 18);
+  } else if (pat === 'quartered') {
+    ctx.fillRect(6, -30, 16, 7);
+    ctx.fillRect(-6, -21, 12, 9);
+  } else if (pat === 'starred') {
+    ctx.font = '700 8px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('★', 7, -20);
+  }
+  ctx.restore();
 
-  // Arms forward to reins
-  ctx.strokeStyle = silk;
+  // Bent leg in the short stirrup — the detail that makes the crouch
+  // read as a jockey rather than a jacket on a horse.
+  ctx.strokeStyle = '#efeadf';
   ctx.lineWidth = 2.2;
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(14, -10);
-  ctx.lineTo(24, -8);
+  ctx.moveTo(3, -17);
+  ctx.lineTo(1.5, -11.5);
+  ctx.lineTo(6.5, -9.5);
+  ctx.stroke();
+  ctx.fillStyle = '#15100a';
+  ctx.beginPath();
+  ctx.ellipse(7.8, -9.2, 2.5, 1.4, -0.15, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Arms reaching down the neck to the reins
+  ctx.strokeStyle = silk;
+  ctx.lineWidth = 2.1;
+  ctx.beginPath();
+  ctx.moveTo(12.5, -21);
+  ctx.quadraticCurveTo(19, -19, 24.5, -14.5);
   ctx.stroke();
 
-  // Helmet
+  // Cap in the secondary silk colour, peak in the primary
   ctx.fillStyle = silk2;
   ctx.beginPath();
-  ctx.arc(19, -17, 4, 0, Math.PI * 2);
+  ctx.arc(16, -27, 3.6, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = silk;
-  ctx.fillRect(16, -18, 6, 1.5);
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
   ctx.beginPath();
-  ctx.arc(21, -17, 1.2, 0, Math.PI * 2);
+  ctx.moveTo(17.6, -28.6);
+  ctx.lineTo(22, -27.2);
+  ctx.lineTo(17.8, -25.8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.arc(14.8, -28.2, 1.1, 0, Math.PI * 2);
   ctx.fill();
 
-  // Boot at horse's belly
-  ctx.fillStyle = '#1a0a04';
-  ctx.beginPath();
-  ctx.ellipse(7, -3, 4, 2, -0.1, 0, Math.PI * 2);
-  ctx.fill();
-
-  // ── Whip raised during final stretch (new) ─────────────
-  // Jockey's right hand lifts a whip during the final furlong —
-  // small but reads as "being asked for everything" on screen.
-  // Whip raises by progressing from horizontal (0.85) → fully up (0.95).
-  if (inFinalStretch) {
-    const whipProgress = Math.min(1, (progressNow - 0.85) / 0.10);
-    const whipAngle = -Math.PI / 2 + (1 - whipProgress) * 0.5;
-    const whipBaseX = 12, whipBaseY = -13;
-    const whipLength = 10;
-    ctx.strokeStyle = '#0e0a05';
-    ctx.lineWidth = 1.6;
-    ctx.lineCap = 'round';
+  // Goggles
+  if (detail) {
+    ctx.fillStyle = 'rgba(228,235,244,0.85)';
     ctx.beginPath();
-    ctx.moveTo(whipBaseX, whipBaseY);
-    ctx.lineTo(
-      whipBaseX + Math.cos(whipAngle) * whipLength,
-      whipBaseY + Math.sin(whipAngle) * whipLength
-    );
-    ctx.stroke();
-    // Whip tip highlight
-    ctx.fillStyle = 'rgba(245,228,154,0.6)';
-    ctx.beginPath();
-    ctx.arc(
-      whipBaseX + Math.cos(whipAngle) * whipLength,
-      whipBaseY + Math.sin(whipAngle) * whipLength,
-      0.9, 0, Math.PI * 2
-    );
+    ctx.ellipse(19, -25.6, 1.5, 1.05, -0.25, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // ── Whip, raised through the final furlong ──────────────────
+  if (inFinalStretch) {
+    const t = Math.min(1, (progressNow - 0.85) / 0.10);
+    const ang = -Math.PI / 2 + (1 - t) * 0.55;
+    const bx = 9, by = -24, len = 10;
+    ctx.strokeStyle = '#0e0a05';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + Math.cos(ang) * len, by + Math.sin(ang) * len);
+    ctx.stroke();
   }
 
   ctx.restore();
