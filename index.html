@@ -47,6 +47,14 @@
     background: #131a26; color: #f0ebe0; border: 1px solid rgba(255,255,255,0.2);
     border-radius: 4px; padding: 4px 6px; font: inherit; max-width: 260px;
   }
+  .sandbox-build {
+    margin-top: 6px; font-size: 10px; letter-spacing: .04em;
+    color: rgba(240,235,224,0.45);
+  }
+  .sandbox-build.is-stale {
+    color: #ffd7d0; background: #7a1f1f; padding: 4px 6px;
+    border-radius: 4px; font-weight: 700; letter-spacing: 0;
+  }
   /* On a phone every corner is taken during a race: phase title and
      strip top-left, Live Positions top-right, Mr Fox along the bottom,
      broadcast identification bottom-left. The scenario picker is a dev
@@ -84,6 +92,7 @@
     <option value="race-close-finish">race-close-finish — photo finish</option>
     <option value="race-runaway">race-runaway — dominant winner</option>
   </select>
+  <div class="sandbox-build" id="sandboxBuild">engine: loading…</div>
 </div>
 
 <div class="screen flat-screen" id="screen-intro">
@@ -316,12 +325,35 @@
     // #replayData is in the DOM now, so it's safe to load the engine.
     loadScript('js/vendor/gsap.min.js')
       .then(function () { return loadScript('js/flat.js'); })
-      .then(function () { runBootSequence(RACE_DATA); })
+      .then(function () { reportEngineBuild(); runBootSequence(RACE_DATA); })
       .catch(function (err) {
         console.error('Engine script load failed', err);
         var el = document.getElementById('dataError');
         if (el) { el.textContent = 'Failed to load the engine scripts (js/vendor/gsap.min.js or js/flat.js).'; el.style.display = 'block'; }
       });
+  }
+
+  // Probe the loaded engine for symbols that only exist in the current
+  // build. If the browser served a cached index.html, it will also have
+  // served a cached flat.js, and this is the cheapest way to notice.
+  function reportEngineBuild() {
+    var el = document.getElementById('sandboxBuild');
+    if (!el) return;
+    var checks = {
+      'world camera':  typeof pushWorldTransform === 'function',
+      'coat palette':  typeof coatFor === 'function',
+      'rail crowd':    typeof TILES === 'object' && TILES !== null && 'railCrowd' in TILES,
+      'finish run-on': typeof RUN_OUT_LENGTHS !== 'undefined',
+    };
+    var missing = Object.keys(checks).filter(function (k) { return !checks[k]; });
+    if (missing.length === 0) {
+      el.className = 'sandbox-build';
+      el.textContent = 'engine: current build';
+    } else {
+      el.className = 'sandbox-build is-stale';
+      el.textContent = 'STALE ENGINE — missing: ' + missing.join(', ') +
+                       '. Hard-refresh (Ctrl+Shift+R), or run serve.py.';
+    }
   }
 
   function runBootSequence(RACE_DATA) {

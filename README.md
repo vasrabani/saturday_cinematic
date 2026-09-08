@@ -12,7 +12,7 @@ Everything you need to reproduce what you see at
 ## Quick start
 
 ```bash
-python -m http.server 8080
+python serve.py
 ```
 
 Then open <http://localhost:8080/> — the intro screen fades in and the “RUN THE RACE” button drives the full sequence:
@@ -21,7 +21,21 @@ Then open <http://localhost:8080/> — the intro screen fades in and the “RUN 
 
 You must serve through a local web server. Opening `index.html` directly with `file://` will fail — the sandbox fetches `data/race.json` at boot and browsers block `fetch` from `file://` for security.
 
-Node users can substitute `npx http-server -p 8080`. Any static server works.
+**Use `serve.py`, not `python -m http.server`.** It serves this same
+directory but with caching switched off. `http.server` sends no
+`Cache-Control` header, so browsers apply heuristic caching and keep
+serving `index.html`, `js/flat.js` and `css/flat.css` from disk cache
+long after they have changed on disk — which turns every review into
+“did my change not work, or am I looking at yesterday’s build?”.
+
+As a backstop, the scenario picker shows an **engine build check**. If it
+reads `engine: current build` you are running the code that is on disk.
+If it turns red and says `STALE ENGINE`, the browser served you a cached
+copy: hard-refresh with `Ctrl+Shift+R` (`Cmd+Shift+R` on a Mac), or
+switch to `serve.py`.
+
+Node users can substitute `npx http-server -p 8080 -c-1` (the `-c-1`
+disables caching). Any static server works, but disable caching.
 
 ---
 
@@ -183,7 +197,7 @@ Please keep commits scoped (“Parade timing”, “Reveal trophy entry”, etc.
 ## Troubleshooting
 
 **“Data load failed” banner on first open**
-You’re on `file://`. Kill the tab, run `python -m http.server 8080` from this folder, and reopen at `http://localhost:8080/`.
+You’re on `file://`. Kill the tab, run `python serve.py` from this folder, and reopen at <http://localhost:8080/>.
 
 **Trophy / podium missing on the reveal screen**
 Check the browser console for a JS error. The reveal reads `#replayData` at boot; a malformed scenario JSON will hang the engine at the fade-out.
