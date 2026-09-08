@@ -72,8 +72,11 @@ body.page-experience {
 
 /* ── SCREEN 0: INTRO ────────────────────────────── */
 #screen-intro {
+  /* Translucent, not solid: js/flat.js paints a dimmed, slowly drifting
+     racecourse on #particleCanvas behind every screen, and an opaque
+     background would hide it. See AMBIENT BACKDROP in flat.js. */
   background: radial-gradient(ellipse 100% 100% at 50% 50%,
-    rgba(200,169,81,0.08) 0%, transparent 60%), var(--dark);
+    rgba(200,169,81,0.10) 0%, transparent 60%), rgba(6,8,15,0.34);
   text-align: center;
   gap: 32px;
   padding: 40px 24px;
@@ -180,7 +183,7 @@ body.page-experience {
 
 /* ── SCREEN 1: PARADE ───────────────────────────── */
 #screen-parade {
-  background: var(--dark);
+  background: rgba(6,8,15,0.40);
   gap: 0;
   padding: 0;
   justify-content: flex-start;
@@ -699,7 +702,7 @@ body.page-experience {
 
 /* ── SCREEN 3: REVEAL ───────────────────────────── */
 #screen-reveal {
-  background: var(--dark);
+  background: rgba(6,8,15,0.36);
   text-align: center;
   gap: 28px;
   padding: 40px 24px;
@@ -1366,7 +1369,7 @@ body.cinematic-experience-running .cinematic-archive-picker {
    reveal trophy via a screen-level fade. */
 #screen-rollcall {
   background: radial-gradient(ellipse 100% 100% at 50% 50%,
-    rgba(212,175,55,0.06) 0%, transparent 65%), var(--dark);
+    rgba(212,175,55,0.08) 0%, transparent 65%), rgba(6,8,15,0.40);
   text-align: center;
   gap: 0;
   padding: 0;

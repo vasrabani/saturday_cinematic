@@ -311,6 +311,7 @@ const DIRECTOR = {
   flash:     0,      // white flash at the line
   reveal:    0,      // finish-card reveal 0 → 1
   runOut:    0,      // lengths run on past the post after the line
+  pressFlash: 0,     // press flashguns firing at the post, 0 → 1
   phase:     'cruise',
 };
 
@@ -341,6 +342,7 @@ function init(data) {
 
   buildIntroChips();
   wireButtons();
+  gsap.ticker.add(ambientFrame);
   showScreen('intro');
 }
 window.init = init;
@@ -380,7 +382,14 @@ function buildIntroChips() {
     chip.className = 'intro-runner-chip' +
       (isUser ? ' intro-runner-chip--user' : '') +
       (isFox  ? ' intro-runner-chip--fox'  : '');
-    chip.textContent = (isUser ? '🐾 ' : isFox ? '🦊 ' : '') + r.name;
+    // The runner's actual cap, not a plain text pill. Twenty-four names
+    // in a row is a list; twenty-four sets of colours is a racecard, and
+    // it primes the viewer for the silks they are about to follow.
+    chip.innerHTML =
+      '<span class="intro-runner-chip__silk">' + renderCapSvg(r) + '</span>' +
+      '<span class="intro-runner-chip__name">' +
+        (isUser ? '🐾 ' : isFox ? '🦊 ' : '') + r.name +
+      '</span>';
     container.appendChild(chip);
   });
 }
@@ -961,6 +970,11 @@ function addFinalFurlongSequence(tl, durationS) {
     if (screen) screen.classList.add('is-final-furlong');
   }, null, 'line');
 
+  // The photographers start firing as the field comes to them.
+  tl.to(DIRECTOR, {
+    pressFlash: 1, duration: seg * 0.8, ease: 'power2.in',
+  }, 'line');
+
   // Slow motion. We slow the CLOCK, not the horses, so commentary,
   // leaderboard and gait all stretch together. The ramp is tweened from
   // a call() so the tween driving timeScale is not itself being scaled
@@ -1343,6 +1357,108 @@ function drawBackdrop() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  AMBIENT BACKDROP
+// ════════════════════════════════════════════════════════════════
+// The race screen has an entire racecourse behind it. Every other screen
+// was flat black, so the experience read as five separate web pages
+// rather than one afternoon at the track — and the cut from the parade
+// into the race was a cut from a void into a world.
+//
+// This paints a slow, dimmed, defocused version of the SAME parallax
+// world behind the content screens: the same tiles, the same planes, a
+// fraction of the speed, under a heavy scrim so type stays legible. It
+// draws on #particleCanvas, which already sits behind every screen, and
+// it stands down the instant the race takes the canvas over.
+const AMBIENT_DRIFT = 0.011;   // world px per ms — a very slow pan
+let ambientX = 0;
+let ambientPainted = false;
+
+function ambientTile(tile, bottomY, factor, alpha, scale) {
+  if (!tile) return;
+  const w = tile.w * scale;
+  const h = tile.h * scale;
+  const off = ambientX * factor;
+  pCtx.save();
+  pCtx.globalAlpha = alpha;
+  let x = -(((off % w) + w) % w);
+  for (; x < viewW + w; x += w) pCtx.drawImage(tile.canvas, x, bottomY - h, w, h);
+  pCtx.restore();
+}
+
+function drawAmbient() {
+  const horizon = viewH * 0.54;
+  pCtx.clearRect(0, 0, viewW, viewH);
+
+  // Sky — the same palette as the race, pitched darker so it reads as
+  // late afternoon rather than competing with the foreground type.
+  const sky = pCtx.createLinearGradient(0, 0, 0, horizon + viewH * 0.06);
+  sky.addColorStop(0,    '#16273b');
+  sky.addColorStop(0.45, '#2f5878');
+  sky.addColorStop(0.82, '#5d7f96');
+  sky.addColorStop(1,    '#8b7f6a');
+  pCtx.fillStyle = sky;
+  pCtx.fillRect(0, 0, viewW, horizon + viewH * 0.06);
+
+  // Low sun sitting on the horizon
+  const haze = pCtx.createRadialGradient(
+    viewW * 0.74, horizon - viewH * 0.05, 0,
+    viewW * 0.74, horizon - viewH * 0.05, viewW * 0.4
+  );
+  haze.addColorStop(0, 'rgba(255,226,168,0.30)');
+  haze.addColorStop(1, 'rgba(255,226,168,0)');
+  pCtx.fillStyle = haze;
+  pCtx.fillRect(0, 0, viewW, horizon + viewH * 0.06);
+
+  ambientTile(TILES.hills, horizon + 6,  PARALLAX.hills, 0.7,  1);
+  ambientTile(TILES.stand, horizon + 2,  PARALLAX.stand, 0.85, 1);
+  ambientTile(TILES.trees, horizon + Math.max(14, viewH * 0.045),
+              PARALLAX.trees, 0.95, 1);
+
+  // Turf running off the bottom of frame
+  const turf = pCtx.createLinearGradient(0, horizon, 0, viewH);
+  turf.addColorStop(0, '#2c4c36');
+  turf.addColorStop(1, '#15271c');
+  pCtx.fillStyle = turf;
+  pCtx.fillRect(0, horizon + viewH * 0.03, viewW, viewH);
+
+  // The scrim. Without this the backdrop fights every headline on top
+  // of it; with it, it reads as a place the type is standing in front of.
+  const scrim = pCtx.createLinearGradient(0, 0, 0, viewH);
+  scrim.addColorStop(0,    'rgba(6,8,15,0.44)');
+  scrim.addColorStop(0.45, 'rgba(6,8,15,0.58)');
+  scrim.addColorStop(1,    'rgba(6,8,15,0.80)');
+  pCtx.fillStyle = scrim;
+  pCtx.fillRect(0, 0, viewW, viewH);
+
+  const vg = pCtx.createRadialGradient(
+    viewW * 0.5, viewH * 0.5, Math.min(viewW, viewH) * 0.22,
+    viewW * 0.5, viewH * 0.5, Math.max(viewW, viewH) * 0.75
+  );
+  vg.addColorStop(0, 'rgba(2,4,9,0)');
+  vg.addColorStop(1, 'rgba(2,4,9,0.5)');
+  pCtx.fillStyle = vg;
+  pCtx.fillRect(0, 0, viewW, viewH);
+}
+
+function ambientFrame() {
+  // The race owns both canvases while it is running.
+  if (raceRunning) { ambientPainted = false; return; }
+
+  // Reduced motion still gets the scene, it just does not drift.
+  if (prefersReducedMotion) {
+    if (!ambientPainted) { drawAmbient(); ambientPainted = true; }
+    return;
+  }
+
+  ambientX += Math.min(gsap.ticker.deltaRatio() * 16.667, 50) * AMBIENT_DRIFT;
+  drawAmbient();
+}
+
+// Repaint on resize, since reallocating the canvas clears it and there
+// may be no frame due for a while on a static screen.
+window.addEventListener('resize', () => { ambientPainted = false; });
+
+// ════════════════════════════════════════════════════════════════
 //  TRACK PLANE
 // ════════════════════════════════════════════════════════════════
 
@@ -1546,7 +1662,7 @@ function drawForegroundPlane() {
 
 // Screen-space vignette + the flash at the line. Both are director
 // values, so they ramp with the phases rather than being switched on.
-function drawAtmosphere() {
+function drawAtmosphere(flashEnergy) {
   if (DIRECTOR.vignette > 0.01) {
     const vg = ctx.createRadialGradient(
       viewW * 0.5, viewH * 0.5, Math.min(viewW, viewH) * 0.28,
@@ -1557,6 +1673,14 @@ function drawAtmosphere() {
     ctx.fillStyle = vg;
     ctx.fillRect(0, 0, viewW, viewH);
   }
+  // A wall of flashguns lifts the whole frame a little. Capped, because
+  // this is a bloom off the crowd, not a lightning strike.
+  if (flashEnergy > 0.01) {
+    const bloom = Math.min(0.13, flashEnergy * 0.02);
+    ctx.fillStyle = 'rgba(226,238,255,' + bloom.toFixed(3) + ')';
+    ctx.fillRect(0, 0, viewW, viewH);
+  }
+
   if (DIRECTOR.flash > 0.005) {
     ctx.fillStyle = 'rgba(255,252,240,' + (DIRECTOR.flash * 0.85).toFixed(3) + ')';
     ctx.fillRect(0, 0, viewW, viewH);
@@ -1832,6 +1956,73 @@ function drawHoofDust(dt) {
   ctx.globalAlpha = 1;
 }
 
+// ── Press flashguns ─────────────────────────────────────────────
+// The photographers are banked up at the winning post, and the wall of
+// flashguns going off as the field crosses is the single most
+// recognisable image in racing. They fire in the crowd BEHIND the rail,
+// so the horses occlude them, and each one lives about a sixth of a
+// second — a flashgun is a hard pop, not a glow, and giving them a slow
+// fade turns the finish into fairy lights.
+const MAX_FLASHES = 60;
+let pressFlashes = [];
+
+function spawnPressFlashes(dt) {
+  const intensity = DIRECTOR.pressFlash;
+  if (intensity <= 0.02 || prefersReducedMotion) return;
+  if (pressFlashes.length >= MAX_FLASHES) return;
+
+  // Expected pops per second scales with the director's intensity.
+  const perSecond = 85 * intensity;
+  if (Math.random() > (perSecond * dt) / 1000) return;
+
+  // Banked around the post, thickest right on it.
+  const spreadLengths = 7 * (0.35 + Math.random());
+  const side = Math.random() < 0.5 ? -1 : 1;
+  pressFlashes.push({
+    x:    WORLD.spanPx + side * spreadLengths * WORLD.lengthPx * Math.random(),
+    y:    WORLD.trackTopY - 16 - Math.random() * Math.max(30, viewH * 0.09),
+    life: 1,
+    size: (10 + Math.random() * 12) * WORLD.horseScale,
+  });
+}
+
+function drawPressFlashes(dt) {
+  if (!pressFlashes.length) return 0;
+  const step = Math.max(0.5, Math.min(2.5, dt / 16.67));
+  let energy = 0;
+  pressFlashes = pressFlashes.filter((f) => {
+    f.life -= 0.115 * step;
+    if (f.life <= 0) return false;
+    // Sharp attack, sharp decay — the curve is what makes it a flashgun.
+    const a = f.life * f.life;
+    energy += a;
+    const r = f.size * (1.5 - f.life * 0.5);
+    const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, r);
+    g.addColorStop(0,    'rgba(255,255,255,' + a.toFixed(3) + ')');
+    g.addColorStop(0.22, 'rgba(240,248,255,' + (0.7 * a).toFixed(3) + ')');
+    g.addColorStop(0.55, 'rgba(200,222,255,' + (0.22 * a).toFixed(3) + ')');
+    g.addColorStop(1,    'rgba(180,210,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // A short horizontal streak on the freshest pops. Camera flashes in
+    // a bank read as a line of light, not a field of dots.
+    if (f.life > 0.55) {
+      const sw = r * 2.6, sa = (f.life - 0.55) / 0.45;
+      const sg = ctx.createLinearGradient(f.x - sw, f.y, f.x + sw, f.y);
+      sg.addColorStop(0,   'rgba(220,236,255,0)');
+      sg.addColorStop(0.5, 'rgba(255,255,255,' + (0.55 * sa).toFixed(3) + ')');
+      sg.addColorStop(1,   'rgba(220,236,255,0)');
+      ctx.fillStyle = sg;
+      ctx.fillRect(f.x - sw, f.y - 0.9, sw * 2, 1.8);
+    }
+    return true;
+  });
+  return energy;
+}
+
 // ════════════════════════════════════════════════════════════════
 //  BROADCAST IDENTIFICATION
 // ════════════════════════════════════════════════════════════════
@@ -1945,11 +2136,13 @@ function renderFrame() {
   drawFurlongMarkers();
   drawWinningPost();
   drawHoofDust(dt);
+  spawnPressFlashes(dt);
+  const flashEnergy = drawPressFlashes(dt);
   drawField();
   ctx.restore();
 
   drawForegroundPlane();
-  drawAtmosphere();
+  drawAtmosphere(flashEnergy);
 
   // DOM overlays — cheap, and each throttles itself.
   const p = DIRECTOR.progress;
@@ -2764,11 +2957,21 @@ function setPhaseTitle(text) {
 //   4. Out to the roll call.
 //
 // Like everything else in the race, it is one GSAP timeline.
-// How far the field runs on past the post. Ten lengths puts eight or
-// nine runners through the line behind the winner before everything
-// settles, which is what makes the finish read as a race rather than as
-// one horse arriving.
-const RUN_OUT_LENGTHS = 10;
+// The zoom the camera opens to at the line. Shared, because the run-out
+// distance is derived from how much track that zoom actually shows.
+const FINISH_ZOOM = 1.08;
+
+// How far the field runs on past the post. Enough that eight or nine
+// runners come through the line behind the winner, which is what makes
+// the finish read as a race rather than as one horse arriving — but it
+// has to be measured against the FRAME, not fixed. Ten lengths is about
+// half a desktop frame and reads perfectly; on a 375px phone ten lengths
+// is wider than the entire viewport, so the winner and the whole field
+// ran off the right-hand edge and the finish played to an empty screen.
+function runOutLengths() {
+  const frameLengths = viewW / FINISH_ZOOM / WORLD.lengthPx;
+  return Math.max(4, Math.min(12, frameLengths * 0.55));
+}
 const FINISH_PAUSE_S  = 2.45;  // line → placings settle → held beat → card
 const RESULT_HOLD_S   = 2.30;
 
@@ -2789,7 +2992,7 @@ function crossTheLine() {
   //     runners somewhere to finish. Twelve lengths is enough for eight
   //     or nine of them to come through behind the winner.
   finishTL.to(DIRECTOR, {
-    runOut: RUN_OUT_LENGTHS,
+    runOut: runOutLengths(),
     duration: prefersReducedMotion ? 0.6 : 2.2,
     ease: 'power2.out',
   }, 0);
@@ -2800,10 +3003,16 @@ function crossTheLine() {
   //     broadcast director makes to show you the placings. Without this
   //     the winner runs on alone and everyone else finishes off-frame.
   finishTL.to(DIRECTOR, {
-    zoom: 1.08, anchorX: 0.62, groupBias: 0.1, fieldFade: 0.10,
+    zoom: FINISH_ZOOM, anchorX: 0.62, groupBias: 0.1, fieldFade: 0.10,
     camY: 4, tilt: 0.003, vignette: 0.28,
     duration: 1.5, ease: 'power2.out',
   }, 0.05);
+
+  // The flashguns keep going for a moment after they have passed, then
+  // thin out as the photographers stop shooting.
+  finishTL.to(DIRECTOR, {
+    pressFlash: 0, duration: 2.8, ease: 'power2.out',
+  }, 0.35);
 
   // 4 — the held shot. Everything has settled; the camera drifts and
   //     nothing else happens. This pause is the whole point of the
@@ -2811,7 +3020,7 @@ function crossTheLine() {
   //     ending rather than a race being won.
   const drift = prefersReducedMotion ? 0 : 1;
   finishTL.to(DIRECTOR, {
-    zoom: 1.08 + 0.10 * drift,
+    zoom: FINISH_ZOOM + 0.10 * drift,
     vignette: 0.42,
     duration: 1.6, ease: 'sine.out',
   }, 1.55);
@@ -3124,15 +3333,70 @@ function buildRevealScreen(winner, positions) {
   }
 }
 
+// Gold falling through frame as the trophy lands. This is the one place
+// in the experience where confetti belongs — it was removed from the
+// race itself, where it read as an arcade flourish over a sports
+// broadcast. Built from DOM nodes rather than canvas because the reveal
+// screen sits above both canvases, and torn down when it lands so
+// nothing accumulates across replays.
+const REVEAL_CONFETTI_COUNT = 44;
+
+function spawnRevealConfetti() {
+  if (prefersReducedMotion) return;
+  const screen = document.getElementById('screen-reveal');
+  if (!screen) return;
+
+  let layer = document.getElementById('revealConfetti');
+  if (layer) layer.remove();
+  layer = document.createElement('div');
+  layer.className = 'reveal-confetti';
+  layer.id = 'revealConfetti';
+  screen.appendChild(layer);
+
+  const COLOURS = ['#D4AF37', '#F5E49A', '#C8A951', '#FFFFFF', '#E8C86A'];
+  const pieces = [];
+  for (let i = 0; i < REVEAL_CONFETTI_COUNT; i++) {
+    const el = document.createElement('i');
+    el.style.background = COLOURS[(Math.random() * COLOURS.length) | 0];
+    el.style.left = (Math.random() * 100).toFixed(2) + '%';
+    el.style.width = (4 + Math.random() * 5).toFixed(1) + 'px';
+    el.style.height = (7 + Math.random() * 9).toFixed(1) + 'px';
+    layer.appendChild(el);
+    pieces.push(el);
+  }
+
+  gsap.set(pieces, { y: -40, opacity: 1, rotation: () => Math.random() * 360 });
+  gsap.to(pieces, {
+    y: () => window.innerHeight + 80,
+    x: () => (Math.random() - 0.5) * 220,
+    rotation: () => (Math.random() - 0.5) * 900,
+    opacity: 0,
+    ease: 'none',
+    duration: () => 2.4 + Math.random() * 2.2,
+    delay: () => Math.random() * 1.1,
+    onComplete: function () {
+      // Last one out clears the layer.
+      if (--spawnRevealConfetti._live <= 0 && layer.parentNode) layer.remove();
+    },
+  });
+  spawnRevealConfetti._live = pieces.length;
+}
+
 function animateReveal() {
   const tl = gsap.timeline();
   tl.to('.reveal-kicker',          { opacity: 1, y: 0, duration: 0.4 });
   tl.to('.reveal-winner-label',    { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
   tl.to('#revealTrophyWrap',       { opacity: 1, scale: 1, duration: 0.6, ease: 'back.out(1.4)' }, '-=0.15');
+  tl.call(spawnRevealConfetti, null, '-=0.35');
   tl.to('#revealHorseName',        { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
   tl.to('#revealOdds',             { opacity: 1, duration: 0.3 }, '-=0.1');
   tl.to('#revealVerdictBox',       { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
   tl.to('#revealPodium',           { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
+  // The podium is the densest thing on the screen, so it earns its own
+  // stagger rather than fading in as one block.
+  tl.fromTo('.reveal-podium__row',
+    { opacity: 0, x: -28 },
+    { opacity: 1, x: 0, duration: 0.45, stagger: 0.12, ease: 'power3.out' }, '-=0.25');
   tl.to('.reveal-actions',         { opacity: 1, duration: 0.4 }, '-=0.1');
 }
 
@@ -3160,8 +3424,9 @@ window.replayExperience = function () {
   horses.forEach((h) => gsap.killTweensOf(h));
   stopTicker();
 
-  raceRunning = false;
-  particles   = [];
+  raceRunning  = false;
+  particles    = [];
+  pressFlashes = [];
   horses      = [];
   frameClock  = 0;
   lastPhaseTitle = '';
@@ -3174,7 +3439,7 @@ window.replayExperience = function () {
   Object.assign(DIRECTOR, {
     progress: 0, zoom: 1, anchorX: 0.50, camY: 0, tilt: 0, shake: 0,
     vignette: 0.10, groupBias: 0.12, fieldFade: 0, flash: 0, reveal: 0,
-    runOut: 0, phase: 'cruise',
+    runOut: 0, pressFlash: 0, phase: 'cruise',
   });
   CAM.x = 0; CAM.zoom = 1; CAM.shakeX = 0; CAM.shakeY = 0;
 
@@ -3188,6 +3453,8 @@ window.replayExperience = function () {
     delete raceScreen.dataset.racePhase;
   }
   clearBroadcastId();
+  const confetti = document.getElementById('revealConfetti');
+  if (confetti) { gsap.killTweensOf(confetti.children); confetti.remove(); }
   if (_resultEl) { _resultEl.style.display = 'none'; gsap.set(_resultEl, { opacity: 0 }); }
   const strip = document.getElementById('phaseStrip');
   if (strip) strip.remove();

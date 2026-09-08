@@ -885,3 +885,48 @@
    opaque screen, so the second canvas was invisible and effectively
    dead weight; V2 gives it the sky and the far planes. */
 #screen-race { background: transparent; }
+
+/* ── Intro runner chips carry silks ──────────────────────────────
+   The chip is now a cap plus a name rather than a text pill, so the
+   intro reads as a racecard and the viewer meets the colours before
+   the race rather than during it. */
+.intro-runner-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.intro-runner-chip__silk {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.intro-runner-chip__silk svg { width: 100%; height: 100%; display: block; }
+.intro-runner-chip__name { display: block; }
+
+@media (max-width: 640px) {
+  .intro-runner-chip__silk { width: 12px; height: 12px; }
+}
+
+/* ── Reveal confetti ─────────────────────────────────────────────
+   Built from DOM nodes by spawnRevealConfetti() in flat.js, because the
+   reveal screen sits above both canvases. pointer-events off so it can
+   never swallow a click on the action buttons underneath it. */
+.reveal-confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 3;
+}
+.reveal-confetti i {
+  position: absolute;
+  top: 0;
+  display: block;
+  border-radius: 1px;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-confetti { display: none; }
+}

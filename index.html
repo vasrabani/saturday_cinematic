@@ -343,7 +343,7 @@
       'world camera':  typeof pushWorldTransform === 'function',
       'coat palette':  typeof coatFor === 'function',
       'rail crowd':    typeof TILES === 'object' && TILES !== null && 'railCrowd' in TILES,
-      'finish run-on': typeof RUN_OUT_LENGTHS !== 'undefined',
+      'finish run-on': typeof runOutLengths === 'function',
     };
     var missing = Object.keys(checks).filter(function (k) { return !checks[k]; });
     if (missing.length === 0) {
