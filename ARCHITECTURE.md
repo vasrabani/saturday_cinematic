@@ -384,7 +384,18 @@ While a runner is named, a short bar in their own silk colour is drawn on the tu
 
 The element is created from JS, not declared in `index.html`, so nothing has to move into the Django template (see § 10).
 
-### 6.9 Sim vs replay
+### 6.9 The ambient backdrop
+
+The race screen has an entire racecourse behind it. Every other screen was flat black, so the experience read as five separate web pages rather than one afternoon at the track — and the cut from the parade into the race was a cut from a void into a world.
+
+`drawAmbient()` paints a slow, dimmed, defocused version of the **same** parallax world behind the content screens: the same tiles, the same planes, a fraction of the speed, under a scrim heavy enough that type stays legible. It draws on `#particleCanvas`, which already sits behind every screen, and `ambientFrame()` stands down the instant `raceRunning` goes true and the race takes the canvas over.
+
+Two things this depends on:
+
+- **The content screens have to be translucent.** `#screen-intro`, `#screen-parade`, `#screen-rollcall` and `#screen-reveal` are `rgba(6,8,15,0.34-0.40)` rather than solid `var(--dark)`. Make one of them opaque again and the backdrop silently disappears behind it.
+- **It runs on `gsap.ticker`,** the same clock as the race renderer, added once in `init()`. Measured cost is negligible (well under a tenth of a millisecond a frame at 1440×860) because it is three tile blits and four gradients. Under `prefers-reduced-motion` it paints once and stops.
+
+### 6.10 Sim vs replay
 
 The single most important branch in `flat.js` is inside `buildRacePositions()`, which decides the finishing ORDER, and `finalLengthsFor()`, which decides the GAPS. Both branches produce the same output shape, so everything downstream is agnostic.
 
@@ -499,11 +510,21 @@ Three things fall out of it for free, and each was a bug or a limitation in V1:
 `crossTheLine()` builds `finishTL`, in order:
 
 1. A single frame of flash as the field hits the line.
-2. **The run-out.** `DIRECTOR.runOut` tweens to `RUN_OUT_LENGTHS` (10) on a `power2.out`, and `updateRaceModel` adds it to the leader's travel. The whole field carries on past the winning post and decelerates, because horses do not stop dead on the line — and because the placed runners need somewhere to finish. Ten lengths is enough for eight or nine of them to come through behind the winner.
+2. **The run-out.** `DIRECTOR.runOut` tweens to `runOutLengths()` on a `power2.out`, and `updateRaceModel` adds it to the leader's travel. The whole field carries on past the winning post and decelerates, because horses do not stop dead on the line — and because the placed runners need somewhere to finish.
+
+   The distance is measured **against the frame**, not fixed: `viewW / FINISH_ZOOM / WORLD.lengthPx × 0.55`, clamped to 4–12 lengths. Ten lengths is about half a desktop frame and reads perfectly, but on a 375px phone ten lengths is wider than the entire viewport — the winner and the whole field ran off the right-hand edge and the finish played to an empty screen. Desktop resolves to ~9.9, a phone to ~4.2.
 3. **The camera opens up.** Through the final furlong the shot is tight on the leader; at the line it widens to zoom 1.08 and the focus falls back off the winner onto the group (`groupBias` → 0.1). This is the cut a broadcast director makes to show you the placings, and without it the winner runs on alone while everyone else finishes off-frame. `updateCamera()` also clamps the focus so the post stays at least 10% in from the left edge while `runOut` is non-zero — on a blanket finish the group centroid *is* the winner, so an unclamped camera follows them past the post and the line slides out of shot at exactly the moment the viewer wants it.
 4. **A held shot.** Everything has settled; the camera drifts and nothing else happens. This pause is the whole point of the sequence; take it out and the finish reads as an animation ending rather than a race being won.
 5. The result card, sized to the actual margin: PHOTO FINISH under a head, DEAD HEAT when the API says so, otherwise WINNER with the margin spelled out. It sits high in the frame (`top: 27%`) because the finish shot now has most of a field running through the middle of it.
 6. Out to the roll call.
+
+**Press flashguns.** The photographers are banked at the winning post, and the wall of flashguns going off as the field crosses is the single most recognisable image in racing. `DIRECTOR.pressFlash` ramps up through the final furlong on the master timeline and is faded out by `finishTL`; `spawnPressFlashes()` emits from it at a rate proportional to the intensity. Three things make them read as flashguns rather than fairy lights:
+
+- They fire in the crowd **behind the far rail**, so the horses occlude them.
+- Each lives about a sixth of a second on a squared decay — a flashgun is a hard pop, and a slow fade turns the finish into Christmas lights.
+- The freshest ones get a short horizontal streak, because a bank of flashes reads as a line of light rather than a field of dots.
+
+A capped screen-space bloom (`drawAtmosphere`) lifts the whole frame slightly while they are firing.
 
 ### 8.5 The leaderboard
 
@@ -519,7 +540,11 @@ Outside the race screen, GSAP is used as it was before:
 | Parade | Per-horse entry (silk scale, name slide), skip button pulse |
 | Race | Stalls BANG, plus everything in § 8.1-8.5 |
 | Roll call | Per-row entry from off-screen right, position number count-up |
-| Reveal | Trophy scale + glow, winner name slide-up, verdict box fade, podium stagger, action bar entry |
+| Reveal | Trophy scale + glow, winner name slide-up, verdict box fade, podium row stagger, gold confetti, action bar entry |
+
+**Reveal confetti** is DOM (`spawnRevealConfetti()`), not canvas, because the reveal screen sits above both canvases. Forty-four nodes, GSAP-driven, torn down by the last piece to land and again on `replayExperience()` so nothing accumulates across replays. This is the one place in the experience where confetti belongs — it was removed from the race itself, where it read as an arcade flourish over a sports broadcast.
+
+**Intro runner chips** carry the runner's actual cap (`renderCapSvg`) rather than being text pills. Twenty-four names in a row is a list; twenty-four sets of colours is a racecard, and it primes the viewer for the silks they are about to follow.
 
 ### 8.7 prefers-reduced-motion
 
