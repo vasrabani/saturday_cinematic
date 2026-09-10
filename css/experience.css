@@ -1724,9 +1724,8 @@ body.cinematic-experience-running .cinematic-archive-picker {
 
 /* ─────────────────────────────────────────────────────────────────
    Mr Fox speech bubble (Sprint P4 #6) — wraps the existing
-   #racingCommentary element with a 🦊 byline + speech-bubble pill
-   styling. Same on flat.css. Renders only when the commentary
-   element has content; CSS-only, no JS changes needed.
+   #racingCommentary element with a 🦊 byline + speech-bubble pill.
+   CSS-only; the engine just writes the line into #racingCommentary.
    ───────────────────────────────────────────────────────────── */
 .race-commentary {
   /* Override existing positioning with Fox-branded card. */
