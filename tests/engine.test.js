@@ -25,7 +25,7 @@ function seeded(seed) {
   };
 }
 
-test('exposes a public API and nothing else on window', () => {
+test('exposes the public API', () => {
   const api = loadEngine();
   for (const name of ['init', 'startExperience', 'skipParade', 'skipToFinish', 'skipRollCall', 'replayExperience']) {
     assert.equal(typeof api[name], 'function', name);
@@ -197,6 +197,20 @@ test('commentary fills in the picks and drops the ones that are missing', () => 
                'Halfway. the leader travelling like a winner, Opportunity closing.');
   assert.equal(say('{LEADER} kicks first, {FOX} tracking him.'), 'the leader kicks first tracking him.');
   assert.equal(say('No placeholders here.'), 'No placeholders here.');
+  // A pick that is there keeps the template's own punctuation.
+  assert.equal(say('Watch {USER} now.'), 'Watch Opportunity now.');
+});
+
+test('a replay matches ids whatever their type, and falls back to the sim when none match', () => {
+  const api = loadEngine({ replayData: { has_result: true, result_order: ['3', '1'] } });
+  api.init(raceData());
+  assert.deepEqual(plain(api.internals.buildRacePositions(FIELD[0]).map((r) => r.id)), [3, 1, 2, 4]);
+
+  const none = loadEngine({ replayData: { has_result: true, result_order: [97, 98] }, random: seeded(3) });
+  none.init(raceData());
+  const order = plain(none.internals.buildRacePositions(FIELD[3]).map((r) => r.id));
+  assert.equal(order[0], 4, 'the sim, led by the drawn winner');
+  assert.deepEqual(order.slice().sort(), [1, 2, 3, 4]);
 });
 
 test('a partial config override keeps the other defaults', () => {
