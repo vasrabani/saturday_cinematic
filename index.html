@@ -83,7 +83,7 @@
 <canvas id="particleCanvas" width="0" height="150"></canvas>
 <div id="subtitle"><span class="subtitle__text"></span></div>
 <div id="loadingBar"></div>
-<div id="dataError">Data load failed. This sandbox must be served over http:// — run <code>python -m http.server 8080</code> from this folder and open http://localhost:8080/, not the file directly.</div>
+<div id="dataError">Data load failed. This sandbox must be served over http:// — run <code>python serve.py</code> from this folder and open http://localhost:8080/, not the file directly.</div>
 
 <div class="sandbox-picker">
   <label for="scenarioPick">Scenario</label>
@@ -240,8 +240,8 @@
 
   // gsap.min.js and flat.js are loaded dynamically, AFTER #replayData
   // is injected below. flat.js reads #replayData once, synchronously,
-  // into a top-level `const REPLAY_DATA` the moment it parses (see
-  // js/flat.js:476) — there's no fallback like FLAT_CONFIG has, so if
+  // into its REPLAY_DATA constant the moment it parses — there's no
+  // fallback like FLAT_CONFIG has, so if
   // flat.js parses before #replayData exists, REPLAY_DATA is null for
   // the rest of the page's life and the engine falls back to a live
   // sim instead of honouring result_order. Loading it via a static
@@ -306,7 +306,7 @@
     if (payload.band) document.body.classList.add('page-experience--' + payload.band);
 
     // flat.js reads the result via #replayData at runtime rather than
-    // through init() — see js/flat.js:478 and the README's payload contract.
+    // through init() — see REPLAY_DATA in js/flat.js and the README's payload contract.
     var replayScript = document.createElement('script');
     replayScript.type = 'application/json';
     replayScript.id = 'replayData';
@@ -333,23 +333,19 @@
       });
   }
 
-  // Probe the loaded engine for symbols that only exist in the current
-  // build. If the browser served a cached index.html, it will also have
-  // served a cached flat.js, and this is the cheapest way to notice.
+  // Ask the loaded engine which features it was built with. If the
+  // browser served a cached flat.js, a feature this page expects will be
+  // missing, and this is the cheapest way to notice.
+  var EXPECTED_FEATURES = ['world-camera', 'coat-palette', 'rail-crowd',
+                           'run-through', 'distance-gait', 'encapsulated'];
   function reportEngineBuild() {
     var el = document.getElementById('sandboxBuild');
     if (!el) return;
-    var checks = {
-      'world camera':  typeof pushWorldTransform === 'function',
-      'coat palette':  typeof coatFor === 'function',
-      'rail crowd':    typeof TILES === 'object' && TILES !== null && 'railCrowd' in TILES,
-      'finish run-through': typeof runThroughLine === 'function',
-      'distance-driven gait': typeof placeHorse === 'function',
-    };
-    var missing = Object.keys(checks).filter(function (k) { return !checks[k]; });
+    var have = (window.FlatEngine && window.FlatEngine.features) || [];
+    var missing = EXPECTED_FEATURES.filter(function (f) { return have.indexOf(f) < 0; });
     if (missing.length === 0) {
       el.className = 'sandbox-build';
-      el.textContent = 'engine: current build';
+      el.textContent = 'engine: ' + window.FlatEngine.version;
     } else {
       el.className = 'sandbox-build is-stale';
       el.textContent = 'STALE ENGINE — missing: ' + missing.join(', ') +

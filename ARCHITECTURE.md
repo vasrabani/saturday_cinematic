@@ -94,7 +94,7 @@ The sandbox startup is deliberately different from production. Understand it bef
    - Populates the intro title, meta chips, band pill, parade header from the payload.
    - **Creates a `<script type="application/json" id="replayData">` tag** containing the payload.
 5. **Only then** does it dynamically load `gsap.min.js` and `flat.js`.
-6. `flat.js` reads `#replayData` synchronously into a top-level `const REPLAY_DATA` (see `flat.js:476-ish`).
+6. `flat.js` reads `#replayData` synchronously into a top-level `const REPLAY_DATA` (`REPLAY_DATA`, near the top of the race-model section).
 
 ### Why the dynamic load
 

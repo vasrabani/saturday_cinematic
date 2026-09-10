@@ -1,0 +1,159 @@
+// Unit tests for the pure logic in js/flat.js: `npm test` (node --test).
+// The engine is loaded into an inert browser by load-engine.js; these
+// tests only call what it exposes on FlatEngine.internals.
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { loadEngine } = require('./load-engine');
+
+const E = loadEngine().internals;
+
+// Deterministic Math.random for the tests that invent a race.
+function seeded(seed) {
+  let a = seed | 0;
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('exposes a public API and nothing else on window', () => {
+  const api = loadEngine();
+  for (const name of ['init', 'startExperience', 'skipParade', 'skipToFinish', 'skipRollCall', 'replayExperience']) {
+    assert.equal(typeof api[name], 'function', name);
+  }
+});
+
+test('parseBeatenDistance reads Racing API distances', () => {
+  const p = E.parseBeatenDistance;
+  assert.equal(p('nse'), 0.05);
+  assert.equal(p('shd'), 0.10);
+  assert.equal(p('hd'), 0.15);
+  assert.equal(p('nk'), 0.25);
+  assert.equal(p('1/2'), 0.5);
+  assert.equal(p('1 1/2'), 1.5);
+  assert.equal(p('3/4L'), 0.75);
+  assert.equal(p('½'), 0.5);
+  assert.equal(p('.5'), 0.5);
+  assert.equal(p('13'), 13);
+  assert.equal(p('dist'), 99);
+  assert.equal(p('DH'), -1);
+  assert.equal(p(''), null);
+  assert.equal(p(null), null);
+  assert.equal(p('n/a'), null);
+});
+
+test('formatBeatenDistance writes racing copy', () => {
+  const f = E.formatBeatenDistance;
+  assert.equal(f(0.05), 'A NOSE');
+  assert.equal(f(0.1), 'A SHORT HEAD');
+  assert.equal(f(0.15), 'A HEAD');
+  assert.equal(f(0.25), 'A NECK');
+  assert.equal(f(0.5), 'HALF A LENGTH');
+  assert.equal(f(0.75), 'THREE-QUARTERS OF A LENGTH');
+  assert.equal(f(1), 'A LENGTH');
+  assert.equal(f(1.25), '1¼ LENGTHS');
+  assert.equal(f(2.5), '2½ LENGTHS');
+  assert.equal(f(13), '13 LENGTHS');
+  assert.equal(f(60), 'A DISTANCE');
+  assert.equal(f(null), '');
+  assert.equal(E.formatBeatenDistanceCompact(1.75), '1¾L');
+  assert.equal(E.formatBeatenDistanceCompact(-1), 'DH');
+});
+
+test('ordinal suffixes, including the teens and twenties', () => {
+  const o = E.ordinal;
+  const cases = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th', 11: '11th', 12: '12th', 13: '13th',
+                  21: '21st', 22: '22nd', 23: '23rd', 24: '24th', 101: '101st', 111: '111th', 112: '112th' };
+  for (const [n, want] of Object.entries(cases)) assert.equal(o(Number(n)), want);
+});
+
+test('invented finishing gaps are a close finish, in finishing order', () => {
+  const field = Array.from({ length: 24 }, (_, i) => ({ id: i + 1 }));
+  for (let s = 1; s <= 20; s++) {
+    const gaps = E.inventFinishGaps(field, 'stayer', null, seeded(s));
+    assert.equal(gaps.length, 24);
+    assert.equal(gaps[0], 0);
+    for (let i = 1; i < gaps.length; i++) assert.ok(gaps[i] >= gaps[i - 1], 'monotonic at ' + i);
+    assert.ok(gaps[1] <= 0.4, 'winner by a neck at most, got ' + gaps[1]);
+    assert.ok(gaps[8] <= 5.5, 'nine inside five and a half lengths, got ' + gaps[8]);
+    assert.ok(gaps[23] <= E.MAX_VISIBLE_LENGTHS);
+  }
+});
+
+test('invented gaps honour the real winning margin and a dead heat', () => {
+  const field = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  assert.equal(E.inventFinishGaps(field, 'mile', 0.2, seeded(1))[1], 0.2);
+  assert.equal(E.inventFinishGaps(field, 'mile', 0, seeded(1))[1], 0);
+});
+
+test('race progress eases out of the stalls and is continuous', () => {
+  const f = E.raceProgressEase, a = E.START_EASE;
+  assert.equal(f(0), 0);
+  assert.ok(Math.abs(f(1) - 1) < 1e-12);
+  const eps = 1e-7;
+  assert.ok(Math.abs(f(a - eps) - f(a + eps)) < 1e-6, 'continuous at the join');
+  const slope = (x) => (f(x + eps) - f(x - eps)) / (2 * eps);
+  assert.ok(Math.abs(slope(a - 1e-4) - slope(a + 1e-4)) < 1e-2, 'no jolt at the join');
+  let prev = -1;
+  for (let x = 0; x <= 1; x += 0.01) { assert.ok(f(x) >= prev); prev = f(x); }
+});
+
+test('the run-through leaves the line at race pace and pulls up smoothly', () => {
+  const v = 3.8, R = (t) => E.runOnPast(t, v);
+  assert.equal(R(0), 0);
+  const eps = 1e-6;
+  assert.ok(Math.abs(R(eps) / eps - v) < 1e-3, 'crosses the line at race speed');
+  let prev = 0;
+  for (let t = 0.1; t < 10; t += 0.1) { assert.ok(R(t) > prev); prev = R(t); }
+  const late = (R(20 + eps) - R(20)) / eps;
+  assert.ok(Math.abs(late - v * E.EASE_TO) < 1e-3, 'settles at EASE_TO of race pace');
+});
+
+test('the result card waits for seven finishers, within its bounds', () => {
+  const close = Array.from({ length: 24 }, (_, i) => i * 0.3);
+  const runaway = [0, 13, 15, 16.5, 18, 19.5, 21, 22.5, 24, 25.5];
+  const a = E.finishPauseS(close, 3.8, 0.55);
+  const b = E.finishPauseS(runaway, 3.8, 0.55);
+  assert.equal(a, E.FINISH_PAUSE_S, 'a close finish keeps the minimum pause');
+  assert.ok(b > a && b <= E.FINISH_PAUSE_MAX_S, 'a runaway waits longer, but not forever: ' + b);
+});
+
+test('a planted hoof sweeps exactly one stride sweep, so it cannot skate', () => {
+  for (const [name, leg] of Object.entries(E.LEG_RIG)) {
+    assert.equal(leg.front - leg.back, E.STRIDE_SWEEP, name);
+    const strike = E.hoofPath(0, leg.front, leg.back, leg.lift, leg.fore);
+    const lift = E.hoofPath(E.STANCE - 1e-9, leg.front, leg.back, leg.lift, leg.fore);
+    assert.ok(strike.planted && lift.planted, name + ' planted through the stance');
+    assert.ok(Math.abs(strike.x - lift.x - E.STRIDE_SWEEP) < 1e-6, name + ' sweep');
+    assert.ok(!E.hoofPath(E.STANCE + 0.2, leg.front, leg.back, leg.lift, leg.fore).planted, name + ' swings');
+  }
+  assert.ok(Math.abs(E.STRIDE_LOCAL - E.STRIDE_SWEEP / E.STANCE) < 1e-12);
+});
+
+test('two-bone IK keeps both bones at their length', () => {
+  const s = E.solveLeg(0, 0, 6, 25, 14, 16.2, -1);
+  assert.ok(Math.abs(Math.hypot(s.jx, s.jy) - 14) < 1e-9, 'upper bone');
+  assert.ok(Math.abs(Math.hypot(s.fx - s.jx, s.fy - s.jy) - 16.2) < 1e-9, 'lower bone');
+  assert.ok(Math.abs(s.fx - 6) < 1e-9 && Math.abs(s.fy - 25) < 1e-9, 'reaches the target');
+});
+
+test('smoothstep clamps and eases', () => {
+  const s = E.smoothstep;
+  assert.equal(s(0, 1, -1), 0);
+  assert.equal(s(0, 1, 2), 1);
+  assert.equal(s(0, 1, 0.5), 0.5);
+  assert.ok(s(0, 1, 0.25) < 0.25);
+});
+
+test('coats and markings are stable per runner and vary across a field', () => {
+  const runner = { id: '42605', name: 'Daiquiri Bay' };
+  assert.deepEqual(E.coatFor(runner), E.coatFor({ ...runner }));
+  assert.deepEqual(E.markingsFor(runner), E.markingsFor({ ...runner }));
+  const socks = new Set();
+  for (let i = 1; i <= 24; i++) socks.add(JSON.stringify(E.markingsFor({ id: String(i) }).socks));
+  assert.ok(socks.size > 3, 'short ids must not all get the same socks');
+});
