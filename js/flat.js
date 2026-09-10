@@ -188,7 +188,6 @@ const pCtx    = pCanvas.getContext('2d');
 if (!CanvasRenderingContext2D.prototype.roundRect) {
   CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
     const radius = Math.max(0, Math.min(typeof r === 'number' ? r : 0, w / 2, h / 2));
-    this.beginPath();
     this.moveTo(x + radius, y);
     this.arcTo(x + w, y,     x + w, y + h, radius);
     this.arcTo(x + w, y + h, x,     y + h, radius);
@@ -300,10 +299,11 @@ function resize() {
   scheduleTileRebuild();
   relayoutLanes();
 
-  // A resize reallocates the canvas backing store, which clears it. The
-  // race loop repaints on the next tick, but every other phase would be
-  // left staring at a blank canvas, so repaint once here.
-  if (raceRunning) renderFrame();
+  // A resize reallocates the canvas backing store, which clears it. Repaint
+  // the race as it stands — without advancing it — and let the ambient
+  // backdrop repaint itself on its next tick.
+  redrawFrame();
+  ambientPainted = false;
 }
 window.addEventListener('resize', resize);
 
@@ -370,6 +370,8 @@ function phaseFrom(key) {
 }
 
 // ─── Init ───────────────────────────────────────────────────────
+let wired = false;   // buttons and the ambient ticker, once per page
+
 function init(data) {
   // Weights arrive as numbers from the Racing API serialiser, but have
   // arrived as strings before; normalise once so nothing else has to.
@@ -379,8 +381,11 @@ function init(data) {
   STATE.raceBand     = data.raceBand || 'mile';
 
   buildIntroChips();
-  wireButtons();
-  gsap.ticker.add(ambientFrame);
+  if (!wired) {
+    wireButtons();
+    gsap.ticker.add(ambientFrame);
+    wired = true;
+  }
   showScreen('intro');
 }
 
@@ -400,6 +405,29 @@ function wireButtons() {
   });
 }
 
+// ─── Scheduled steps ────────────────────────────────────────────
+// The flow between screens runs on timers — the parade's pace, the
+// stalls, the roll call's holds. They are kept here so a skip can cancel
+// the step it skips and Run Again can cancel them all: left running, a
+// stale timer from one run fires into the next.
+const flowTimers = new Set();
+
+function after(ms, fn) {
+  const id = setTimeout(() => { flowTimers.delete(id); fn(); }, ms);
+  flowTimers.add(id);
+  return id;
+}
+
+function cancelTimer(id) {
+  clearTimeout(id);
+  flowTimers.delete(id);
+}
+
+function cancelFlowTimers() {
+  flowTimers.forEach((id) => clearTimeout(id));
+  flowTimers.clear();
+}
+
 // ─── Screen management ──────────────────────────────────────────
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
@@ -417,6 +445,7 @@ function isFoxPick(runner)  { return !!(STATE.foxPick && STATE.foxPick.name === 
 function buildIntroChips() {
   const container = document.getElementById('introRunnersPreview');
   if (!container) return;
+  container.innerHTML = '';
   STATE.runners.slice(0, 20).forEach((r) => {
     const chip = document.createElement('div');
     const isUser = isUserPick(r);
@@ -488,7 +517,11 @@ function runStaticReveal() {
 }
 
 // ─── Parade ─────────────────────────────────────────────────────
+let paradeTimer = null;
+let leavingParade = false;
+
 function beginParade() {
+  leavingParade = false;
   buildParadeDots();
   showParadeHorse(0);
 }
@@ -532,7 +565,10 @@ function showParadeHorse(idx) {
   if (isFox)    tagEls.push('<span class="parade-tag parade-tag--fox">🦊 Fox\'s Pick</span>');
   if (r.is_fav) tagEls.push('<span class="parade-tag parade-tag--fav">Favourite</span>');
   if (r.sr)     tagEls.push('<span class="parade-tag parade-tag--sr">SR ' + esc(r.sr) + '</span>');
-  if (r.stars)  tagEls.push('<span class="parade-tag parade-tag--sr">' + '★'.repeat(r.stars) + '☆'.repeat(5 - r.stars) + '</span>');
+  if (r.stars) {
+    const stars = Math.max(0, Math.min(5, Math.round(r.stars)));
+    tagEls.push('<span class="parade-tag parade-tag--sr">' + '★'.repeat(stars) + '☆'.repeat(5 - stars) + '</span>');
+  }
 
   const glow = isUser ? COL.userPick : isFox ? COL.foxPick : COL.neutralGlow;
   const html =
@@ -565,15 +601,19 @@ function showParadeHorse(idx) {
   const ms = STATE.runners.length > (T.paradeLargeFieldThreshold || 16)
     ? (T.paradeDelayMsFast || 900)
     : (T.paradeDelayMsSlow || 1300);
-  setTimeout(() => { if (STATE.phase === 'parade') showParadeHorse(idx + 1); }, ms);
+  paradeTimer = after(ms, () => { if (STATE.phase === 'parade') showParadeHorse(idx + 1); });
 }
 
 function skipParade() {
+  cancelTimer(paradeTimer);
   transitionToRace();
 }
 
 // ─── Transition → race (with stalls bang) ──────────────────────
 function transitionToRace() {
+  // Once only: the parade ending and the skip button can both call it.
+  if (leavingParade) return;
+  leavingParade = true;
   showSubtitle("Into the stalls. The crowd holds its breath.", SHARED.subtitleDefaultMs);
   gsap.to('#screen-parade', {
     opacity: 0, duration: 0.6, delay: 0.4, ease: 'power2.in',
@@ -584,14 +624,18 @@ function transitionToRace() {
   });
 }
 
+// How long the opening stalls take to clear the frame (the CSS
+// animation's length).
+const STALLS_CLEAR_MS = 700;
+
 function bangStallsAndStart() {
   const stalls = document.getElementById('flatStalls');
   // Stalls cover the canvas; bang open after a short held breath.
-  setTimeout(() => {
+  after(SHARED.stallsOpenMs ?? 600, () => {
     if (stalls) stalls.classList.add('is-opening');
-    setTimeout(() => { if (stalls) stalls.classList.add('is-hidden'); }, 700);
+    after(STALLS_CLEAR_MS, () => { if (stalls) stalls.classList.add('is-hidden'); });
     startRace();
-  }, SHARED.stallsOpenMs || 600);
+  });
 }
 
 // ─── Race ───────────────────────────────────────────────────────
@@ -2105,8 +2149,8 @@ function scheduleTileRebuild() {
   clearTimeout(tileRebuildTimer);
   tileRebuildTimer = setTimeout(() => {
     buildBackdropTiles();
-    if (raceRunning) renderFrame();
-    else ambientPainted = false;
+    redrawFrame();
+    ambientPainted = false;
   }, 180);
 }
 
@@ -2322,7 +2366,6 @@ function ambientFrame() {
 
 // Repaint on resize, since reallocating the canvas clears it and there
 // may be no frame due for a while on a static screen.
-window.addEventListener('resize', () => { ambientPainted = false; });
 
 // ════════════════════════════════════════════════════════════════
 //  TRACK PLANE
@@ -2897,7 +2940,7 @@ function spawnHoofDust(wx, y, h, cyc, artScale) {
 // Dust is drawn inside the world transform, between the far lanes and
 // the near ones, so it sits in the pack rather than on top of it.
 function drawHoofDust(dt) {
-  const step = Math.max(0.5, Math.min(2.5, dt / 16.67));
+  const step = dt > 0 ? Math.max(0.5, Math.min(2.5, dt / 16.67)) : 0;
   particles = particles.filter((p) => {
     p.vy += p.g * step;
     p.x  += p.vx * step;
@@ -2931,7 +2974,7 @@ function spawnPressFlashes(dt) {
 
   // Expected pops per second scales with the director's intensity.
   const perSecond = 85 * intensity;
-  if (Math.random() > (perSecond * dt) / 1000) return;
+  if (dt <= 0 || Math.random() > (perSecond * dt) / 1000) return;
 
   // Banked around the post, thickest right on it.
   const spreadLengths = 7 * (0.35 + Math.random());
@@ -2946,7 +2989,7 @@ function spawnPressFlashes(dt) {
 
 function drawPressFlashes(dt) {
   if (!pressFlashes.length) return 0;
-  const step = Math.max(0.5, Math.min(2.5, dt / 16.67));
+  const step = dt > 0 ? Math.max(0.5, Math.min(2.5, dt / 16.67)) : 0;
   let energy = 0;
   pressFlashes = pressFlashes.filter((f) => {
     f.life -= 0.115 * step;
@@ -3086,7 +3129,20 @@ function renderFrame() {
 
   updateRaceModel(dt);
   updateCamera(dt);
+  drawRaceScene(dt);
 
+  // DOM overlays — cheap, and each throttles itself.
+  const p = DIRECTOR.progress;
+  fireCommentary(p);
+  updateCommentary(dt);
+  updateLeaderboard(dt);
+  updateRacePhaseTitle(p);
+}
+
+// The race picture for the current state. The particle systems (hoof
+// dust, flashguns) step on by dt as they draw; with dt = 0 they are drawn
+// where they are.
+function drawRaceScene(dt) {
   drawBackdrop();
 
   ctx.clearRect(0, 0, viewW, viewH);
@@ -3103,13 +3159,14 @@ function renderFrame() {
 
   drawForegroundPlane();
   drawAtmosphere(flashEnergy);
+}
 
-  // DOM overlays — cheap, and each throttles itself.
-  const p = DIRECTOR.progress;
-  fireCommentary(p);
-  updateCommentary(dt);
-  updateLeaderboard(dt);
-  updateRacePhaseTitle(p);
+// Repaint the frame as it stands, without advancing anything — for a
+// resize, which clears the canvas.
+function redrawFrame() {
+  if (!raceRunning) return;
+  if (HERO.active) renderHeroFrame(0);
+  else drawRaceScene(0);
 }
 
 // The editorial phase title and strip still come from BAND.phaseTable,
@@ -4193,12 +4250,13 @@ function setCommentaryText(text) {
   el.textContent = text;
 }
 
+// Counts the current line's hold down and fades it once when it runs out.
 function updateCommentary(dt) {
+  if (commentaryTimer <= 0) return;
   commentaryTimer = Math.max(0, commentaryTimer - dt);
-  if (commentaryTimer <= 0) {
-    const el = document.getElementById('racingCommentary');
-    if (el && parseFloat(el.style.opacity) > 0) gsap.to(el, { opacity: 0, duration: 0.4 });
-  }
+  if (commentaryTimer > 0) return;
+  const el = document.getElementById('racingCommentary');
+  if (el) gsap.to(el, { opacity: 0, duration: 0.4 });
 }
 
 function showSubtitle(text, duration) {
@@ -4697,7 +4755,7 @@ function burstHeroConfetti(x, y, n, colour) {
 }
 
 function drawHeroConfetti(dt) {
-  const step = Math.max(0.5, Math.min(2.5, dt / 16.67));
+  const step = dt > 0 ? Math.max(0.5, Math.min(2.5, dt / 16.67)) : 0;
   HERO.confetti = HERO.confetti.filter((p) => {
     p.vy += p.g * step;
     p.x += p.vx * step;
@@ -4776,7 +4834,7 @@ function winMomentEl() {
 function showWinnerMomentCard(winner, margin) {
   const el = winMomentEl();
   if (!el) return;
-  const odds = winner.odds || winner.price || winner.sp || '';
+  const odds = winner.odds || '';
   let marginText = '';
   if (margin && margin.lengths === -1) marginText = 'DEAD HEAT';
   else if (margin && margin.lengths != null && margin.lengths >= 0) marginText = formatBeatenDistance(margin.lengths);
@@ -4880,9 +4938,16 @@ const ROLLCALL_HOLD_MS = {
 };
 const ROLLCALL_FADE_MS = 220;
 let rollCallSkipped = false;
+let rollCallHold = null;     // the pending hold timer, while a card is up
+let rollCallRun = null;      // { positions, winner } for the walk in progress
 
 function skipRollCall() {
   rollCallSkipped = true;
+  if (rollCallHold !== null && rollCallRun) {
+    cancelTimer(rollCallHold);
+    rollCallHold = null;
+    transitionToReveal(rollCallRun.winner, rollCallRun.positions);
+  }
 }
 
 function rollCallHoldFor(rank) {
@@ -4902,7 +4967,7 @@ function ordinal(n) {
 
 function rollCallPositionLabel(rank, total) {
   if (rank === total) return 'LAST PLACE';
-  return rank + (rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th') + ' PLACE';
+  return ordinal(rank) + ' PLACE';
 }
 
 function buildRollCallCard(horse, rank, total) {
@@ -4944,6 +5009,7 @@ function buildRollCallProgress(total, currentDoneCount) {
 
 function runRollCall(positions, winner) {
   rollCallSkipped = false;
+  rollCallRun = { positions, winner };
   if (!positions || positions.length === 0) {
     transitionToReveal(winner, positions);
     return;
@@ -4984,7 +5050,8 @@ function rollCallStep(positions, winner, idx) {
   );
 
   const hold = rollCallHoldFor(rank);
-  setTimeout(() => {
+  rollCallHold = after(hold, () => {
+    rollCallHold = null;
     if (rollCallSkipped) {
       transitionToReveal(winner, positions);
       return;
@@ -4999,7 +5066,7 @@ function rollCallStep(positions, winner, idx) {
       duration: ROLLCALL_FADE_MS / 1000, ease: 'power2.in',
       onComplete: () => rollCallStep(positions, winner, idx + 1),
     });
-  }, hold);
+  });
 }
 
 function transitionToReveal(winner, positions) {
@@ -5055,7 +5122,6 @@ function buildRevealPodium(positions) {
     const distances = (REPLAY_DATA && REPLAY_DATA.has_result)
       ? REPLAY_DATA.beaten_distances : null;
     const MEDALS = ['🥇', '🥈', '🥉'];
-    const POS_LABELS = ['1st', '2nd', '3rd'];
     podium.innerHTML = positions.slice(0, 3).map((r, i) => {
       // Compact beaten-distance copy for the podium chip. ALWAYS emits
       // a span (empty for 1st) so the CSS grid columns line up across
@@ -5083,7 +5149,7 @@ function buildRevealPodium(positions) {
       return (
         '<div class="reveal-podium__row reveal-podium__row--' + (i + 1) + '">' +
           '<span class="reveal-podium__medal" aria-hidden="true">' + MEDALS[i] + '</span>' +
-          '<span class="reveal-podium__pos">' + POS_LABELS[i] + '</span>' +
+          '<span class="reveal-podium__pos">' + ordinal(i + 1) + '</span>' +
           silkHtml +
           '<span class="reveal-podium__name">' + esc(r.name) + '</span>' +
           gapHtml +
@@ -5107,7 +5173,7 @@ function buildRevealVerdict(positions, isUserWin) {
       const userFinishIdx = positions.findIndex((r) => r.id === STATE.userPick.id);
       verdictTitle.textContent = '🐾 Your pick: ' + STATE.userPick.name;
       verdictText.textContent  = userFinishIdx >= 0
-        ? 'Finished ' + (userFinishIdx + 1) + (userFinishIdx === 0 ? 'st' : userFinishIdx === 1 ? 'nd' : userFinishIdx === 2 ? 'rd' : 'th')
+        ? 'Finished ' + ordinal(userFinishIdx + 1)
         : 'Finished out of frame.';
     } else {
       verdictTitle.textContent = 'No pick on record';
@@ -5124,7 +5190,6 @@ function buildRevealVerdict(positions, isUserWin) {
 // nothing accumulates across replays.
 const REVEAL_CONFETTI_COUNT = 44;
 
-let revealConfettiLive = 0;
 function spawnRevealConfetti() {
   if (prefersReducedMotion) return;
   const screen = document.getElementById('screen-reveal');
@@ -5158,12 +5223,9 @@ function spawnRevealConfetti() {
     ease: 'none',
     duration: () => 2.4 + Math.random() * 2.2,
     delay: () => Math.random() * 1.1,
-    onComplete: function () {
-      // Last one out clears the layer.
-      if (--revealConfettiLive <= 0 && layer.parentNode) layer.remove();
-    },
+    // One callback for the whole fall, once the last piece has landed.
+    onComplete: () => layer.remove(),
   });
-  revealConfettiLive = pieces.length;
 }
 
 function animateReveal() {
@@ -5196,6 +5258,10 @@ function replayExperience() {
 }
 
 function resetRollCallAndSkip() {
+  cancelFlowTimers();
+  leavingParade = false;
+  rollCallHold = null;
+  rollCallRun = null;
   // Re-arm the Skip-to-Finish pill for the next run.
   const skipWrap = document.querySelector('.race-skip-wrap');
   if (skipWrap) skipWrap.classList.remove('race-skip-hidden');
@@ -5238,6 +5304,15 @@ function resetRaceEngine() {
 }
 
 function resetRaceOverlays() {
+  // The last race's closing line is written after the ticker stops, so
+  // it never fades on its own; clear it, or the next race opens on it.
+  const commentary = document.getElementById('racingCommentary');
+  if (commentary) {
+    gsap.killTweensOf(commentary);
+    commentary.textContent = '';
+    gsap.set(commentary, { opacity: 0 });
+  }
+  commentaryTimer = 0;
   // Race-screen overlays
   const raceScreen = document.getElementById('screen-race');
   if (raceScreen) {
@@ -5254,8 +5329,6 @@ function resetRaceOverlays() {
 
   const stalls = document.getElementById('flatStalls');
   if (stalls) stalls.classList.remove('is-opening', 'is-hidden');
-  const photo = document.getElementById('flatPhotoFinish');
-  if (photo) photo.classList.remove('is-active');
 }
 
 function resetScreens() {
