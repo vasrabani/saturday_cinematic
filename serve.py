@@ -33,9 +33,11 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def send_head(self):
-        # Nothing under a dot-directory: .git holds the whole history.
-        path = self.path.split('?', 1)[0].split('#', 1)[0]
-        if any(part.startswith('.') for part in path.split('/') if part):
+        # Nothing under a dot-directory: .git holds the whole history. The
+        # check is made on the file path the request resolves to, after
+        # decoding, so %2e-escapes and ../ segments cannot get round it.
+        rel = os.path.relpath(self.translate_path(self.path), self.directory)
+        if rel != '.' and any(part.startswith('.') for part in rel.split(os.sep)):
             self.send_error(404, 'Not found')
             return None
         return super().send_head()

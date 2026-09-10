@@ -266,16 +266,19 @@
     window.location.search = '?data=' + encodeURIComponent(picker.value);
   });
 
-  fetch('data/' + slug + '.json')
+  var dataFile = 'data/' + slug + '.json';
+  fetch(dataFile)
     .then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     })
-    .then(boot)
-    .catch(function (err) {
+    .then(boot, function (err) {
       console.error('Data load failed', err);
       var el = document.getElementById('dataError');
-      if (el) el.style.display = 'block';
+      if (!el) return;
+      // Already served over http, the banner's advice does not apply: say what failed.
+      if (/^https?:$/.test(location.protocol)) el.textContent = 'Could not load ' + dataFile + ': ' + err.message;
+      el.style.display = 'block';
     });
 
   function boot(payload) {

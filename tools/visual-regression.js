@@ -16,7 +16,8 @@
  *
  * Record the baseline and the comparison at the same window size, with
  * the same fixture (?data=…). The run takes over Math.random, the timers
- * and the GSAP ticker, so reload the page afterwards.
+ * and the GSAP ticker, and ignores window resizes, so reload the page
+ * afterwards.
  */
 (() => {
   'use strict';
@@ -110,6 +111,12 @@
   window.dispatchEvent(new Event('resize'));
   step(30);
   mark('intro');
+
+  // From here on a real resize would redraw and rebuild the scenery,
+  // drawing random numbers out of turn and making this a different run —
+  // resizing the window, or a screenshot tool that does, mid-run. Ignore
+  // them until the page is reloaded.
+  window.addEventListener('resize', (e) => e.stopImmediatePropagation(), true);
 
   const phases = [
     () => { // intro → parade → race
