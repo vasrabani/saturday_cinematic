@@ -121,7 +121,10 @@
     },
     () => run(780, 40, 'race'),                                   // the stalls and 13s of racing
     () => { window.skipToFinish(); run(700, 20, 'finish-run'); }, // Skip to Finish
-    () => until(() => screenId() !== 'screen-race', 1400, 20, 'line+hero'),
+    // The line, the run-through, the card and the Winning Moment — in two
+    // halves, so no single call runs long enough to trip a timeout.
+    () => until(() => screenId() !== 'screen-race', 700, 20, 'line+hero'),
+    () => until(() => screenId() !== 'screen-race', 700, 20, 'line+hero'),
     () => { // roll call and reveal
       run(420, 30, 'rollcall');
       window.skipRollCall();

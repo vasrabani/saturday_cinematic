@@ -169,6 +169,65 @@ function renderSilkSvg(runner) {
   );
 }
 
+// ─── Data shapes ────────────────────────────────────────────────
+/**
+ * A runner, as the page hands it to init(): one row of the racecard.
+ * @typedef {Object} Runner
+ * @property {number|string} id
+ * @property {number} number          saddle-cloth number
+ * @property {string} name
+ * @property {string} jockey
+ * @property {string} trainer
+ * @property {string} odds            fractional, e.g. "10/1"
+ * @property {number} weight          forecast strength; a number after init()
+ * @property {string} [silk]          jersey colour
+ * @property {string} [silk2]         second silk colour
+ * @property {string} [silk_pattern]  solid | hooped | striped | halved | quartered | starred
+ * @property {string} [silk_url]      a real silks image, used when present
+ * @property {number} [sr]            speed rating
+ * @property {number} [stars]         0–5
+ * @property {boolean} [is_fav]
+ */
+
+/**
+ * What the page's boot script passes to init().
+ * @typedef {Object} RaceData
+ * @property {Runner[]} runners
+ * @property {Runner|null} userPick   the viewer's own pick (matched by id)
+ * @property {Runner|null} foxPick    Mr Fox's pick (matched by name)
+ * @property {string} raceName
+ * @property {string} raceDistance
+ * @property {'sprint'|'mile'|'stayer'} raceBand
+ */
+
+/**
+ * The race's result, read from #replayData (README → Payload contract).
+ * @typedef {Object} ReplayData
+ * @property {boolean} has_result
+ * @property {Array<number|string>} result_order        runner ids, winner first
+ * @property {Object<string, string>} beaten_distances  Racing API copy per runner id: "nk", "1 1/2"
+ * @property {boolean} has_distances
+ * @property {Object<string, number>} lengths_behind_winner
+ */
+
+/**
+ * A runner in the race scene, built by buildHorseObjects().
+ * @typedef {Object} Horse
+ * @property {Runner} runner
+ * @property {number} finalPos        finishing position, 0 = the winner
+ * @property {number} finalLengths    lengths behind the winner at the line
+ * @property {number} deficit         live lengths behind the leader
+ * @property {number} travel          lengths covered
+ * @property {number} worldX          world px from the stalls
+ * @property {number} laneIdx         0 = far rail
+ * @property {number} depth           lane scale: far rail smallest
+ * @property {Array<{start: number, duration: number, lengths: number}>} surges
+ * @property {number} duelFloor       how far ahead of the winner the duel may take him
+ * @property {number} legPhase        gait phase in radians, advanced by distance
+ * @property {number} [lineGap]       lengths behind the winner when the winner crossed
+ * @property {number} [salute]        the Winning Moment salute, 0 → 1
+ */
+
 // ─── State ──────────────────────────────────────────────────────
 const STATE = {
   runners:      [],
@@ -298,6 +357,7 @@ function resize() {
 
   scheduleTileRebuild();
   relayoutLanes();
+  lbRowH = 0;
 
   // A resize reallocates the canvas backing store, which clears it. Repaint
   // the race as it stands — without advancing it — and let the ambient
@@ -372,6 +432,11 @@ function phaseFrom(key) {
 // ─── Init ───────────────────────────────────────────────────────
 let wired = false;   // buttons and the ambient ticker, once per page
 
+/**
+ * Hands the race to the engine and shows the intro. Called by the page's
+ * boot script once #replayData is in the DOM and GSAP is loaded.
+ * @param {RaceData} data
+ */
 function init(data) {
   // Weights arrive as numbers from the Racing API serialiser, but have
   // arrived as strings before; normalise once so nothing else has to.
@@ -1662,14 +1727,29 @@ function paintCirrus(g, cx, cy, W, H) {
 // stand with a glazed hospitality level, an older stand with a pitched
 // roof and white iron columns, and a big screen on legs. Gaps between
 // them let the downland and the sky show through.
+// The main stand, a cantilevered modern grandstand, painted level by
+// level from the roof down. `st` is its geometry: left and right edges,
+// width, height, and the heights where each level ends.
 function paintMainStand(g, L, R, h) {
-  const W = R - L;
-  const fY0 = h * 0.10, fY1 = h * 0.16;     // roof fascia
-  const uY1 = h * 0.42;                      // upper tier ends
-  const gY1 = h * 0.53;                      // glazing ends
-  const sY1 = h * 0.555;                     // balcony slab
-  const lY1 = h * 0.89;                      // lower tier ends
+  const st = {
+    L, R, W: R - L, h,
+    fY0: h * 0.10, fY1: h * 0.16,    // roof fascia
+    uY1: h * 0.42,                   // upper tier ends
+    gY1: h * 0.53,                   // glazing ends
+    sY1: h * 0.555,                  // balcony slab
+    lY1: h * 0.89,                   // lower tier ends
+  };
+  paintStandFlags(g, st);
+  paintStandUpperTier(g, st);
+  paintStandFascia(g, st);
+  paintStandGlazing(g, st);
+  paintStandLowerTier(g, st);
+  paintStandColumns(g, st);
+  paintStandWall(g, st);
+}
 
+function paintStandFlags(g, st) {
+  const { L, R, W, h, fY0 } = st;
   // Flags along the roofline
   const FLAGS = [[196, 40, 44], [240, 238, 232], [212, 175, 55], [32, 60, 112]];
   for (let x = L + W * 0.08; x < R - 8; x += W / 6 + rnd(-8, 8)) {
@@ -1685,7 +1765,10 @@ function paintMainStand(g, L, R, h) {
     g.closePath();
     g.fill();
   }
+}
 
+function paintStandUpperTier(g, st) {
+  const { L, R, W, h, fY1, uY1 } = st;
   // Under-roof void: the back wall and upper tier sit in deep shade.
   const shade = g.createLinearGradient(0, fY1, 0, uY1);
   shade.addColorStop(0, 'rgb(22,26,34)');
@@ -1710,7 +1793,10 @@ function paintMainStand(g, L, R, h) {
     g.lineTo(x + 16, fY1);
     g.stroke();
   }
+}
 
+function paintStandFascia(g, st) {
+  const { L, W, fY0, fY1 } = st;
   // Roof fascia, sunlit, with a hard highlight on the leading edge
   const fascia = g.createLinearGradient(0, fY0, 0, fY1);
   fascia.addColorStop(0, 'rgb(236,238,236)');
@@ -1721,7 +1807,10 @@ function paintMainStand(g, L, R, h) {
   g.fillRect(L - 3, fY0, W + 6, 0.8);
   g.fillStyle = 'rgba(0,0,0,0.35)';
   g.fillRect(L - 3, fY1, W + 6, 1);
+}
 
+function paintStandGlazing(g, st) {
+  const { L, R, W, uY1, gY1 } = st;
   // Glazed hospitality level: dark glass, a sky reflection across the
   // top, and warm light in some of the boxes.
   const glass = g.createLinearGradient(0, uY1, 0, gY1);
@@ -1743,7 +1832,10 @@ function paintMainStand(g, L, R, h) {
     g.fillStyle = 'rgba(14,18,24,0.8)';
     g.fillRect(x, uY1, 0.8, gY1 - uY1);
   }
+}
 
+function paintStandLowerTier(g, st) {
+  const { L, R, W, h, gY1, sY1, lY1 } = st;
   // Balcony slab and its shadow on the lower tier
   g.fillStyle = 'rgb(214,212,204)';
   g.fillRect(L - 2, gY1, W + 4, sY1 - gY1);
@@ -1758,7 +1850,10 @@ function paintMainStand(g, L, R, h) {
   paintAisles(g, L, sY1, R, lY1, 74, 0.95);
   g.fillStyle = slabShadow;
   g.fillRect(L, sY1, W, h * 0.08);
+}
 
+function paintStandColumns(g, st) {
+  const { L, R, W, fY1, gY1 } = st;
   // Steel columns, lit on the sun side
   for (let x = L + W / 7; x < R - 6; x += W / 7) {
     g.fillStyle = 'rgb(38,44,54)';
@@ -1766,7 +1861,10 @@ function paintMainStand(g, L, R, h) {
     g.fillStyle = 'rgba(220,226,232,0.5)';
     g.fillRect(x + 1.7, fY1, 0.7, gY1 - fY1);
   }
+}
 
+function paintStandWall(g, st) {
+  const { L, W, h, lY1 } = st;
   // Front wall
   const wall = g.createLinearGradient(0, lY1, 0, h);
   wall.addColorStop(0, 'rgb(232,228,216)');
@@ -2908,11 +3006,10 @@ function spawnHoofDust(wx, y, h, cyc, artScale) {
   if (particles.length > MAX_PARTICLES) return;
   if (h.speed < 0.02) return;
 
-  const STRIKES = [GAIT.farHind, GAIT.nearHind, GAIT.farFore, GAIT.nearFore];
   const prevCyc = h.lastDustCycle == null ? cyc : h.lastDustCycle;
   h.lastDustCycle = cyc;
 
-  for (const strike of STRIKES) {
+  for (const strike of GAIT_STRIKES) {
     const crossed = (prevCyc > strike)
       ? (cyc < prevCyc && cyc >= strike) || (cyc < strike && cyc < prevCyc - 0.5)
       : (cyc >= strike && prevCyc < strike);
@@ -3310,6 +3407,7 @@ function horseGrad(key, make) {
 // full gallop has each foot down for about a fifth of the stride.
 const GAIT = { farHind: 0.00, nearHind: 0.10, farFore: 0.29, nearFore: 0.40 };
 const STANCE = 0.19;
+const GAIT_STRIKES = Object.freeze([GAIT.farHind, GAIT.nearHind, GAIT.farFore, GAIT.nearFore]);
 const SUSPENSION = GAIT.nearFore + STANCE;     // all four off the ground from here
 
 // How far a planted hoof sweeps back under the body, in the horse's own
@@ -4207,7 +4305,37 @@ function renderCommentary(template) {
 // Phase-strip update — mirror of experience.js, scoped to flat-race
 // containers. Lazy-builds the dot strip once + flips state classes
 // each frame as progress crosses phase thresholds.
+// The strip's elements, cached when it is built so a frame does not
+// query the DOM for them; and the last values written, so a frame only
+// writes what has changed.
+let phaseStripEls = null;
+
 function updatePhaseStrip(progress, phaseTable, activePhase) {
+  if (!phaseStripEls || !phaseStripEls.strip.isConnected) phaseStripEls = buildPhaseStrip(phaseTable);
+  const { dots, rails } = phaseStripEls;
+
+  const activeIdx = phaseTable.indexOf(activePhase);
+  if (activeIdx !== phaseStripEls.activeIdx) {
+    phaseStripEls.activeIdx = activeIdx;
+    dots.forEach((dot, i) => {
+      dot.classList.toggle('is-past',    i <  activeIdx);
+      dot.classList.toggle('is-current', i === activeIdx);
+      dot.classList.toggle('is-future',  i >  activeIdx);
+    });
+  }
+  rails.forEach((rail, i) => {
+    const from = phaseTable[i].from;
+    const to   = phaseTable[i + 1].from;
+    const span = Math.max(0.001, to - from);
+    const fill = (Math.max(0, Math.min(1, (progress - from) / span)) * 100).toFixed(1) + '%';
+    if (fill !== phaseStripEls.fills[i]) {
+      phaseStripEls.fills[i] = fill;
+      rail.style.setProperty('--fill', fill);
+    }
+  });
+}
+
+function buildPhaseStrip(phaseTable) {
   let strip = document.getElementById('phaseStrip');
   if (!strip) {
     strip = document.createElement('div');
@@ -4223,23 +4351,13 @@ function updatePhaseStrip(progress, phaseTable, activePhase) {
     const raceScreen = document.getElementById('screen-race');
     if (raceScreen) raceScreen.appendChild(strip);
   }
-  const activeIdx = phaseTable.indexOf(activePhase);
-  phaseTable.forEach((p, i) => {
-    const dot = strip.querySelector('[data-phase="' + i + '"]');
-    if (!dot) return;
-    dot.classList.toggle('is-past',    i <  activeIdx);
-    dot.classList.toggle('is-current', i === activeIdx);
-    dot.classList.toggle('is-future',  i >  activeIdx);
-  });
-  for (let i = 0; i < phaseTable.length - 1; i++) {
-    const rail = strip.querySelector('[data-rail="' + i + '"]');
-    if (!rail) continue;
-    const from = phaseTable[i].from;
-    const to   = phaseTable[i + 1].from;
-    const span = Math.max(0.001, to - from);
-    const fill = Math.max(0, Math.min(1, (progress - from) / span));
-    rail.style.setProperty('--fill', (fill * 100).toFixed(1) + '%');
-  }
+  return {
+    strip,
+    dots:  phaseTable.map((p, i) => strip.querySelector('[data-phase="' + i + '"]')),
+    rails: phaseTable.slice(1).map((p, i) => strip.querySelector('[data-rail="' + i + '"]')),
+    activeIdx: null,
+    fills: [],
+  };
 }
 
 function setCommentaryText(text) {
@@ -4317,12 +4435,17 @@ function renderCapSvg(runner) {
 // Rows persist with stable data-runner IDs; updateLeaderboard slides
 // them between Y positions via transform. CSS handles the transition.
 const LB_VISIBLE_ROWS = 8;
+// The row pitch the stylesheet sets (--lb-row-h), read once per layout
+// rather than on every leaderboard sample. resize() forgets it.
+let lbRowH = 0;
 function lbRowHeightPx() {
+  if (lbRowH) return lbRowH;
   const v = getComputedStyle(document.querySelector('.race-leaderboard') ||
                              document.body)
     .getPropertyValue('--lb-row-h').trim();
   const n = parseInt(v, 10);
-  return n > 0 ? n : 26;
+  lbRowH = n > 0 ? n : 26;
+  return lbRowH;
 }
 
 function buildLeaderboard() {
@@ -4395,12 +4518,8 @@ function updateLeaderboard(dt) {
   if (lbSampleTimer > 0) return;
   lbSampleTimer = LB_SAMPLE_MS;
 
-  // V1 slid this panel to the left edge halfway through the race so it
-  // would not cover the finish line, which in V1 was pinned near the
-  // right edge of the viewport for the whole race. In V2 the line is in
-  // world space and arrives at the camera anchor — left of centre — so
-  // the old shift moves the panel INTO the finish rather than out of
-  // it. The panel now stays where it starts.
+  // The panel stays where it starts: the finish line arrives left of
+  // centre, so the panel never covers it.
 
   const rowH   = lbRowHeightPx();
   const ranked = rankedHorses();

@@ -20,6 +20,15 @@ module.exports = [
     },
   },
   {
+    // Browser-console tooling for the sandbox page.
+    files: ['tools/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2020,
+      sourceType: 'script',
+      globals: { ...globals.browser, gsap: 'readonly' },
+    },
+  },
+  {
     files: ['tests/**/*.js', 'eslint.config.js'],
     languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs', globals: { ...globals.node } },
   },
