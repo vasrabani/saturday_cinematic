@@ -2585,7 +2585,7 @@ function _spawnHoofDust(wx, y, h, cyc, artScale) {
   if (particles.length > MAX_PARTICLES) return;
   if (h.speed < 0.02) return;
 
-  const STRIKES = [0.00, 0.20, 0.40];
+  const STRIKES = [0.00, 0.10, 0.26, 0.36];   // GAIT: the four footfalls
   const prevCyc = h.lastDustCycle == null ? cyc : h.lastDustCycle;
   h.lastDustCycle = cyc;
 
@@ -2860,485 +2860,768 @@ function stopTicker() {
 // ════════════════════════════════════════════════════════════════
 //  THE HORSE
 // ════════════════════════════════════════════════════════════════
-// A thoroughbred in profile at full gallop, drawn from paths. No sprite
-// sheet: a production race can field 24 runners with silks we have
-// never rendered before, so the whole animal is procedural and takes
-// its colours from the payload.
+// A thoroughbred and jockey at full gallop, drawn from paths. No sprite
+// sheet: a production race can field 24 runners in silks we have never
+// seen, so the whole animal is procedural and takes its colours from the
+// payload.
 //
-// PROPORTIONS matter more than detail here, and they are what the first
-// pass got wrong. A thoroughbred is leggy and shallow through the body:
-// the legs are about as long as the barrel is deep, the girth is deep
-// but narrow, and there is a pronounced tuck-up at the flank. Draw it
-// with a round belly and short legs and you get a pony, however good
-// the shading is. The local grid used below:
+// What makes a drawn horse read as real, in order of importance:
 //
-//        y = -30  ── top of the jockey's cap
-//        y = -14  ── withers / topline
-//        y =  +2  ── belly (tucked up)
-//        y = +28  ── ground line
-//        x = -40  ── tip of the streaming tail
-//        x = +48  ── muzzle
+//   1. THE LEGS ARTICULATE. Each hoof follows a gallop path — planted
+//      and sweeping back through the stance, then lifting, folding and
+//      reaching forward through the swing — and the knee or hock angle
+//      is SOLVED from where the hoof is (two-bone inverse kinematics).
+//      So the foreleg folds at the knee as it comes through, the hind
+//      leg tucks under the belly, and nothing ever swings like a stick.
+//   2. VOLUME. The coat is lit from the sun: bright along the topline,
+//      sheen over the quarters and shoulder, dark under the barrel, and
+//      the muscle masses — forearm, gaskin — are shapes, not lines.
+//   3. THE STRIDE MOVES THE WHOLE ANIMAL. The body pitches with the
+//      stride, the head and neck nod as the forelegs land, and the
+//      jockey rides it: he stays level while the horse moves under him.
+//   4. THE JOCKEY IS A JOCKEY. Short irons, knees up at the withers,
+//      flat back, hands down the neck on the reins, in the runner's
+//      actual silks.
+//   5. INDIVIDUALS. Coat colour, face markings and white socks are all
+//      derived from the runner id, so every horse is recognisably the
+//      same horse on every replay and no two in a field look cloned.
 //
-// so the animal is roughly 74 units nose to tail, which is what makes
-// HORSE_ART_LENGTH the definition of a "length" everywhere else.
-//
-// The build, front to back:
-//   • Coat        — a real field is not 24 identical brown horses. Each
-//                   runner gets a bay / dark bay / chestnut / liver
-//                   chestnut / black / grey, picked deterministically
-//                   from the runner id so the same horse looks the same
-//                   on every replay. Bays and blacks get black points
-//                   (mane, tail, lower legs); everyone gets a lighter
-//                   underline where the light bounces off the turf.
-//   • Legs        — articulated forearm / cannon / hoof, with the
-//                   off-side pair drawn first in a darker tone so the
-//                   near pair reads in front of them.
-//   • Number cloth— the saddle cloth carries the runner's number, the
-//                   way it does on a real racecourse. This is the quiet
-//                   identification the brief asked for: it travels with
-//                   the horse and needs no floating chip.
-//   • Jockey      — a crouched rider whose silks are the runner's ACTUAL
-//                   silk pattern (hooped / striped / halved / quartered
-//                   / starred / solid), clipped to the torso so it
-//                   matches the racecard, the leaderboard cap and the
-//                   podium.
-//
-// Motion is the 4-beat transverse gallop from V1, kept because it is
-// correct, plus V2's body roll and a stride rate that follows ground
-// speed.
+// Local grid, unchanged from V2 so HORSE_ART_LENGTH still defines a
+// length: ground at y = +28, withers about y = -15, point of buttock
+// x ≈ -21, muzzle x ≈ +55.
 
 // Coat palettes: body / shade (muscle shadow) / points (mane, tail,
 // lower legs) / belly (lit underline).
 const HORSE_COATS = [
-  { name: 'bay',            body: '#7a4a1e', shade: '#54300f', points: '#1a1008', belly: '#9c6330' },
-  { name: 'dark bay',       body: '#553219', shade: '#37200c', points: '#140c06', belly: '#71491f' },
-  { name: 'chestnut',       body: '#9c5423', shade: '#6f3a14', points: '#8a4718', belly: '#bd7038' },
-  { name: 'liver chestnut', body: '#68361a', shade: '#46230f', points: '#552a12', belly: '#875028' },
-  { name: 'black',          body: '#33271d', shade: '#1d1611', points: '#0d0a07', belly: '#493829' },
-  { name: 'grey',           body: '#a9a39e', shade: '#7d7671', points: '#5a534e', belly: '#c6c0bb' },
+  { name: 'bay',            body: '#7b4a1f', shade: '#4f2e11', points: '#1a1008', belly: '#9d6531' },
+  { name: 'dark bay',       body: '#553219', shade: '#35200c', points: '#140c06', belly: '#724a22' },
+  { name: 'chestnut',       body: '#a0582a', shade: '#6d3915', points: '#8a4718', belly: '#c2783f' },
+  { name: 'liver chestnut', body: '#6a371b', shade: '#44220f', points: '#552a12', belly: '#8a532b' },
+  { name: 'black',          body: '#2f241c', shade: '#18120d', points: '#0d0a07', belly: '#4a392a' },
+  { name: 'grey',           body: '#aca6a0', shade: '#7b746f', points: '#5a534e', belly: '#cbc5bf' },
 ];
 
-// Deterministic per-runner coat. Same horse, same colour, every replay.
-function coatFor(runner) {
+function _runnerHash(runner) {
   const id = String((runner && runner.id) || (runner && runner.name) || '');
   let hash = 0;
   for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  // Weighted the way a real field looks: mostly bay and chestnut, with
-  // the grey and the black as the two that catch your eye.
-  const WEIGHTS = [0, 0, 0, 1, 1, 2, 2, 3, 4, 5];
-  return HORSE_COATS[WEIGHTS[hash % WEIGHTS.length]];
+  return hash;
 }
 
-// One leg: shoulder/hip -> knee/hock -> hoof. The upper segment is
-// drawn heavier than the cannon so the limb tapers like a real one.
-function drawLeg(c, ox, oy, kx, ky, fx, fy, colour, w) {
-  c.strokeStyle = colour;
-  c.lineCap = 'round';
-  c.lineJoin = 'round';
-  c.lineWidth = w * 2.0;
+// Deterministic per-runner coat. Same horse, same colour, every replay.
+function coatFor(runner) {
+  // Weighted the way a real field looks: mostly bay and chestnut, with
+  // the grey and the black as the two that catch the eye.
+  const WEIGHTS = [0, 0, 0, 1, 1, 2, 2, 3, 4, 5];
+  return HORSE_COATS[WEIGHTS[_runnerHash(runner) % WEIGHTS.length]];
+}
+
+// Face marking and white socks, also from the id. Roughly a third of
+// horses carry a blaze or stripe and a fifth of legs a white sock, which
+// is about what a real field looks like.
+// Runner ids are short ("12", "1043"), so the high bits of the string
+// hash are always zero — reading markings straight off it gave every
+// horse in the field the same socks. An integer finaliser spreads the
+// bits properly before we read them.
+function _mixHash(h) {
+  h ^= h >>> 16; h = Math.imul(h, 0x7feb352d);
+  h ^= h >>> 15; h = Math.imul(h, 0x846ca68b);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+function markingsFor(runner) {
+  const hsh = _mixHash(_runnerHash(runner));
+  const FACE = ['none', 'none', 'none', 'star', 'stripe', 'blaze'];
+  const r = (n) => ((hsh >>> n) & 7);
+  return {
+    face:  FACE[(hsh >>> 5) % FACE.length],
+    // [far fore, near fore, far hind, near hind]
+    socks: [r(8) === 0, r(11) === 1, r(14) < 2, r(17) < 2],
+  };
+}
+
+// ── Cached gradients ─────────────────────────────────────────────
+// Canvas gradients are defined in user space and read through whatever
+// transform is current when they are used, so one gradient in local
+// horse coordinates serves every horse, every frame. Building them per
+// horse per frame is 24 × 60 allocations a second for nothing.
+const _hg = {};
+function horseGrad(key, make) {
+  return _hg[key] || (_hg[key] = make());
+}
+
+// ── Gait ─────────────────────────────────────────────────────────
+// A transverse gallop, four beats then a moment of suspension. These are
+// the points in the stride cycle where each hoof strikes the ground:
+//   far hind 0.00 → near hind 0.10 → far fore 0.26 → near fore 0.36,
+// each staying down for STANCE of the cycle, and then all four are off
+// the ground from 0.72 until the far hind lands again.
+const GAIT = { farHind: 0.00, nearHind: 0.10, farFore: 0.26, nearFore: 0.36 };
+const STANCE = 0.36;
+
+function _sstep(a, b, x) {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+// Where the hoof is, relative to the leg's root, at cycle position u
+// (u = 0 at the moment it strikes). Planted and sweeping back through
+// the stance; then lifted, folded and carried forward through the swing.
+function hoofPath(u, front, back, lift, fore) {
+  if (u < STANCE) {
+    return { x: front + (back - front) * (u / STANCE), y: 0, planted: true };
+  }
+  const t = (u - STANCE) / (1 - STANCE);
+  // A foreleg folds hard at the knee early in the swing: the hoof comes
+  // UP and BACK before it reaches forward. A hind leg tucks under.
+  const along = fore ? _sstep(0.3, 1, t) : _sstep(0.08, 0.95, t);
+  const up = Math.pow(Math.sin(Math.PI * t), fore ? 0.75 : 1.1);
+  return { x: back + (front - back) * along, y: -lift * up, planted: false, t: t };
+}
+
+// Two-bone inverse kinematics. Given the root of a leg, where its hoof
+// has to be, and the lengths of the upper and lower bones, find the
+// joint between them. `bend` is +1 for a joint that points backward
+// (the hock) and -1 for one that points forward (the knee).
+function solveLeg(rx, ry, tx, ty, a, b, bend) {
+  let dx = tx - rx, dy = ty - ry;
+  let d = Math.hypot(dx, dy) || 0.001;
+  const maxD = a + b - 0.02;
+  if (d > maxD) { dx *= maxD / d; dy *= maxD / d; d = maxD; }
+  const cosA = (a * a + d * d - b * b) / (2 * a * d);
+  const ang = Math.atan2(dy, dx) + bend * Math.acos(Math.max(-1, Math.min(1, cosA)));
+  return {
+    jx: rx + Math.cos(ang) * a, jy: ry + Math.sin(ang) * a,
+    fx: rx + dx, fy: ry + dy,
+  };
+}
+
+// A tapered limb segment: a quad whose width runs from w1 at one end to
+// w2 at the other.
+function taper(c, x1, y1, x2, y2, w1, w2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const L = Math.hypot(dx, dy) || 1;
+  const nx = -dy / L, ny = dx / L;
   c.beginPath();
-  c.moveTo(ox, oy);
-  c.lineTo(kx, ky);
-  c.stroke();
-  c.lineWidth = w * 0.85;
-  c.beginPath();
-  c.moveTo(kx, ky);
-  c.lineTo(fx, fy);
-  c.stroke();
-  c.fillStyle = '#16120e';
-  c.beginPath();
-  c.ellipse(fx, fy + 0.4, w * 1.0, w * 0.7, 0, 0, Math.PI * 2);
+  c.moveTo(x1 + nx * w1 / 2, y1 + ny * w1 / 2);
+  c.lineTo(x2 + nx * w2 / 2, y2 + ny * w2 / 2);
+  c.lineTo(x2 - nx * w2 / 2, y2 - ny * w2 / 2);
+  c.lineTo(x1 - nx * w1 / 2, y1 - ny * w1 / 2);
+  c.closePath();
   c.fill();
+}
+
+function dot(c, x, y, r) {
+  c.beginPath();
+  c.arc(x, y, r, 0, Math.PI * 2);
+  c.fill();
+}
+
+// One leg, root to hoof. `upperCol` is the coat (forearm and gaskin are
+// muscle, the colour of the body); `lowerCol` is the points colour — the
+// black lower legs of a bay. A white sock replaces the pastern and
+// fetlock.
+function drawLimb(c, L, upperCol, lowerCol, sock, wRoot, wJoint, wCannon, detail) {
+  const { rx, ry, jx, jy, fx, fy } = L;
+  // Fetlock sits most of the way down the lower bone; the pastern then
+  // slopes forward into the hoof, which is flat on the ground when
+  // planted and follows the leg when it is not.
+  const ftx = jx + (fx - jx) * 0.82, fty = jy + (fy - jy) * 0.82;
+  const hx = L.planted ? fx + 1.6 : fx + (fx - jx) * 0.06;
+  const hy = L.planted ? fy : fy + (fy - jy) * 0.06;
+
+  c.fillStyle = upperCol;
+  taper(c, rx, ry, jx, jy, wRoot, wJoint);
+  dot(c, jx, jy, wJoint * 0.52);
+
+  c.fillStyle = lowerCol;
+  taper(c, jx, jy, ftx, fty, wJoint * 0.78, wCannon);
+  const sockCol = detail ? '#ebe7de' : '#b9b4aa';
+  c.fillStyle = sock ? sockCol : lowerCol;
+  if (sock) taper(c, jx + (ftx - jx) * 0.55, jy + (fty - jy) * 0.55, ftx, fty, wCannon * 1.02, wCannon * 1.02);
+  dot(c, ftx, fty, wCannon * 0.62);
+  taper(c, ftx, fty, hx, hy, wCannon * 0.9, wCannon * 0.72);
+
+  // Hoof
+  c.fillStyle = sock ? '#5d554c' : '#1b1714';
+  const ang = L.planted ? 0 : Math.atan2(hy - fty, hx - ftx) - Math.PI / 2;
+  c.save();
+  c.translate(hx, hy);
+  c.rotate(ang);
+  c.beginPath();
+  c.moveTo(-wCannon * 0.55, -wCannon * 0.9);
+  c.lineTo(wCannon * 0.85, -wCannon * 0.9);
+  c.lineTo(wCannon * 1.25, 0.5);
+  c.lineTo(-wCannon * 0.65, 0.5);
+  c.closePath();
+  c.fill();
+  c.restore();
+
+  if (detail) {
+    // Tendon line down the back of the cannon, catching no light.
+    c.strokeStyle = 'rgba(0,0,0,0.28)';
+    c.lineWidth = 0.45;
+    c.beginPath();
+    c.moveTo(jx - 0.6, jy + 1);
+    c.lineTo(ftx - 0.8, fty - 0.5);
+    c.stroke();
+  }
 }
 
 function drawHorseSilhouette(x, y, h, artScale) {
   const scale = artScale || 1;
-
-  // ── 4-beat transverse gallop ────────────────────────────────
-  //   off-hind   0.00  strikes first
-  //   lead-hind  0.20  strikes with the off-fore (the diagonal pair)
-  //   off-fore   0.20
-  //   lead-fore  0.40  strikes alone
-  //   0.60-1.00        suspension, all four off the ground
-  const cyc = (h.legPhase / (Math.PI * 2)) % 1;
-  const lift = (offset) => {
-    const pos = ((cyc - offset) + 1) % 1;
-    if (pos < 0.4) return 0;
-    if (pos < 0.7) return -Math.sin((pos - 0.4) / 0.3 * Math.PI) * 10;
-    return -Math.sin((1 - pos) / 0.3 * Math.PI) * 10;
-  };
-  const reach = (offset) => Math.cos(((cyc - offset) + 1) % 1 * Math.PI * 2) * 7;
-
-  const OFF_HIND = 0.00, LEAD_HIND = 0.20, OFF_FORE = 0.20, LEAD_FORE = 0.40;
-
-  const suspension = (cyc > 0.60 && cyc < 1.00)
-    ? Math.sin((cyc - 0.60) / 0.40 * Math.PI) : 0;
-  const bodyLift = -suspension * 2.8;
+  const detail = scale >= 0.72;
+  const coat = h.coat || (h.coat = coatFor(h.runner));
+  const marks = h.marks || (h.marks = markingsFor(h.runner));
+  const silk  = h.runner.silk  || COL.silkDefault;
+  const silk2 = h.runner.silk2 || COL.silk2Default;
+  const pat   = h.runner.silk_pattern || 'solid';
 
   const progressNow    = DIRECTOR.progress;
   const inFinalStretch = progressNow >= 0.85;
   const inSlowMo       = progressNow >= 0.88;
 
-  const coat  = h.coat || (h.coat = coatFor(h.runner));
-  const silk  = h.runner.silk  || COL.silkDefault;
-  const silk2 = h.runner.silk2 || COL.silk2Default;
-  const pat   = h.runner.silk_pattern || 'solid';
-
+  const cyc = (h.legPhase / (Math.PI * 2)) % 1;
   _spawnHoofDust(x, y, h, cyc, scale);
 
-  // Body roll and the suspension rise. A couple of degrees, a couple of
-  // pixels — invisible as an effect, very visible by its absence.
-  const roll = Math.sin(h.swayPhase) * 0.015 + Math.sin(h.legPhase) * 0.008;
-  const detail = scale >= 0.72;
+  // ── The stride moves the whole animal ──────────────────────
+  // Highest through the suspension, lowest as the forelegs take the
+  // weight; the body pitches nose-up as the hinds drive and nose-down as
+  // the fores land; the neck and head nod against that.
+  const susp = cyc > 0.72 ? Math.sin((cyc - 0.72) / 0.28 * Math.PI) : 0;
+  const bodyLift = -susp * 2.6 + Math.max(0, Math.sin((cyc - 0.3) * Math.PI * 2)) * 0.9;
+  const pitch = Math.sin((cyc - 0.12) * Math.PI * 2) * 0.03 + Math.sin(h.swayPhase) * 0.006;
+  const neckAng = Math.sin((cyc - 0.36) * Math.PI * 2) * 0.07;
 
   ctx.save();
-  ctx.translate(x, y + bodyLift * scale);
-  ctx.rotate(roll);
+  ctx.translate(x, y);
   ctx.scale(scale, scale);
 
-  // ── Ground shadow (tightens as the horse leaves the ground) ──
-  ctx.fillStyle = 'rgba(0,0,0,' + (0.28 - suspension * 0.16).toFixed(3) + ')';
+  // Ground shadow, cast away from the sun and tightening as the horse
+  // leaves the ground. Drawn before the body pitches — shadows do not.
+  ctx.fillStyle = 'rgba(0,0,0,' + (0.3 - susp * 0.14).toFixed(3) + ')';
   ctx.beginPath();
-  ctx.ellipse(-6, 28 - bodyLift, 29 - suspension * 6, 3.4, 0, 0, Math.PI * 2);
+  ctx.ellipse(-7, 28, 30 - susp * 5, 3.4, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // ── Off-side legs ───────────────────────────────────────────
-  // Drawn first and darker, so the near pair reads in front of them.
-  // That one trick is most of what gives the animal depth.
-  ctx.globalAlpha = 0.7;
-  drawLeg(ctx, -12, -6,
-          -21 + reach(OFF_HIND) * 0.35, 9 + lift(OFF_HIND) * 0.35,
-          -13 + reach(OFF_HIND),        28 + lift(OFF_HIND),
-          coat.points, 1.55);
-  drawLeg(ctx, 16, -5,
-          18 + reach(OFF_FORE) * 0.5, 11 + lift(OFF_FORE) * 0.4,
-          19 + reach(OFF_FORE),       28 + lift(OFF_FORE),
-          coat.points, 1.55);
-  ctx.globalAlpha = 1;
+  ctx.translate(0, bodyLift);
+  ctx.rotate(pitch);
 
-  // ── Tail ────────────────────────────────────────────────────
-  // Streaming straight back off the dock, level with the topline, not
-  // hanging. Drawn before the body so it comes out from behind.
-  const tailSway = Math.sin(h.bobPhase * 1.15) * 1.8;
-  ctx.strokeStyle = coat.points;
-  ctx.lineCap = 'round';
-  ctx.lineWidth = 1.9;
-  ctx.beginPath();
-  ctx.moveTo(-19, -10);
-  ctx.bezierCurveTo(-26, -9 + tailSway, -32, -5 + tailSway * 0.7,
-                    -37, 2 + tailSway * 0.4);
-  ctx.stroke();
-  ctx.lineWidth = 0.85;
-  for (let i = 0; detail && i < 4; i++) {
-    const sp = -1 + i * 1.1;
-    ctx.beginPath();
-    ctx.moveTo(-19.5, -10 + sp * 0.25);
-    ctx.quadraticCurveTo(-28 - i * 0.7, -6 + sp + tailSway * 0.6,
-                         -36 - i * 1.1, 3 + sp * 1.2 + tailSway * 0.3);
-    ctx.stroke();
-  }
+  // ── Legs: the rig ──────────────────────────────────────────
+  // Roots at the elbow (fore) and the stifle (hind). Hoof targets from
+  // the gait; joint positions solved.
+  const leg = (key, rx, ry, front, back, lift, a, b, fore) => {
+    const u = ((cyc - GAIT[key]) % 1 + 1) % 1;
+    const hp = hoofPath(u, front, back, lift, fore);
+    // The ground, expressed in the body's pitched frame, so a planted hoof
+    // stays planted while the body rocks over it.
+    const tx = rx + hp.x;
+    const ty = (28 - bodyLift) - tx * pitch + hp.y;
+    const s = solveLeg(rx, ry, tx, ty, a, b, fore ? -1 : 1);
+    return { rx: rx, ry: ry, jx: s.jx, jy: s.jy, fx: s.fx, fy: s.fy, planted: hp.planted };
+  };
+  const farFore  = leg('farFore',  16.5, -0.5, 10, -9, 15, 14, 16.2, true);
+  const nearFore = leg('nearFore', 18.5,  0.5, 10, -9, 15, 14, 16.2, true);
+  const farHind  = leg('farHind', -11.5, -2.5,  7, -13, 12, 15, 17.8, false);
+  const nearHind = leg('nearHind', -13.5, -1.5, 7, -13, 12, 15, 17.8, false);
 
-  // ── Barrel ──────────────────────────────────────────────────
-  // Deep at the girth, shallow and tucked up at the flank, well muscled
-  // over the quarters. Shallower and longer than it looks like it should
-  // be — that is what makes it a racehorse rather than a cob.
-  ctx.fillStyle = coat.body;
-  ctx.beginPath();
-  ctx.moveTo(-20, -9);                                 // dock
-  ctx.bezierCurveTo(-21, -14, -14, -16, -4, -15);      // croup
-  ctx.bezierCurveTo(6, -15, 13, -15, 18, -13);         // back to withers
-  ctx.bezierCurveTo(22, -12, 24, -8, 23, -4);          // point of shoulder
-  ctx.bezierCurveTo(22, 0, 18, 3, 13, 3);              // girth
-  ctx.bezierCurveTo(7, 4, 1, 3, -3, 1);                // belly, tucked up
-  ctx.bezierCurveTo(-10, -1, -16, -3, -19, -5);        // flank -> stifle
-  ctx.closePath();
-  ctx.fill();
+  // Far-side legs sit in shadow behind the body.
+  const farUpper = coat.shade;
+  const farLower = coat.name === 'grey' ? '#6a635e' : (coat.name === 'chestnut' ? '#5c3014' : coat.points);
+  const nearLower = coat.name === 'grey' ? coat.shade :
+                    (coat.name === 'chestnut' || coat.name === 'liver chestnut') ? coat.shade : coat.points;
+  drawLimb(ctx, farHind, farUpper, farLower, marks.socks[2], 6.2, 3.2, 2.2, false);
+  drawLimb(ctx, farFore, farUpper, farLower, marks.socks[0], 5.2, 3.0, 2.1, false);
 
-  // Lit topline
-  ctx.fillStyle = 'rgba(255,255,255,0.11)';
-  ctx.beginPath();
-  ctx.moveTo(-15, -13);
-  ctx.bezierCurveTo(-6, -16, 8, -16, 18, -13);
-  ctx.bezierCurveTo(8, -14, -6, -14, -15, -13);
-  ctx.closePath();
-  ctx.fill();
-
-  // Lighter underline
-  ctx.fillStyle = coat.belly;
-  ctx.globalAlpha = 0.45;
-  ctx.beginPath();
-  ctx.moveTo(-3, 1);
-  ctx.bezierCurveTo(4, 4, 10, 4, 15, 2);
-  ctx.bezierCurveTo(9, 6, 1, 5, -3, 1);
-  ctx.closePath();
-  ctx.fill();
-  ctx.globalAlpha = 1;
-
-  // Quarters and shoulder — the two big muscle masses
-  ctx.fillStyle = coat.shade;
-  ctx.globalAlpha = 0.5;
-  ctx.beginPath();
-  ctx.ellipse(-13, -8, 6.5, 6, 0.3, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(18, -7, 4.2, 5.5, -0.4, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.globalAlpha = 1;
-
-  // ── Neck and head ───────────────────────
-  // The neck is long and TAPERS — deep where it leaves the withers,
-  // narrow at the throat — and the head is a long wedge carried out in
-  // front of it. Two mistakes in the earlier passes are worth not
-  // repeating: filling the head in the shade colour and running the
-  // mane over the poll both turn the whole top of the animal into one
-  // dark mass, and a horse without a readable head does not read as a
-  // horse at all.
-  ctx.fillStyle = coat.body;
-  ctx.beginPath();
-  ctx.moveTo(11, -13);                                  // withers
-  ctx.bezierCurveTo(20, -20, 30, -26, 39, -29);         // crest
-  ctx.bezierCurveTo(41, -29.5, 42, -27.5, 41, -26);     // poll
-  ctx.bezierCurveTo(34, -22, 27, -15, 23, -6);          // throat
-  ctx.bezierCurveTo(18, -7, 13, -9, 11, -13);           // chest
-  ctx.closePath();
-  ctx.fill();
-
-  // Head — a long wedge, same coat as the neck so it reads as one
-  // animal, separated by a jawline rather than by a colour change.
-  ctx.beginPath();
-  ctx.moveTo(39.5, -29.5);                              // poll
-  ctx.bezierCurveTo(45, -30, 50, -28.5, 53, -25.5);     // forehead
-  ctx.bezierCurveTo(55, -23.5, 55, -21.5, 52.5, -20.8); // nose
-  ctx.bezierCurveTo(48, -19.8, 43, -21.5, 40, -24.5);   // muzzle -> jaw
-  ctx.closePath();
-  ctx.fill();
-
-  if (detail) {
-    // Jawline: the shadow under the cheek that separates head from neck.
-    ctx.strokeStyle = coat.shade;
-    ctx.lineWidth = 1.1;
-    ctx.beginPath();
-    ctx.moveTo(40.4, -28.4);
-    ctx.quadraticCurveTo(41.6, -24.6, 45, -22.4);
-    ctx.stroke();
-
-    // Cheekbone highlight, so the head has a plane instead of reading flat
-    ctx.fillStyle = coat.belly;
-    ctx.globalAlpha = 0.35;
-    ctx.beginPath();
-    ctx.ellipse(46, -25.6, 4.2, 2.4, -0.28, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-
-  // Ears — coat coloured with a dark inner, at the poll
-  ctx.fillStyle = coat.body;
-  ctx.beginPath();
-  ctx.moveTo(38.8, -29.2); ctx.lineTo(38.4, -33.4); ctx.lineTo(40.8, -29.6);
-  ctx.closePath();
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(41.2, -29.4); ctx.lineTo(42.4, -33); ctx.lineTo(43.6, -28.8);
-  ctx.closePath();
-  ctx.fill();
+  // ── Tail ───────────────────────────────────────────────────
+  // A flowing mass off the dock, streaming back and a little down,
+  // swinging with the stride.
+  const tw = Math.sin(h.bobPhase * 1.1) * 1.8;
   ctx.fillStyle = coat.points;
   ctx.beginPath();
-  ctx.moveTo(39.2, -29.6); ctx.lineTo(39.0, -32); ctx.lineTo(40.1, -29.8);
+  ctx.moveTo(-19.5, -13);
+  ctx.bezierCurveTo(-26, -14 + tw * 0.4, -33, -11 + tw * 0.8, -40, -6 + tw);
+  ctx.bezierCurveTo(-41.5, -3.5 + tw, -39, -1.5 + tw * 0.8, -35, -2.8 + tw * 0.6);
+  ctx.bezierCurveTo(-29, -4.5 + tw * 0.4, -24, -6.5, -19.5, -8);
+  ctx.closePath();
+  ctx.fill();
+  if (detail) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 0.4;
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(-21, -12 + i * 1.1);
+      ctx.quadraticCurveTo(-30, -11 + i * 1.3 + tw * 0.7, -38 - i * 0.6, -6 + i * 1.2 + tw);
+      ctx.stroke();
+    }
+  }
+
+  // ── Body ───────────────────────────────────────────────────
+  // Deep through the girth, tucked up at the flank, a strong round
+  // hindquarter, a sloping shoulder. Shallower and longer than you would
+  // guess — that is the difference between a racehorse and a cob.
+  const body = new Path2D();
+  body.moveTo(-21, -6);
+  body.bezierCurveTo(-22.5, -12, -18.5, -16.5, -11, -16.2);   // quarters
+  body.bezierCurveTo(-4, -16, 2, -14.4, 8, -14.6);            // back
+  body.bezierCurveTo(11, -14.8, 14, -16.6, 17, -15.2);        // withers
+  body.bezierCurveTo(20.5, -13.6, 23.4, -10, 24.2, -5);       // shoulder
+  body.bezierCurveTo(25, -1.6, 24, 1.4, 21, 3.2);             // breast
+  body.bezierCurveTo(17, 4.7, 11, 4.7, 5, 3.9);               // girth
+  body.bezierCurveTo(-1, 3.1, -5, 1.4, -9, 1);                // belly, tucked
+  body.bezierCurveTo(-13, 0.6, -16, 1, -18, 0);               // flank → stifle
+  body.bezierCurveTo(-20, -1, -21, -3, -21, -6);              // back of thigh
+  body.closePath();
+
+  ctx.fillStyle = coat.body;
+  ctx.fill(body);
+
+  // Light and volume, all clipped to the body outline.
+  ctx.save();
+  ctx.clip(body);
+  ctx.fillStyle = horseGrad('bodyVol', () => {
+    const g = ctx.createLinearGradient(0, -17, 0, 5);
+    g.addColorStop(0,    'rgba(255,240,214,0.20)');
+    g.addColorStop(0.32, 'rgba(255,240,214,0.02)');
+    g.addColorStop(0.62, 'rgba(0,0,0,0.06)');
+    g.addColorStop(1,    'rgba(0,0,0,0.38)');
+    return g;
+  });
+  ctx.fillRect(-24, -18, 50, 24);
+  if (detail) {
+    // Sheen over the quarters and the shoulder: a groomed coat shines.
+    ctx.fillStyle = horseGrad('quarterSheen', () => {
+      const g = ctx.createRadialGradient(-12, -11.5, 0, -12, -11.5, 9.5);
+      g.addColorStop(0, 'rgba(255,244,222,0.24)');
+      g.addColorStop(1, 'rgba(255,244,222,0)');
+      return g;
+    });
+    ctx.fillRect(-24, -22, 24, 22);
+    ctx.fillStyle = horseGrad('shoulderSheen', () => {
+      const g = ctx.createRadialGradient(18, -9, 0, 18, -9, 7.5);
+      g.addColorStop(0, 'rgba(255,244,222,0.18)');
+      g.addColorStop(1, 'rgba(255,244,222,0)');
+      return g;
+    });
+    ctx.fillRect(8, -18, 18, 20);
+    // Dapples on a grey
+    if (coat.name === 'grey') {
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      for (let i = 0; i < 14; i++) {
+        const a = i * 2.4, rr = 3 + (i % 4) * 1.6;
+        dot(ctx, -12 + Math.cos(a) * rr * 1.3, -9 + Math.sin(a) * rr * 0.7, 0.9 + (i % 3) * 0.3);
+      }
+    }
+  }
+  ctx.restore();
+
+  if (detail) {
+    // Muscle creases: the stifle fold in front of the quarters and the
+    // line behind the elbow.
+    ctx.strokeStyle = 'rgba(0,0,0,0.26)';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(-7.5, -8);
+    ctx.quadraticCurveTo(-9.8, -3, -9, 1);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(15, -6);
+    ctx.quadraticCurveTo(14.4, -1, 16, 3.4);
+    ctx.stroke();
+    // Rim light along the topline — the sun is above and behind camera.
+    ctx.strokeStyle = 'rgba(255,238,206,0.4)';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(-20, -11);
+    ctx.bezierCurveTo(-18, -16, -11.5, -16.4, -11, -16.2);
+    ctx.bezierCurveTo(-4, -16, 2, -14.4, 8, -14.6);
+    ctx.stroke();
+  }
+
+  // ── Neck and head ──────────────────────────────────────────
+  // One group, pivoting at the withers so the whole front end nods with
+  // the stride.
+  ctx.save();
+  ctx.translate(14, -14.5);
+  ctx.rotate(neckAng);
+  ctx.translate(-14, 14.5);
+
+  const neck = new Path2D();
+  neck.moveTo(12.5, -15.6);
+  neck.bezierCurveTo(19.5, -22.5, 28, -28.4, 37.2, -30.6);    // crest
+  neck.bezierCurveTo(39.8, -31.2, 41.4, -29.6, 40.8, -27.6);  // poll
+  neck.bezierCurveTo(35.4, -23.4, 28.4, -16.2, 24.2, -7);     // throat
+  neck.bezierCurveTo(21, -6, 16.4, -9, 12.5, -15.6);
+  neck.closePath();
+
+  const head = new Path2D();
+  head.moveTo(38.4, -31.2);
+  head.bezierCurveTo(43, -31.8, 47.2, -30.2, 50.6, -27.2);    // forehead
+  head.lineTo(54, -23.2);                                     // face
+  head.bezierCurveTo(55.4, -21.7, 55.1, -20, 53.5, -19.4);    // nose
+  head.bezierCurveTo(52.2, -18.9, 51, -18.4, 49.8, -18.6);    // lip
+  head.bezierCurveTo(48.8, -18.2, 47.8, -18.3, 47, -19);      // chin
+  head.bezierCurveTo(44, -19.8, 41, -21, 39.2, -24);          // jaw
+  head.bezierCurveTo(38.3, -26, 37.9, -28.6, 38.4, -31.2);
+  head.closePath();
+
+  ctx.fillStyle = coat.body;
+  ctx.fill(neck);
+  ctx.fill(head);
+
+  ctx.save();
+  ctx.clip(neck);
+  ctx.fillStyle = horseGrad('neckVol', () => {
+    const g = ctx.createLinearGradient(30, -30, 22, -10);
+    g.addColorStop(0,   'rgba(255,240,214,0.18)');
+    g.addColorStop(0.5, 'rgba(0,0,0,0)');
+    g.addColorStop(1,   'rgba(0,0,0,0.3)');
+    return g;
+  });
+  ctx.fillRect(10, -34, 34, 30);
+  ctx.restore();
+
+  ctx.save();
+  ctx.clip(head);
+  // The face planes: lit forehead, shaded muzzle and underside.
+  ctx.fillStyle = horseGrad('headVol', () => {
+    const g = ctx.createLinearGradient(44, -31, 47, -18);
+    g.addColorStop(0,   'rgba(255,240,214,0.16)');
+    g.addColorStop(0.6, 'rgba(0,0,0,0.04)');
+    g.addColorStop(1,   'rgba(0,0,0,0.34)');
+    return g;
+  });
+  ctx.fillRect(36, -33, 22, 16);
+  if (detail) {
+    // The round cheek (jowl), catching the light
+    ctx.fillStyle = horseGrad('cheek', () => {
+      const g = ctx.createRadialGradient(42.4, -25.4, 0, 42.4, -25.4, 3.8);
+      g.addColorStop(0, 'rgba(255,244,222,0.22)');
+      g.addColorStop(1, 'rgba(255,244,222,0)');
+      return g;
+    });
+    ctx.fillRect(38, -30, 9, 9);
+  }
+  // Face marking
+  if (marks.face !== 'none') {
+    ctx.fillStyle = '#f1ede4';
+    if (marks.face === 'star') {
+      dot(ctx, 46.6, -28.6, 1.1);
+    } else {
+      const w = marks.face === 'blaze' ? 1.5 : 0.7;
+      ctx.beginPath();
+      ctx.moveTo(45.2, -29.8);
+      ctx.lineTo(47.6, -30);
+      ctx.lineTo(54.6, -21.4 + w * 0.2);
+      ctx.lineTo(54.2 - w, -20.4);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  if (detail) {
+    // Throatlatch and jawline shadow, separating the head from the neck.
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(39.4, -29.8);
+    ctx.bezierCurveTo(39.2, -26, 41, -22.4, 45, -20.2);
+    ctx.stroke();
+    // Jugular groove down the neck
+    ctx.strokeStyle = 'rgba(0,0,0,0.16)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(37, -25);
+    ctx.quadraticCurveTo(29, -19, 23.5, -10);
+    ctx.stroke();
+  }
+
+  // Ears, pricked
+  ctx.fillStyle = coat.body;
+  ctx.beginPath();
+  ctx.moveTo(38.6, -30.6); ctx.quadraticCurveTo(37.2, -34.2, 38.4, -36.4);
+  ctx.quadraticCurveTo(40.4, -34, 40.8, -31);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = coat.shade;
+  ctx.beginPath();
+  ctx.moveTo(40.6, -30.8); ctx.quadraticCurveTo(40.2, -34, 41.6, -35.8);
+  ctx.quadraticCurveTo(43, -33.4, 42.6, -30.6);
   ctx.closePath();
   ctx.fill();
 
   // Eye
-  ctx.fillStyle = '#0b0906';
-  ctx.beginPath();
-  ctx.ellipse(44.6, -27, 1.05, 0.85, 0.15, 0, Math.PI * 2);
-  ctx.fill();
-  if (detail) {
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.beginPath();
-    ctx.arc(44.9, -27.3, 0.34, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Muzzle, nostril, and an open mouth under maximum effort
-  ctx.fillStyle = coat.name === 'grey' ? '#6a625d' : '#2a1a10';
-  ctx.beginPath();
-  ctx.ellipse(52.6, -22.4, 2.1, 1.7, 0.3, 0, Math.PI * 2);
-  ctx.fill();
   ctx.fillStyle = '#0a0806';
   ctx.beginPath();
-  ctx.ellipse(52.2, -23.8, 0.62, 0.44, 0.35, 0, Math.PI * 2);
+  ctx.ellipse(44.8, -27.2, 1.05, 0.8, 0.35, 0, Math.PI * 2);
+  ctx.fill();
+  if (detail) {
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    dot(ctx, 45.1, -27.5, 0.3);
+  }
+
+  // Muzzle, nostril — flaring under maximum effort — and an open mouth
+  ctx.fillStyle = coat.name === 'grey' ? '#6c645e' : 'rgba(20,12,8,0.55)';
+  ctx.beginPath();
+  ctx.ellipse(52.6, -20.6, 2.2, 1.7, 0.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#0a0604';
+  ctx.beginPath();
+  ctx.ellipse(53.2, -21.6, inSlowMo ? 0.95 : 0.65, inSlowMo ? 0.62 : 0.42, 0.6, 0, Math.PI * 2);
   ctx.fill();
   if (inSlowMo) {
     ctx.fillStyle = '#2e0d0d';
     ctx.beginPath();
-    ctx.ellipse(51.6, -21, 1.5, 0.85, 0.28, 0, Math.PI * 2);
+    ctx.ellipse(50.4, -18.6, 1.4, 0.6, 0.2, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // ── Mane ───────────────────────────────
-  // Short strokes streaming off the crest, stopping short of the poll
-  // so they never cover the head.
+  // ── Mane and forelock ──────────────────────────────────────
+  // A mass along the crest, flying back and up at speed, with strands
+  // breaking off it. Stops short of the poll so it never swallows the
+  // head — a horse without a readable head does not read as a horse.
+  const mp = Math.sin(h.bobPhase * 1.5) * 1.2;
+  ctx.fillStyle = coat.points;
+  ctx.beginPath();
+  ctx.moveTo(37, -30.4);
+  ctx.bezierCurveTo(30, -29.8 + mp * 0.3, 22, -25 + mp * 0.5, 14, -17.5);
+  ctx.bezierCurveTo(15.5, -20 + mp, 22, -26.5 + mp, 30, -31.5 + mp * 0.6);
+  ctx.quadraticCurveTo(34, -32.6, 37, -30.4);
+  ctx.closePath();
+  ctx.fill();
+  const maneN = detail ? 9 : 4;
   ctx.strokeStyle = coat.points;
-  ctx.lineWidth = 1.2;
+  ctx.lineWidth = 0.9;
   ctx.lineCap = 'round';
-  const manePulse = Math.sin(h.bobPhase * 1.5) * 1.4;
-  const maneN = detail ? 9 : 5;
   for (let i = 0; i < maneN; i++) {
-    const t  = i / (maneN - 1);
-    const bx = 36 - t * 23;
-    const by = -27.5 + t * 13;
+    const t = i / (maneN - 1);
+    const bx = 35 - t * 20, by = -30 + t * 13;
     ctx.beginPath();
     ctx.moveTo(bx, by);
-    ctx.quadraticCurveTo(bx - 3.5, by - 1.2 + manePulse * 0.25,
-                         bx - 6.5, by + 1.4 + manePulse * (0.3 + t * 0.5));
+    ctx.quadraticCurveTo(bx - 3, by - 2.4 + mp * 0.4, bx - 6.5, by - 1.2 + mp * (0.4 + t * 0.4));
     ctx.stroke();
   }
+  // Forelock streaming back over the forehead
+  ctx.beginPath();
+  ctx.moveTo(39.6, -31.4);
+  ctx.quadraticCurveTo(38, -33.4 + mp * 0.3, 35.6, -33.4 + mp * 0.4);
+  ctx.stroke();
 
-  // Bridle — cheekpiece and a rein running back to the hands
+  // ── Bridle ─────────────────────────────────────────────────
   if (detail) {
-    ctx.strokeStyle = 'rgba(18,13,9,0.8)';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(47.4, -28.6);
-    ctx.lineTo(50.4, -22.4);
+    ctx.strokeStyle = 'rgba(16,12,10,0.85)';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();                          // headpiece + cheekpiece
+    ctx.moveTo(40.2, -31.4);
+    ctx.lineTo(48.4, -21.4);
     ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(50.2, -23);
-    ctx.quadraticCurveTo(37, -19.5, 26, -13);
+    ctx.beginPath();                          // browband
+    ctx.moveTo(40.2, -31.4);
+    ctx.lineTo(43.8, -30.6);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(236,234,228,0.9)';
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();                          // noseband
+    ctx.moveTo(49.3, -24.6);
+    ctx.lineTo(51.6, -19.2);
     ctx.stroke();
   }
+  ctx.restore();   // end neck/head group
 
-  // ── Saddle cloth ────────────────────────────────────────────
-  // Small, cream rather than white, sitting under the saddle on the
-  // upper flank — the identification that travels with the horse.
+  // Where the bit is now, in body space, for the reins.
+  const bitX0 = 50.2 - 14, bitY0 = -20.2 + 14.5;
+  const bitX = 14 + bitX0 * Math.cos(neckAng) - bitY0 * Math.sin(neckAng);
+  const bitY = -14.5 + bitX0 * Math.sin(neckAng) + bitY0 * Math.cos(neckAng);
+
+  // ── Tack ───────────────────────────────────────────────────
+  // Number cloth under the saddle, the tiny racing saddle on top, a
+  // girth round the barrel and a breastgirth across the chest.
   const num = h.runner.number;
-  if (num != null) {
-    ctx.fillStyle = 'rgba(232,226,212,0.92)';
-    ctx.beginPath();
-    ctx.moveTo(-1.5, -13.2);
-    ctx.lineTo(6, -13.6);
-    ctx.lineTo(6.8, -6.2);
-    ctx.lineTo(-2.4, -5.8);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(30,26,20,0.22)';
+  ctx.fillStyle = '#ebe6da';
+  ctx.beginPath();
+  ctx.moveTo(-1.8, -15);
+  ctx.lineTo(7.4, -15.3);
+  ctx.lineTo(8, -8);
+  ctx.lineTo(-2.5, -7.6);
+  ctx.closePath();
+  ctx.fill();
+  if (detail) {
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
     ctx.lineWidth = 0.35;
     ctx.stroke();
-    ctx.fillStyle = '#1b2028';
-    ctx.font = '700 6.4px "DM Sans", Helvetica, Arial, sans-serif';
+  }
+  if (num != null) {
+    ctx.fillStyle = '#171b22';
+    ctx.font = '700 5.2px "DM Sans", Helvetica, Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(String(num), 2.2, -9.6);
+    ctx.fillText(String(num), 2.8, -11.4);
     ctx.textBaseline = 'alphabetic';
   }
+  ctx.fillStyle = '#231a14';                  // saddle
+  ctx.beginPath();
+  ctx.moveTo(-0.8, -15.4);
+  ctx.quadraticCurveTo(3.4, -17.2, 8.2, -15.8);
+  ctx.lineTo(7.6, -14.4);
+  ctx.quadraticCurveTo(3.4, -15.2, -0.4, -14.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#e6e2d8';                  // girth
+  taper(ctx, 11.6, -14.2, 12.8, 4.2, 1.5, 1.4);
+  if (detail) {
+    ctx.strokeStyle = 'rgba(230,226,216,0.9)'; // breastgirth
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(12.6, -8);
+    ctx.quadraticCurveTo(18, -7, 23.6, -4.2);
+    ctx.stroke();
+  }
 
-  // ── Near-side legs ──────────────────────────────────────────
-  drawLeg(ctx, -13, -7,
-          -22 + reach(LEAD_HIND) * 0.4, 9 + lift(LEAD_HIND) * 0.4,
-          -14 + reach(LEAD_HIND),       28 + lift(LEAD_HIND),
-          coat.points, 1.8);
-  drawLeg(ctx, 18, -6,
-          20 + reach(LEAD_FORE) * 0.55, 11 + lift(LEAD_FORE) * 0.45,
-          21 + reach(LEAD_FORE),        28 + lift(LEAD_FORE),
-          coat.points, 1.8);
+  // ── Near-side legs, over the body ──────────────────────────
+  drawLimb(ctx, nearHind, coat.body, nearLower, marks.socks[3], 7.2, 3.4, 2.4, detail);
+  drawLimb(ctx, nearFore, coat.body, nearLower, marks.socks[1], 6.0, 3.2, 2.3, detail);
+  if (detail) {
+    // Gaskin and forearm take the light on their front edges.
+    ctx.fillStyle = 'rgba(255,240,214,0.12)';
+    taper(ctx, nearHind.rx + 1.2, nearHind.ry, nearHind.jx + 0.8, nearHind.jy, 2.4, 1);
+    taper(ctx, nearFore.rx + 1.4, nearFore.ry, nearFore.jx + 0.8, nearFore.jy, 2.0, 0.9);
+  }
 
-  // ── Jockey ──────────────────────────────────────────────────
-  // Up out of the saddle, weight over the withers, backside high, head
-  // low between the hands.
+  // ── Jockey ─────────────────────────────────────────────────
+  // He rides the stride rather than moving with it: the horse's back
+  // rises and falls and pitches under him while his upper body stays
+  // level, which is the thing that makes a jockey look like he is
+  // riding and not glued on.
+  ctx.save();
+  ctx.translate(4, -15.8);
+  ctx.rotate(-pitch * 0.75);
+  ctx.translate(-4, 15.8 - bodyLift * 0.55);
+
+  // Hands pump with the stride through the final furlong.
+  const pump = inFinalStretch ? Math.sin(cyc * Math.PI * 2) * 1.6 : 0;
+  const handX = 25.4 + pump, handY = -19.8 + Math.abs(pump) * 0.2;
+
+  // Reins, bit to hands.
+  ctx.strokeStyle = 'rgba(22,16,12,0.9)';
+  ctx.lineWidth = 0.55;
+  ctx.beginPath();
+  ctx.moveTo(bitX, bitY + bodyLift * 0.55);
+  ctx.quadraticCurveTo((bitX + handX) / 2, (bitY + handY) / 2 + 2.4, handX, handY);
+  ctx.stroke();
+
+  // Stirrup leather and iron
+  ctx.strokeStyle = 'rgba(28,22,18,0.9)';
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(4.2, -15.4);
+  ctx.lineTo(7.4, -10);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(210,214,220,0.95)';
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  ctx.arc(8, -9.4, 1.1, 0.2, Math.PI - 0.2);
+  ctx.stroke();
+
+  // Thigh (white breeches) and boot, knee up at the withers
+  ctx.fillStyle = '#ece9e2';
+  taper(ctx, 2.4, -22.6, 12.2, -17.4, 3.6, 2.6);
+  dot(ctx, 12.2, -17.4, 1.3);
+  ctx.fillStyle = '#16120f';
+  taper(ctx, 12.2, -17.4, 7.2, -10.6, 2.4, 1.8);
+  taper(ctx, 7.2, -10.6, 9.8, -9.8, 1.8, 1.2);
+  ctx.fillStyle = '#b8864c';                  // boot top
+  taper(ctx, 11.8, -16.8, 11.1, -15.8, 2.6, 2.5);
+
+  // Torso in the runner's silks, back flat, backside up
   const torso = new Path2D();
-  torso.moveTo(-3, -16);
-  torso.bezierCurveTo(-1, -24, 8, -28, 15, -25);
-  torso.bezierCurveTo(18, -23.5, 17.5, -20, 13.5, -18.5);
-  torso.bezierCurveTo(7, -16.5, 1, -15.5, -3, -16);
+  torso.moveTo(0.4, -23.4);
+  torso.bezierCurveTo(1.4, -27.8, 8, -30.2, 15, -29.4);
+  torso.bezierCurveTo(17.6, -29, 18.4, -27, 17.2, -25.2);
+  torso.bezierCurveTo(14.6, -23, 9, -22, 4, -21.8);
+  torso.bezierCurveTo(2, -21.8, 0.7, -22.4, 0.4, -23.4);
   torso.closePath();
-
   ctx.fillStyle = silk;
   ctx.fill(torso);
-
-  // The runner's real silk pattern, clipped to the jockey's back so it
-  // matches the racecard, the leaderboard cap and the podium.
   ctx.save();
   ctx.clip(torso);
   ctx.fillStyle = silk2;
   if (pat === 'hooped') {
-    for (let i = -29; i < -14; i += 3.6) ctx.fillRect(-6, i, 28, 1.8);
+    for (let i = -31; i < -20; i += 2.6) ctx.fillRect(-2, i, 22, 1.25);
   } else if (pat === 'striped') {
-    for (let i = -3; i < 18; i += 4.5) ctx.fillRect(i, -30, 1.8, 18);
+    for (let i = 1; i < 18; i += 3.2) ctx.fillRect(i, -32, 1.2, 12);
   } else if (pat === 'halved') {
-    ctx.fillRect(6, -30, 16, 18);
+    ctx.fillRect(8.5, -32, 12, 12);
   } else if (pat === 'quartered') {
-    ctx.fillRect(6, -30, 16, 7);
-    ctx.fillRect(-6, -21, 12, 9);
+    ctx.fillRect(8.5, -32, 12, 5.6);
+    ctx.fillRect(-2, -26.4, 10.5, 6);
   } else if (pat === 'starred') {
-    ctx.font = '700 8px Georgia, serif';
+    ctx.font = '700 6px Georgia, serif';
     ctx.textAlign = 'center';
-    ctx.fillText('★', 7, -20);
+    ctx.fillText('★', 8.5, -23.8);
   }
+  // Silk sheen on top, shadow underneath
+  ctx.fillStyle = horseGrad('silkVol', () => {
+    const g = ctx.createLinearGradient(0, -30.5, 0, -21.6);
+    g.addColorStop(0,   'rgba(255,255,255,0.28)');
+    g.addColorStop(0.4, 'rgba(255,255,255,0)');
+    g.addColorStop(1,   'rgba(0,0,0,0.3)');
+    return g;
+  });
+  ctx.fillRect(-1, -31, 20, 10);
   ctx.restore();
 
-  // Bent leg in the short stirrup — the detail that makes the crouch
-  // read as a jockey rather than a jacket on a horse.
-  ctx.strokeStyle = '#efeadf';
-  ctx.lineWidth = 2.2;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(3, -17);
-  ctx.lineTo(1.5, -11.5);
-  ctx.lineTo(6.5, -9.5);
-  ctx.stroke();
-  ctx.fillStyle = '#15100a';
-  ctx.beginPath();
-  ctx.ellipse(7.8, -9.2, 2.5, 1.4, -0.15, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Arms reaching down the neck to the reins
-  ctx.strokeStyle = silk;
-  ctx.lineWidth = 2.1;
-  ctx.beginPath();
-  ctx.moveTo(12.5, -21);
-  ctx.quadraticCurveTo(19, -19, 24.5, -14.5);
-  ctx.stroke();
-
-  // Cap in the secondary silk colour, peak in the primary
+  // Arm down the neck to the reins, sleeve in the secondary colour
+  const elbowX = 18.6 + pump * 0.45, elbowY = -23.2;
   ctx.fillStyle = silk2;
-  ctx.beginPath();
-  ctx.arc(16, -27, 3.6, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = silk;
-  ctx.beginPath();
-  ctx.moveTo(17.6, -28.6);
-  ctx.lineTo(22, -27.2);
-  ctx.lineTo(17.8, -25.8);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.beginPath();
-  ctx.arc(14.8, -28.2, 1.1, 0, Math.PI * 2);
-  ctx.fill();
+  taper(ctx, 14.8, -27.2, elbowX, elbowY, 2.6, 2.2);
+  dot(ctx, elbowX, elbowY, 1.1);
+  taper(ctx, elbowX, elbowY, handX - 0.6, handY, 2.1, 1.6);
+  ctx.fillStyle = '#f2efe8';                  // glove
+  dot(ctx, handX, handY, 1.05);
 
-  // Goggles
-  if (detail) {
-    ctx.fillStyle = 'rgba(228,235,244,0.85)';
-    ctx.beginPath();
-    ctx.ellipse(19, -25.6, 1.5, 1.05, -0.25, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // ── Whip, raised through the final furlong ──────────────────
+  // Whip, through the final furlong, cocked and coming down with the stride
   if (inFinalStretch) {
-    const t = Math.min(1, (progressNow - 0.85) / 0.10);
-    const ang = -Math.PI / 2 + (1 - t) * 0.55;
-    const bx = 9, by = -24, len = 10;
-    ctx.strokeStyle = '#0e0a05';
-    ctx.lineWidth = 1.3;
+    const t = Math.min(1, (progressNow - 0.85) / 0.06);
+    const swing = Math.max(0, Math.sin(cyc * Math.PI * 2 + 1.2));
+    const ang = -Math.PI / 2 - 0.5 + (1 - t) * 0.7 + swing * 0.55;
+    ctx.strokeStyle = '#120d08';
+    ctx.lineWidth = 0.7;
     ctx.beginPath();
-    ctx.moveTo(bx, by);
-    ctx.lineTo(bx + Math.cos(ang) * len, by + Math.sin(ang) * len);
+    ctx.moveTo(handX, handY);
+    ctx.lineTo(handX + Math.cos(ang) * 11, handY + Math.sin(ang) * 11);
     ctx.stroke();
   }
 
+  // Head: helmet under a silk cap, peak forward, goggles, a sliver of
+  // face. Low between the shoulders, eyes up the track.
+  ctx.fillStyle = '#d9b08c';
+  dot(ctx, 21.4, -28.4, 1.15);
+  ctx.fillStyle = silk2;
+  ctx.beginPath();
+  ctx.arc(19.8, -30.6, 2.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = silk;
+  ctx.beginPath();
+  ctx.moveTo(21.4, -32.2);
+  ctx.lineTo(24.8, -31);
+  ctx.lineTo(21.8, -29.8);
+  ctx.closePath();
+  ctx.fill();
+  if (detail) {
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    dot(ctx, 18.8, -32, 0.9);
+    ctx.fillStyle = 'rgba(214,224,236,0.9)';   // goggles
+    ctx.beginPath();
+    ctx.ellipse(21.9, -29.6, 1.1, 0.7, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();   // end jockey
+
   ctx.restore();
 }
+
 // ─── Commentary ─────────────────────────────────────────────────
 function fireCommentary(progress) {
   (BAND.commentary || []).forEach((c) => {
