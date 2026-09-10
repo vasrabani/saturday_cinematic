@@ -267,7 +267,7 @@ function resize() {
     CAM.x *= WORLD.lengthPx / prevLengthPx;
   }
 
-  buildBackdropTiles();
+  scheduleTileRebuild();
   relayoutLanes();
 
   // A resize reallocates the canvas backing store, which clears it. The
@@ -312,6 +312,7 @@ const DIRECTOR = {
   reveal:    0,      // finish-card reveal 0 → 1
   runOut:    0,      // lengths run on past the post after the line
   pressFlash: 0,     // press flashguns firing at the post, 0 → 1
+  letterbox: 0,      // cinema bars, as a fraction of viewport height each
   phase:     'cruise',
 };
 
@@ -915,7 +916,7 @@ function buildMasterTimeline() {
   //    the camera keeps the principal group left of centre so there is
   //    track ahead of them rather than behind.
   tl.to(DIRECTOR, {
-    zoom: 1.05, anchorX: 0.50, groupBias: 0.12, vignette: 0.12,
+    zoom: 1.05, anchorX: 0.50, groupBias: 0.12, vignette: 0.12, letterbox: 0,
     shake: SHAKE * 0.2, camY: 0, fieldFade: 0,
     duration: durationS * 0.45, ease: 'sine.inOut',
   }, 'cruise');
@@ -923,7 +924,7 @@ function buildMasterTimeline() {
   // ── BUILD ── the camera starts taking a side. Framing tightens onto
   //    the front half of the field and the ground moves faster past it.
   tl.to(DIRECTOR, {
-    zoom: 1.20, anchorX: 0.46, groupBias: 0.45, vignette: 0.18,
+    zoom: 1.20, anchorX: 0.46, groupBias: 0.45, vignette: 0.18, letterbox: 0.03,
     shake: SHAKE * 0.6, camY: 4, fieldFade: 0.10,
     duration: durationS * 0.27, ease: 'sine.inOut',
   }, 'build');
@@ -931,7 +932,7 @@ function buildMasterTimeline() {
   // ── DRIVE ── down onto the principal group. Back markers recede, the
   //    camera drops and starts to breathe with the gallop.
   tl.to(DIRECTOR, {
-    zoom: 1.44, anchorX: 0.41, groupBias: 0.78, vignette: 0.26,
+    zoom: 1.44, anchorX: 0.41, groupBias: 0.78, vignette: 0.26, letterbox: 0.058,
     shake: SHAKE * 1.3, camY: 9, tilt: 0.004, fieldFade: 0.34,
     duration: durationS * 0.18, ease: 'power2.in',
   }, 'drive');
@@ -959,7 +960,7 @@ function addFinalFurlongSequence(tl, durationS) {
   const seg = durationS * (1 - RACE_PHASES[3].from);
 
   tl.to(DIRECTOR, {
-    zoom: 1.52, anchorX: 0.42, groupBias: 0.94, vignette: 0.34,
+    zoom: 1.52, anchorX: 0.42, groupBias: 0.94, vignette: 0.34, letterbox: 0.072,
     shake: SHAKE * 2.4, camY: 12, tilt: 0.009, fieldFade: 0.45,
     duration: seg * 0.75, ease: 'power2.in',
   }, 'line');
@@ -1098,25 +1099,53 @@ function visibleWorldRange(pad) {
   return { min: CAM.x - left - pad, max: CAM.x + right + pad };
 }
 // ════════════════════════════════════════════════════════════════
-//  PARALLAX — SEVEN DEPTH PLANES
+//  PARALLAX — DEPTH PLANES
 // ════════════════════════════════════════════════════════════════
 // The horses barely move on screen. What moves is the world, and the
 // difference in rate between these planes is what sells the speed.
 //
-//   0.00  sky + sun haze                     backdrop canvas
-//   0.06  distant downland                   backdrop canvas
-//   0.17  grandstand + crowd                 backdrop canvas
-//   0.34  treeline / hedge                   backdrop canvas
-//   0.68  far running rail + ad boards       race canvas
-//   1.00  the turf the race is run on        race canvas
-//   1.32  foreground grass, in front         race canvas
+//   0.00  sky + sun                           backdrop canvas
+//   0.03  high cloud (cirrus, streaks)        backdrop canvas
+//   0.045 distant downland                    backdrop canvas
+//   0.07  low cloud (cumulus)                 backdrop canvas
+//   0.17  grandstands, big screen, crowd      backdrop canvas
+//   0.34  treeline                            backdrop canvas
+//   0.68  rail crowd, hoardings, rail         race canvas
+//   1.00  the turf the race is run on         race canvas
+//   1.32  foreground grass, in front          race canvas
 //
-// The three repeating mid-planes are pre-painted into offscreen tiles
-// once per resize and blitted after that. Repainting a grandstand from
-// paths every frame is the kind of thing that quietly costs 4ms.
-const PARALLAX = { hills: 0.06, stand: 0.17, trees: 0.34, farRail: 0.68, fore: 1.32 };
+// The clouds also drift on the wind, independently of the camera, so the
+// sky keeps moving backwards past the field even in a held shot.
+//
+// Every repeating plane is pre-painted into an offscreen tile once per
+// resize and blitted after that. That is what makes it affordable to
+// paint a grandstand with twenty thousand spectators in it: the cost is
+// paid once, not sixty times a second.
+const PARALLAX = {
+  cloudsHigh: 0.03, hills: 0.045, cloudsLow: 0.07,
+  stand: 0.17, trees: 0.34, farRail: 0.68, fore: 1.32,
+};
 
-const TILES = { hills: null, stand: null, trees: null, turf: null, railCrowd: null };
+// How much of the camera's zoom each backdrop plane takes. An optical
+// zoom magnifies everything equally, but what this camera does is closer
+// to a dolly-in: pushing toward the track makes near planes grow much
+// faster than far ones. Scaling the whole backdrop by the full zoom
+// flattened the scene and, in the tight phases, pushed the grandstand
+// roof up over the entire sky.
+const PLANE_ZOOM = { cloudsHigh: 0.06, cloudsLow: 0.12, hills: 0.25, stand: 0.55, trees: 0.8 };
+
+// Wind, in screen px per ms at plane scale 1. The low cloud moves faster
+// than the high cloud, which is what gives the sky its own depth.
+const WIND = { cloudsHigh: 0.0045, cloudsLow: 0.011 };
+
+const TILES = {
+  cloudsHigh: null, cloudsLow: null, hills: null, stand: null, trees: null,
+  turf: null, railCrowd: null, boards: null, grain: null,
+};
+
+// Where the sun is on screen this frame. Written by drawBackdrop(), read
+// by drawAtmosphere() for the lens flare.
+const SUN = { x: 0, y: 0, visible: 0 };
 
 function makeTile(w, h, paint) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1129,153 +1158,640 @@ function makeTile(w, h, paint) {
   return { canvas: c, w: w, h: h };
 }
 
+// ── Painting helpers ─────────────────────────────────────────────
+function rnd(a, b) { return a + Math.random() * (b - a); }
+function pick(list) { return list[(Math.random() * list.length) | 0]; }
+function rgb(c, k) {
+  const f = k == null ? 1 : k;
+  return 'rgb(' + Math.min(255, c[0] * f | 0) + ',' +
+                  Math.min(255, c[1] * f | 0) + ',' +
+                  Math.min(255, c[2] * f | 0) + ')';
+}
+
+// Paint something that may straddle the tile's left or right edge twice,
+// once on each side, so the tile repeats without a visible seam.
+function wrapPaint(w, x, r, fn) {
+  fn(x);
+  if (x - r < 0) fn(x + w);
+  if (x + r > w) fn(x - w);
+}
+
+// Aerial perspective. Distance lifts and blues everything a little; a
+// grandstand three furlongs away is not as contrasty as the horse in
+// front of you, and that difference is half of what makes a scene read
+// as deep rather than as layered cut-outs. source-atop keeps it off the
+// transparent gaps in the tile.
+function hazeTile(g, w, h, rgba) {
+  g.save();
+  g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = rgba;
+  g.fillRect(0, 0, w, h);
+  g.restore();
+}
+
+// Depth of field for pre-painted planes. The far planes sit slightly
+// out of focus behind the pin-sharp field, exactly as they would on a
+// long lens. The blur is applied to a copy of the tile laid out three
+// wide, then the middle third is kept, so the edges blur INTO the next
+// repeat rather than into transparency — otherwise every tile join shows
+// as a faint vertical seam. ctx.filter is not universal (older Safari);
+// where it is missing the tile is used as painted.
+const CANVAS_FILTER_OK = (() => {
+  try {
+    const t = document.createElement('canvas').getContext('2d');
+    return typeof t.filter === 'string';
+  } catch (e) { return false; }
+})();
+
+function softenTile(tile, cssPx) {
+  if (!tile || !CANVAS_FILTER_OK || cssPx <= 0) return tile;
+  const W = tile.canvas.width, H = tile.canvas.height;
+  const k = W / tile.w;                       // device px per css px
+  const wide = document.createElement('canvas');
+  wide.width = W * 3; wide.height = H;
+  const wg = wide.getContext('2d');
+  wg.drawImage(tile.canvas, 0, 0);
+  wg.drawImage(tile.canvas, W, 0);
+  wg.drawImage(tile.canvas, W * 2, 0);
+  const out = document.createElement('canvas');
+  out.width = W; out.height = H;
+  const og = out.getContext('2d');
+  og.filter = 'blur(' + (cssPx * k).toFixed(2) + 'px)';
+  og.drawImage(wide, -W, 0);
+  return { canvas: out, w: tile.w, h: tile.h };
+}
+
+// ── Crowd ────────────────────────────────────────────────────────
+// At three furlongs a spectator is two or three pixels: a dark body, a
+// point of skin, sometimes a hat. The first pass drew them as neat
+// circles on neat ellipses in neat rows, which is exactly why the stand
+// read as a cartoon. A real crowd at distance is a textured mass: mostly
+// dark and neutral clothing, irregular spacing, empty seats showing
+// through, riser shadows under each row, and everything under the roof
+// sitting in deep shade.
+const CLOTHES = [
+  [24, 27, 34], [30, 34, 44], [40, 46, 60], [52, 58, 74], [62, 66, 72],
+  [88, 92, 100], [120, 124, 130], [160, 162, 166], [214, 214, 212],
+  [232, 228, 218], [186, 170, 142], [128, 104, 80], [84, 62, 46],
+  [140, 36, 40], [36, 62, 112], [196, 164, 64], [58, 94, 66], [150, 112, 142],
+];
+const SKINS = [[226, 188, 152], [206, 160, 124], [170, 122, 88], [118, 82, 56], [238, 206, 178]];
+const HAIR  = [[28, 22, 18], [52, 38, 26], [96, 72, 44], [150, 140, 130]];
+
+function paintCrowd(g, x0, y0, x1, y1, light, fill, rowH, seat) {
+  for (let y = y0; y + rowH <= y1 + 0.01; y += rowH) {
+    // The riser under each row — the single most important line for
+    // making a terrace read as stepped rather than as a flat wall.
+    g.fillStyle = 'rgba(0,0,0,' + (0.28 * light + 0.08).toFixed(3) + ')';
+    g.fillRect(x0, y + rowH - 0.55, x1 - x0, 0.55);
+
+    let x = x0 + Math.random() * 1.4;
+    while (x < x1) {
+      const pw = rnd(1.15, 1.75);
+      if (Math.random() < fill) {
+        const k = light * rnd(0.8, 1.12);
+        g.fillStyle = rgb(pick(CLOTHES), k);
+        g.fillRect(x, y + rowH * 0.36, pw, rowH * 0.64);
+        g.fillStyle = rgb(pick(SKINS), light * rnd(0.86, 1.05));
+        g.fillRect(x + pw * 0.2, y + rowH * 0.04, pw * 0.6, rowH * 0.34);
+        if (Math.random() < 0.38) {
+          g.fillStyle = rgb(pick(HAIR), light);
+          g.fillRect(x + pw * 0.14, y, pw * 0.72, rowH * 0.13);
+        }
+      } else if (seat) {
+        g.fillStyle = rgb(seat, light * 0.9);
+        g.fillRect(x, y + rowH * 0.42, pw, rowH * 0.5);
+      }
+      x += pw + rnd(0.2, 0.55);
+    }
+  }
+}
+
+// Aisles and stairways cut through the seating at regular intervals.
+function paintAisles(g, x0, y0, x1, y1, every, light) {
+  for (let x = x0 + every * 0.5; x < x1 - 4; x += every + rnd(-6, 6)) {
+    g.fillStyle = rgb([150, 150, 146], light * 0.75);
+    g.fillRect(x, y0, 2.6, y1 - y0);
+    g.fillStyle = 'rgba(0,0,0,0.22)';
+    for (let y = y0; y < y1; y += 2.6) g.fillRect(x, y + 2, 2.6, 0.5);
+  }
+}
+
+// ── Clouds ───────────────────────────────────────────────────────
+// A cumulus is dozens of overlapping billows sitting on a flat base,
+// lit from above: bright warm-white crowns, blue-grey bellies. Each
+// billow is a radial gradient whose hot spot is pushed toward the sun,
+// drawn bottom-up so the lit tops overlap the shaded undersides. That
+// is the whole trick — a flat white shape is what makes a cloud look
+// drawn rather than photographed.
+function paintCumulus(g, cx, baseY, W, H) {
+  const puffs = [];
+  const n = Math.round(12 + W / 11);
+  for (let i = 0; i < n; i++) {
+    const t = Math.random() * 2 - 1;
+    const dome = Math.sqrt(Math.max(0, 1 - t * t));
+    const r = H * rnd(0.2, 0.44) * (0.5 + 0.5 * dome);
+    puffs.push({
+      x: cx + t * W * 0.46,
+      y: baseY - r * 0.5 - dome * H * rnd(0.12, 0.62),
+      r: r,
+    });
+  }
+  puffs.sort((a, b) => b.y - a.y);
+
+  g.save();
+  // Cumulus sit on a condensation level: the base is flat.
+  g.beginPath();
+  g.rect(cx - W, baseY - H * 2, W * 2, H * 2 + H * 0.05);
+  g.clip();
+  for (const p of puffs) {
+    const lift = Math.max(0, Math.min(1, (baseY - p.y) / H));
+    const body = [172 + lift * 80, 182 + lift * 70, 200 + lift * 52];
+    const hx = p.x + p.r * 0.3, hy = p.y - p.r * 0.36;
+    const gr = g.createRadialGradient(hx, hy, p.r * 0.04, p.x, p.y, p.r);
+    gr.addColorStop(0,    'rgba(255,253,247,' + (0.7 + lift * 0.28).toFixed(3) + ')');
+    gr.addColorStop(0.42, 'rgba(' + (body[0] | 0) + ',' + (body[1] | 0) + ',' + (body[2] | 0) + ',0.8)');
+    gr.addColorStop(0.78, 'rgba(' + (body[0] | 0) + ',' + (body[1] | 0) + ',' + (body[2] | 0) + ',0.3)');
+    gr.addColorStop(1,    'rgba(' + (body[0] | 0) + ',' + (body[1] | 0) + ',' + (body[2] | 0) + ',0)');
+    g.fillStyle = gr;
+    g.beginPath();
+    g.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.restore();
+
+  // Shaded base
+  g.save();
+  g.globalCompositeOperation = 'source-atop';
+  const b = g.createLinearGradient(0, baseY - H * 0.32, 0, baseY + H * 0.05);
+  b.addColorStop(0, 'rgba(136,150,176,0)');
+  b.addColorStop(1, 'rgba(136,150,176,0.42)');
+  g.fillStyle = b;
+  g.fillRect(cx - W * 0.6, baseY - H * 0.32, W * 1.2, H * 0.4);
+  g.restore();
+}
+
+// High, thin cloud: stretched soft streaks rather than billows.
+function paintCirrus(g, cx, cy, W, H) {
+  const n = 6 + (Math.random() * 6 | 0);
+  for (let i = 0; i < n; i++) {
+    const x = cx + (Math.random() - 0.5) * W * 0.8;
+    const y = cy + (Math.random() - 0.5) * H * 0.6;
+    const rx = W * rnd(0.14, 0.32);
+    const ry = H * rnd(0.12, 0.26);
+    g.save();
+    g.translate(x, y);
+    g.rotate(rnd(-0.06, 0.06));
+    g.scale(1, ry / rx);
+    const gr = g.createRadialGradient(0, 0, 0, 0, 0, rx);
+    gr.addColorStop(0, 'rgba(252,251,248,' + rnd(0.28, 0.46).toFixed(3) + ')');
+    gr.addColorStop(1, 'rgba(236,242,250,0)');
+    g.fillStyle = gr;
+    g.beginPath();
+    g.arc(0, 0, rx, 0, Math.PI * 2);
+    g.fill();
+    g.restore();
+  }
+}
+
+// ── Grandstands ──────────────────────────────────────────────────
+// One wide tile holds a composed skyline rather than one stand repeated
+// every 540px, which was the other giveaway: a modern cantilevered main
+// stand with a glazed hospitality level, an older stand with a pitched
+// roof and white iron columns, and a big screen on legs. Gaps between
+// them let the downland and the sky show through.
+function paintMainStand(g, L, R, h) {
+  const W = R - L;
+  const fY0 = h * 0.10, fY1 = h * 0.16;     // roof fascia
+  const uY1 = h * 0.42;                      // upper tier ends
+  const gY1 = h * 0.53;                      // glazing ends
+  const sY1 = h * 0.555;                     // balcony slab
+  const lY1 = h * 0.89;                      // lower tier ends
+
+  // Flags along the roofline
+  const FLAGS = [[196, 40, 44], [240, 238, 232], [212, 175, 55], [32, 60, 112]];
+  for (let x = L + W * 0.08; x < R - 8; x += W / 6 + rnd(-8, 8)) {
+    g.fillStyle = 'rgba(210,214,220,0.9)';
+    g.fillRect(x, fY0 - h * 0.085, 0.7, h * 0.085);
+    g.fillStyle = rgb(pick(FLAGS), 0.95);
+    const fw = h * 0.05, fh = h * 0.032;
+    g.beginPath();
+    g.moveTo(x + 0.7, fY0 - h * 0.085);
+    g.quadraticCurveTo(x + fw * 0.5, fY0 - h * 0.085 - fh * 0.2, x + fw, fY0 - h * 0.08);
+    g.lineTo(x + fw, fY0 - h * 0.08 + fh);
+    g.quadraticCurveTo(x + fw * 0.5, fY0 - h * 0.085 + fh * 0.8, x + 0.7, fY0 - h * 0.085 + fh);
+    g.closePath();
+    g.fill();
+  }
+
+  // Under-roof void: the back wall and upper tier sit in deep shade.
+  const shade = g.createLinearGradient(0, fY1, 0, uY1);
+  shade.addColorStop(0, 'rgb(22,26,34)');
+  shade.addColorStop(1, 'rgb(40,46,56)');
+  g.fillStyle = shade;
+  g.fillRect(L, fY1, W, uY1 - fY1);
+  paintCrowd(g, L + 2, fY1 + h * 0.02, R - 2, uY1, 0.44, 0.9, 2.5, [34, 48, 70]);
+  paintAisles(g, L, fY1 + h * 0.02, R, uY1, 74, 0.45);
+  // The roof's shadow falls hardest on the rows right under it.
+  const roofShadow = g.createLinearGradient(0, fY1, 0, fY1 + (uY1 - fY1) * 0.55);
+  roofShadow.addColorStop(0, 'rgba(8,10,16,0.62)');
+  roofShadow.addColorStop(1, 'rgba(8,10,16,0)');
+  g.fillStyle = roofShadow;
+  g.fillRect(L, fY1, W, (uY1 - fY1) * 0.55);
+  // Roof trusses in the gloom
+  g.strokeStyle = 'rgba(160,170,184,0.10)';
+  g.lineWidth = 0.6;
+  for (let x = L; x < R; x += 16) {
+    g.beginPath();
+    g.moveTo(x, fY1);
+    g.lineTo(x + 8, fY1 + h * 0.035);
+    g.lineTo(x + 16, fY1);
+    g.stroke();
+  }
+
+  // Roof fascia, sunlit, with a hard highlight on the leading edge
+  const fascia = g.createLinearGradient(0, fY0, 0, fY1);
+  fascia.addColorStop(0, 'rgb(236,238,236)');
+  fascia.addColorStop(1, 'rgb(188,194,200)');
+  g.fillStyle = fascia;
+  g.fillRect(L - 3, fY0, W + 6, fY1 - fY0);
+  g.fillStyle = 'rgba(255,255,255,0.9)';
+  g.fillRect(L - 3, fY0, W + 6, 0.8);
+  g.fillStyle = 'rgba(0,0,0,0.35)';
+  g.fillRect(L - 3, fY1, W + 6, 1);
+
+  // Glazed hospitality level: dark glass, a sky reflection across the
+  // top, and warm light in some of the boxes.
+  const glass = g.createLinearGradient(0, uY1, 0, gY1);
+  glass.addColorStop(0,    'rgb(96,120,146)');
+  glass.addColorStop(0.35, 'rgb(52,66,84)');
+  glass.addColorStop(1,    'rgb(24,30,40)');
+  g.fillStyle = glass;
+  g.fillRect(L, uY1, W, gY1 - uY1);
+  for (let x = L + 2; x < R - 10; x += 13) {
+    if (Math.random() < 0.34) {
+      g.fillStyle = 'rgba(255,206,146,' + rnd(0.22, 0.5).toFixed(3) + ')';
+      g.fillRect(x + 1, uY1 + (gY1 - uY1) * 0.38, 11, (gY1 - uY1) * 0.5);
+      // Someone at the window
+      if (Math.random() < 0.5) {
+        g.fillStyle = 'rgba(18,16,16,0.55)';
+        g.fillRect(x + rnd(3, 8), uY1 + (gY1 - uY1) * 0.5, 1.3, (gY1 - uY1) * 0.38);
+      }
+    }
+    g.fillStyle = 'rgba(14,18,24,0.8)';
+    g.fillRect(x, uY1, 0.8, gY1 - uY1);
+  }
+
+  // Balcony slab and its shadow on the lower tier
+  g.fillStyle = 'rgb(214,212,204)';
+  g.fillRect(L - 2, gY1, W + 4, sY1 - gY1);
+  const slabShadow = g.createLinearGradient(0, sY1, 0, sY1 + h * 0.08);
+  slabShadow.addColorStop(0, 'rgba(0,0,0,0.38)');
+  slabShadow.addColorStop(1, 'rgba(0,0,0,0)');
+
+  // Lower tier, in the sun
+  g.fillStyle = 'rgb(58,64,70)';
+  g.fillRect(L, sY1, W, lY1 - sY1);
+  paintCrowd(g, L + 2, sY1 + 0.5, R - 2, lY1, 0.98, 0.84, 2.9, [30, 92, 84]);
+  paintAisles(g, L, sY1, R, lY1, 74, 0.95);
+  g.fillStyle = slabShadow;
+  g.fillRect(L, sY1, W, h * 0.08);
+
+  // Steel columns, lit on the sun side
+  for (let x = L + W / 7; x < R - 6; x += W / 7) {
+    g.fillStyle = 'rgb(38,44,54)';
+    g.fillRect(x, fY1, 2.4, gY1 - fY1);
+    g.fillStyle = 'rgba(220,226,232,0.5)';
+    g.fillRect(x + 1.7, fY1, 0.7, gY1 - fY1);
+  }
+
+  // Front wall
+  const wall = g.createLinearGradient(0, lY1, 0, h);
+  wall.addColorStop(0, 'rgb(232,228,216)');
+  wall.addColorStop(1, 'rgb(196,190,176)');
+  g.fillStyle = wall;
+  g.fillRect(L - 2, lY1, W + 4, h - lY1);
+  g.fillStyle = 'rgba(0,0,0,0.3)';
+  g.fillRect(L - 2, lY1, W + 4, 0.8);
+}
+
+function paintOldStand(g, L, R, h) {
+  const W = R - L;
+  const rY0 = h * 0.36, rY1 = h * 0.45, lY1 = h * 0.89;
+
+  // Pitched roof seen from the front: slate band with gables at the ends
+  const slate = g.createLinearGradient(0, rY0, 0, rY1);
+  slate.addColorStop(0, 'rgb(74,78,86)');
+  slate.addColorStop(1, 'rgb(44,48,56)');
+  g.fillStyle = slate;
+  g.beginPath();
+  g.moveTo(L - 4, rY1);
+  g.lineTo(L + W * 0.04, rY0);
+  g.lineTo(R - W * 0.04, rY0);
+  g.lineTo(R + 4, rY1);
+  g.closePath();
+  g.fill();
+  // Gable pediment at the centre, with a clock
+  const cx = (L + R) / 2;
+  g.fillStyle = 'rgb(226,222,210)';
+  g.beginPath();
+  g.moveTo(cx - W * 0.1, rY0 + 1);
+  g.lineTo(cx, rY0 - h * 0.1);
+  g.lineTo(cx + W * 0.1, rY0 + 1);
+  g.closePath();
+  g.fill();
+  g.fillStyle = 'rgb(30,32,36)';
+  g.beginPath();
+  g.arc(cx, rY0 - h * 0.035, h * 0.024, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = 'rgb(236,232,220)';
+  g.beginPath();
+  g.arc(cx, rY0 - h * 0.035, h * 0.018, 0, Math.PI * 2);
+  g.fill();
+  // Lit gutter line
+  g.fillStyle = 'rgba(236,236,230,0.85)';
+  g.fillRect(L - 4, rY1, W + 8, 1.2);
+
+  // Seating under the roof, shaded near the top
+  g.fillStyle = 'rgb(46,50,56)';
+  g.fillRect(L, rY1 + 1, W, lY1 - rY1 - 1);
+  paintCrowd(g, L + 2, rY1 + 2, R - 2, lY1, 0.7, 0.78, 2.8, [96, 34, 40]);
+  const under = g.createLinearGradient(0, rY1, 0, rY1 + (lY1 - rY1) * 0.5);
+  under.addColorStop(0, 'rgba(6,8,12,0.55)');
+  under.addColorStop(1, 'rgba(6,8,12,0)');
+  g.fillStyle = under;
+  g.fillRect(L, rY1, W, (lY1 - rY1) * 0.5);
+
+  // White cast-iron columns — the signature of a Victorian stand
+  for (let x = L + 6; x < R - 4; x += W / 9) {
+    g.fillStyle = 'rgb(236,234,228)';
+    g.fillRect(x, rY1 + 1, 1.3, lY1 - rY1);
+    g.fillStyle = 'rgba(0,0,0,0.25)';
+    g.fillRect(x + 1.3, rY1 + 1, 0.6, lY1 - rY1);
+  }
+
+  const wall = g.createLinearGradient(0, lY1, 0, h);
+  wall.addColorStop(0, 'rgb(224,218,204)');
+  wall.addColorStop(1, 'rgb(188,180,164)');
+  g.fillStyle = wall;
+  g.fillRect(L - 2, lY1, W + 4, h - lY1);
+}
+
+function paintBigScreen(g, L, R, h) {
+  const W = R - L;
+  const top = h * 0.2, bot = h * 0.56;
+  // Legs
+  g.fillStyle = 'rgb(34,38,46)';
+  g.fillRect(L + W * 0.2, bot, 2.2, h - bot);
+  g.fillRect(R - W * 0.2 - 2.2, bot, 2.2, h - bot);
+  // Frame + panel showing the race, as every course's big screen does
+  g.fillStyle = 'rgb(16,18,22)';
+  g.fillRect(L, top, W, bot - top);
+  const img = g.createLinearGradient(0, top + 2, 0, bot - 2);
+  img.addColorStop(0,    'rgb(104,150,196)');
+  img.addColorStop(0.42, 'rgb(150,174,188)');
+  img.addColorStop(0.46, 'rgb(46,92,62)');
+  img.addColorStop(1,    'rgb(30,70,46)');
+  g.fillStyle = img;
+  g.fillRect(L + 2, top + 2, W - 4, bot - top - 4);
+  // A couple of tiny runners on screen
+  g.fillStyle = 'rgba(40,24,14,0.8)';
+  g.fillRect(L + W * 0.42, top + (bot - top) * 0.6, W * 0.1, 1.4);
+  g.fillRect(L + W * 0.56, top + (bot - top) * 0.64, W * 0.1, 1.4);
+  // Screen glare
+  g.fillStyle = 'rgba(255,255,255,0.08)';
+  g.fillRect(L + 2, top + 2, W - 4, (bot - top) * 0.25);
+}
+
+// ── Trees ────────────────────────────────────────────────────────
+// Built from leaf clusters rather than single ellipses: forty-odd small
+// clumps per crown, each shaded by where it sits relative to the light,
+// so the crown has a lit upper-right shoulder and a dark underside. A
+// few tall narrow poplars break up the line.
+const LEAF = [[26, 44, 32], [34, 56, 38], [44, 70, 46], [58, 86, 56], [74, 102, 64], [94, 122, 74]];
+
+function paintTree(g, cx, groundY, hT, cw, tall) {
+  const crownCY = groundY - hT * 0.56;
+  const rx = cw / 2, ry = hT * 0.46;
+  // Trunk
+  g.fillStyle = 'rgb(44,36,28)';
+  g.fillRect(cx - 0.6, groundY - hT * 0.3, 1.2, hT * 0.3);
+  const n = tall ? 34 : 46;
+  const clumps = [];
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = Math.sqrt(Math.random());
+    const dx = Math.cos(a) * d, dy = Math.sin(a) * d;
+    const light = 0.5 + 0.34 * (dx * 0.6 - dy * 0.8) + rnd(-0.12, 0.12);
+    clumps.push({ x: cx + dx * rx, y: crownCY + dy * ry, r: cw * rnd(0.08, 0.17), l: light });
+  }
+  clumps.sort((a, b) => a.l - b.l);
+  for (const c of clumps) {
+    const idx = Math.max(0, Math.min(LEAF.length - 1, Math.round(c.l * (LEAF.length - 1))));
+    g.fillStyle = rgb(LEAF[idx]);
+    g.beginPath();
+    g.ellipse(c.x, c.y, c.r, c.r * 0.86, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+}
+
 function buildBackdropTiles() {
   const hillH  = Math.max(60,  viewH * 0.14);
-  const standH = Math.max(80,  viewH * 0.20);
+  const standH = Math.max(80,  viewH * 0.17);
   const treeH  = Math.max(30,  viewH * 0.058);
+  const cloudK = Math.max(0.55, Math.min(1.1, viewW / 1440));
 
-  // ── Distant downland ──
-  TILES.hills = makeTile(760, hillH, (g, w, h) => {
-    g.fillStyle = 'rgba(122,150,172,0.55)';
+  // ── High cloud ──
+  const hiH = Math.round(Math.max(90, viewH * 0.22));
+  TILES.cloudsHigh = softenTile(makeTile(1900, hiH, (g, w, h) => {
+    const n = 6;
+    for (let i = 0; i < n; i++) {
+      const W = rnd(220, 420) * cloudK;
+      const cx = (i + 0.5) * (w / n) + rnd(-40, 40);
+      paintCirrus(g, Math.max(W / 2, Math.min(w - W / 2, cx)), h * rnd(0.25, 0.7), W, h * 0.3);
+    }
+  }), 2.2);
+
+  // ── Low cloud ──
+  const loH = Math.round(Math.max(120, viewH * 0.28));
+  TILES.cloudsLow = softenTile(makeTile(1600, loH, (g, w, h) => {
+    const n = 5;
+    for (let i = 0; i < n; i++) {
+      const W = rnd(150, 320) * cloudK;
+      const H = W * rnd(0.34, 0.5);
+      const slot = w / n;
+      const cx = Math.max(W * 0.55, Math.min(w - W * 0.55, (i + 0.5) * slot + rnd(-slot * 0.2, slot * 0.2)));
+      paintCumulus(g, cx, h * rnd(0.74, 0.92), W, Math.min(H, h * 0.7));
+    }
+  }), 1.1);
+
+  // ── Distant downland: two ridges, the far one lost in haze ──
+  // Integer frequencies across the tile width, so the ridges wrap.
+  TILES.hills = softenTile(makeTile(1400, hillH, (g, w, h) => {
+    const ridge = (base, amp, f1, f2, ph, top, bottom) => {
+      const gr = g.createLinearGradient(0, h * 0.15, 0, h);
+      gr.addColorStop(0, top);
+      gr.addColorStop(1, bottom);
+      g.fillStyle = gr;
+      g.beginPath();
+      g.moveTo(0, h);
+      for (let x = 0; x <= w; x += 6) {
+        const u = (x / w) * Math.PI * 2;
+        g.lineTo(x, h * (base + amp * Math.sin(u * f1 + ph) + amp * 0.45 * Math.sin(u * f2 + ph * 1.7)));
+      }
+      g.lineTo(w, h);
+      g.closePath();
+      g.fill();
+    };
+    ridge(0.40, 0.14, 2, 5, 0.6, 'rgba(150,172,192,0.72)', 'rgba(130,152,170,0.78)');
+    ridge(0.60, 0.10, 3, 7, 2.1, 'rgba(98,126,120,0.86)', 'rgba(80,106,98,0.9)');
+    // Woodland texture on the near ridge
+    for (let i = 0; i < 700; i++) {
+      const x = Math.random() * w, y = h * rnd(0.62, 1);
+      g.fillStyle = 'rgba(40,62,50,' + rnd(0.15, 0.35).toFixed(3) + ')';
+      g.fillRect(x, y, rnd(1, 3), rnd(0.8, 1.6));
+    }
+  }), 1.2);
+
+  // ── Grandstands ──
+  TILES.stand = softenTile(makeTile(1500, standH, (g, w, h) => {
+    paintMainStand(g, w * 0.055, w * 0.60, h);
+    paintOldStand(g, w * 0.64, w * 0.895, h);
+    paintBigScreen(g, w * 0.925, w * 0.985, h);
+    hazeTile(g, w, h, 'rgba(176,196,214,0.13)');
+  }), 0.5);
+
+  // ── Treeline ──
+  TILES.trees = softenTile(makeTile(1100, treeH, (g, w, h) => {
+    // Hedge along the bottom, with a broken top edge
+    g.fillStyle = 'rgb(30,52,36)';
     g.beginPath();
     g.moveTo(0, h);
-    g.lineTo(0, h * 0.55);
-    for (let x = 0; x <= w; x += 40) {
-      g.lineTo(x, h * (0.42 + 0.20 * Math.sin(x * 0.0091) + 0.08 * Math.sin(x * 0.031)));
-    }
+    for (let x = 0; x <= w; x += 4) g.lineTo(x, h * 0.7 + Math.sin(x * 0.37) * 1.2 + rnd(-0.8, 0.8));
     g.lineTo(w, h);
     g.closePath();
     g.fill();
-  });
-
-  // ── Grandstand + crowd ──
-  // The crowd is the thing that makes a racecourse look like a
-  // racecourse. V1 scattered 340 grey 2px dots and it read as noise on
-  // a wall. Here they sit in rows on a raked terrace, each a head and a
-  // pair of shoulders, densest at the rail and thinning toward the back
-  // — which is both how a stand fills up and what makes it read as
-  // people rather than texture.
-  TILES.stand = makeTile(540, standH, (g, w, h) => {
-    const roofY = h * 0.13;
-    const deckY = h * 0.36;
-
-    // Roof, with a lit leading edge
-    g.fillStyle = 'rgba(64,80,104,0.96)';
-    g.beginPath();
-    g.moveTo(4, roofY + 14);
-    g.lineTo(w * 0.5, roofY - 8);
-    g.lineTo(w - 4, roofY + 14);
-    g.lineTo(w - 4, roofY + 26);
-    g.lineTo(4, roofY + 26);
-    g.closePath();
-    g.fill();
-    g.fillStyle = 'rgba(248,244,232,0.34)';
-    g.fillRect(4, roofY + 24, w - 8, 2.5);
-
-    // Terrace, shaded under the roof and lighter toward the front
-    const terrace = g.createLinearGradient(0, roofY + 26, 0, h);
-    terrace.addColorStop(0, 'rgba(38,48,66,0.98)');
-    terrace.addColorStop(1, 'rgba(78,92,114,0.98)');
-    g.fillStyle = terrace;
-    g.fillRect(4, roofY + 26, w - 8, h - roofY - 26);
-
-    // Step lines, so the rake reads
-    g.strokeStyle = 'rgba(16,22,34,0.30)';
-    g.lineWidth = 1;
-    const rows = 9;
-    for (let r = 0; r < rows; r++) {
-      const ry = deckY + (h - deckY - 4) * (r / rows);
-      g.beginPath();
-      g.moveTo(6, ry);
-      g.lineTo(w - 6, ry);
-      g.stroke();
+    let x = 0;
+    while (x < w) {
+      const tall = Math.random() < 0.12;
+      const hT = h * (tall ? rnd(0.92, 1.0) : rnd(0.5, 0.88));
+      const cw = tall ? h * rnd(0.22, 0.3) : h * rnd(0.45, 0.95);
+      wrapPaint(w, x, cw, (px) => paintTree(g, px, h, hT, cw, tall));
+      x += cw * rnd(0.5, 0.9);
     }
-
-    // The crowd itself
-    const SKIN = ['#d8ae86', '#b9855c', '#8a5c3a', '#e8c8a6', '#6b4526'];
-    const TOPS = ['#c8d2e0', '#8f9bb0', '#5f6b80', '#a8b6c8', '#d6dae2',
-                  '#7b6355', '#9c8570', '#b34b3f', '#3f5f7a', '#d4af37'];
-    for (let r = 0; r < rows; r++) {
-      const ry   = deckY + (h - deckY - 6) * (r / rows) + 3;
-      // Front rows are nearer, so bigger, and packed tighter.
-      const size = 2.9 - (r / rows) * 1.1;
-      const step = size * 2.5;
-      // Back rows thin out; a stand is never uniformly full.
-      const fill = 0.94 - (r / rows) * 0.34;
-      for (let cx = 8; cx < w - 8; cx += step) {
-        if (Math.random() > fill) continue;
-        const jx = cx + (Math.random() - 0.5) * size;
-        const jy = ry + (Math.random() - 0.5) * 1.4;
-        // Shoulders
-        g.fillStyle = TOPS[(Math.random() * TOPS.length) | 0];
-        g.beginPath();
-        g.ellipse(jx, jy + size * 0.95, size * 0.95, size * 0.8, 0, Math.PI, 0);
-        g.fill();
-        // Head
-        g.fillStyle = SKIN[(Math.random() * SKIN.length) | 0];
-        g.beginPath();
-        g.arc(jx, jy, size * 0.55, 0, Math.PI * 2);
-        g.fill();
-      }
+    for (let i = 0; i < 900; i++) {
+      g.fillStyle = Math.random() < 0.5 ? 'rgba(10,20,12,0.22)' : 'rgba(120,150,96,0.14)';
+      g.fillRect(Math.random() * w, h * rnd(0.72, 1), 1, 1);
     }
-
-    // Roof supports, drawn over the crowd so they sit in front
-    g.fillStyle = 'rgba(26,34,50,0.5)';
-    for (let x = 46; x < w - 24; x += 104) g.fillRect(x, roofY + 26, 3.5, h - roofY - 26);
-  });
-
-  // ── Treeline / hedge ──
-  TILES.trees = makeTile(430, treeH, (g, w, h) => {
-    g.fillStyle = 'rgba(48,84,58,0.95)';
-    for (let i = 0; i < 16; i++) {
-      const cx = (i / 16) * w + (i % 3) * 9;
-      const r  = h * (0.34 + ((i * 37) % 11) / 24);
-      g.beginPath();
-      g.ellipse(cx, h - r * 0.35, r * 0.9, r, 0, 0, Math.PI * 2);
-      g.fill();
-    }
-    g.fillStyle = 'rgba(34,64,44,1)';
-    g.fillRect(0, h - h * 0.28, w, h * 0.28);
-  });
+    hazeTile(g, w, h, 'rgba(160,184,200,0.1)');
+  }), 0.35);
 
   // ── Rail-side spectators ──
-  // People standing AT the rail, in among the running rail posts. The
-  // grandstand alone reads as scenery on the horizon; this is the row
-  // that puts a crowd close enough to the action to matter, and it
-  // scrolls at the far-rail rate rather than the horizon rate.
-  TILES.railCrowd = makeTile(300, 34, (g, w, h) => {
-    const SKIN = ['#d8ae86', '#b9855c', '#8a5c3a', '#e8c8a6'];
-    const COATS = ['#2f3d52', '#4a5568', '#6b3f36', '#8a9099', '#243244',
-                   '#7a6a52', '#a8452f', '#d4af37', '#c8cdd6'];
-    const n = 26;
-    for (let i = 0; i < n; i++) {
-      const cx = 6 + (i / n) * (w - 12) + (Math.random() - 0.5) * 6;
-      const base = h - 2 - Math.random() * 1.5;
-      const tall = 13 + Math.random() * 4;
-      // Body
-      g.fillStyle = COATS[(Math.random() * COATS.length) | 0];
+  // Two rows standing at the rail, the back row a touch smaller and
+  // further into shade. Hats, race cards, binoculars and the odd raised
+  // arm: small things, but a rail crowd of identical figures is what
+  // reads as clip art.
+  TILES.railCrowd = softenTile(makeTile(720, 38, (g, w, h) => {
+    const person = (x, base, s, light) => {
+      const tall = rnd(14, 18) * s;
+      const sh = base - tall * 0.62;
+      const bw = rnd(4.6, 5.6) * s;
+      const coat = pick(CLOTHES);
+      g.fillStyle = rgb(coat, light);
       g.beginPath();
-      g.moveTo(cx - 2.4, base);
-      g.lineTo(cx - 1.9, base - tall * 0.62);
-      g.lineTo(cx + 1.9, base - tall * 0.62);
-      g.lineTo(cx + 2.4, base);
+      g.moveTo(x - bw * 0.46, base);
+      g.lineTo(x - bw * 0.5, sh + 1.2 * s);
+      g.quadraticCurveTo(x - bw * 0.5, sh, x - bw * 0.2, sh);
+      g.lineTo(x + bw * 0.2, sh);
+      g.quadraticCurveTo(x + bw * 0.5, sh, x + bw * 0.5, sh + 1.2 * s);
+      g.lineTo(x + bw * 0.46, base);
       g.closePath();
       g.fill();
+      // Shade on the side away from the sun
+      g.fillStyle = 'rgba(0,0,0,0.2)';
+      g.fillRect(x - bw * 0.5, sh + 1, bw * 0.3, base - sh - 1);
       // Head
-      g.fillStyle = SKIN[(Math.random() * SKIN.length) | 0];
+      const hr = 1.75 * s;
+      const hy = sh - hr * 1.05;
+      g.fillStyle = rgb(pick(SKINS), light);
       g.beginPath();
-      g.arc(cx, base - tall * 0.62 - 2.1, 2.0, 0, Math.PI * 2);
+      g.ellipse(x, hy, hr * 0.9, hr, 0, 0, Math.PI * 2);
       g.fill();
-      // A few have an arm up
-      if (Math.random() < 0.18) {
-        g.strokeStyle = g.fillStyle;
-        g.lineWidth = 1.1;
+      const r = Math.random();
+      if (r < 0.2) {                                   // trilby / flat cap
+        g.fillStyle = rgb(pick([[40, 36, 32], [70, 60, 48], [120, 104, 80]]), light);
+        g.fillRect(x - hr * 1.25, hy - hr * 0.55, hr * 2.5, hr * 0.35);
+        g.fillRect(x - hr * 0.85, hy - hr * 1.15, hr * 1.7, hr * 0.65);
+      } else if (r < 0.27) {                           // fascinator
+        g.fillStyle = rgb(pick([[196, 40, 60], [212, 175, 55], [60, 90, 170], [240, 240, 236]]), light);
         g.beginPath();
-        g.moveTo(cx + 1.6, base - tall * 0.55);
-        g.lineTo(cx + 3.4, base - tall * 0.9);
-        g.stroke();
+        g.ellipse(x + hr * 0.5, hy - hr * 0.8, hr * 0.8, hr * 0.45, -0.4, 0, Math.PI * 2);
+        g.fill();
+      } else {                                         // hair
+        g.fillStyle = rgb(pick(HAIR), light);
+        g.beginPath();
+        g.ellipse(x, hy - hr * 0.35, hr * 0.92, hr * 0.7, 0, Math.PI, 0);
+        g.fill();
       }
+      const p = Math.random();
+      if (p < 0.14) {                                  // arm up, cheering
+        g.strokeStyle = rgb(coat, light);
+        g.lineWidth = 1.2 * s;
+        g.lineCap = 'round';
+        g.beginPath();
+        g.moveTo(x + bw * 0.4, sh + 1);
+        g.lineTo(x + bw * 0.75, sh - tall * 0.3);
+        g.stroke();
+      } else if (p < 0.24) {                           // binoculars
+        g.fillStyle = 'rgb(20,20,22)';
+        g.fillRect(x - hr * 0.9, hy - hr * 0.2, hr * 1.8, hr * 0.7);
+      } else if (p < 0.36) {                           // race card
+        g.fillStyle = 'rgba(244,242,236,0.95)';
+        g.fillRect(x + bw * 0.1, sh + tall * 0.15, 1.8 * s, 2.4 * s);
+      }
+    };
+    for (let x = 4; x < w; x += rnd(4.4, 6.2)) person(x, h - 8, 0.8, 0.8);
+    for (let x = 2; x < w; x += rnd(5.2, 7.2)) person(x, h - 1, 1.0, 1.0);
+    hazeTile(g, w, h, 'rgba(176,196,214,0.06)');
+  }), 0.25);
+
+  // ── Advertising hoardings along the far rail ──
+  TILES.boards = makeTile(1024, 13, (g, w, h) => {
+    const SCHEMES = [
+      { bg: [18, 54, 38], fg: [236, 230, 210], ac: [212, 175, 55] },
+      { bg: [22, 30, 60], fg: [242, 242, 242], ac: [206, 60, 60] },
+      { bg: [236, 232, 222], fg: [30, 34, 44], ac: [40, 96, 64] },
+      { bg: [98, 24, 34], fg: [246, 236, 214], ac: [212, 175, 55] },
+      { bg: [14, 16, 20], fg: [232, 232, 232], ac: [120, 172, 222] },
+    ];
+    let x = 0;
+    while (x < w) {
+      const pw = Math.min(w - x, rnd(90, 200));
+      const s = pick(SCHEMES);
+      g.fillStyle = rgb(s.bg);
+      g.fillRect(x, 0, pw, h);
+      // Faux wordmark and an accent mark
+      g.fillStyle = rgb(s.fg);
+      let tx = x + pw * rnd(0.18, 0.3);
+      const words = 1 + (Math.random() * 2 | 0);
+      for (let i = 0; i < words; i++) {
+        const ww = pw * rnd(0.12, 0.26);
+        g.fillRect(tx, h * 0.38, ww, h * 0.26);
+        tx += ww + pw * 0.05;
+      }
+      g.fillStyle = rgb(s.ac);
+      g.beginPath();
+      g.arc(x + pw * 0.1, h * 0.5, h * 0.2, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.28)';
+      g.fillRect(x, 0, pw, 0.6);
+      g.fillStyle = 'rgba(0,0,0,0.35)';
+      g.fillRect(x, h - 1, pw, 1);
+      g.fillStyle = 'rgba(0,0,0,0.5)';
+      g.fillRect(x, 0, 0.6, h);
+      x += pw;
     }
+    hazeTile(g, w, h, 'rgba(176,196,214,0.1)');
   });
 
   // ── Turf tile for the track plane ──
@@ -1286,33 +1802,106 @@ function buildBackdropTiles() {
   TILES.turf = makeTile(turfW, turfH, (g, w, h) => {
     g.fillStyle = COL.trackTurf || '#2d5e3a';
     g.fillRect(0, 0, w, h);
-    // Mower stripes, alternating light and dark down the straight.
     g.fillStyle = 'rgba(255,255,255,0.055)';
     g.fillRect(0, 0, w / 2, h);
-    // Grain
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < 520; i++) {
       g.fillStyle = Math.random() > 0.5
-        ? 'rgba(226,244,206,0.05)' : 'rgba(0,0,0,0.05)';
-      g.fillRect(Math.random() * w, Math.random() * h, 2 + Math.random() * 6, 1.5);
+        ? 'rgba(226,244,206,0.045)' : 'rgba(0,0,0,0.055)';
+      g.fillRect(Math.random() * w, Math.random() * h, rnd(1, 5), rnd(0.8, 1.6));
     }
   });
 }
 
-// Tiles are laid out in SCREEN space, scaled by the camera zoom so a
-// backdrop plane magnifies with everything else, and offset by
-// CAM.x × factor × zoom so its scroll rate stays in proportion to the
-// turf no matter how tight the framing gets.
-function drawTiled(c, tile, bottomY, factor, alpha) {
+// Rebuilding the tiles paints tens of thousands of spectators, which is
+// fine once but not on every event of a window drag. Debounced: the old
+// tiles keep drawing (slightly mis-sized) until the drag settles.
+let _tileRebuildTimer = null;
+function scheduleTileRebuild() {
+  if (!TILES.stand) { buildBackdropTiles(); return; }
+  clearTimeout(_tileRebuildTimer);
+  _tileRebuildTimer = setTimeout(() => {
+    buildBackdropTiles();
+    if (raceRunning) renderFrame();
+    else ambientPainted = false;
+  }, 180);
+}
+
+function planeScale(key) {
+  return 1 + (CAM.zoom - 1) * (PLANE_ZOOM[key] != null ? PLANE_ZOOM[key] : 1);
+}
+
+// Tiles are laid out in SCREEN space, scaled by the plane's share of the
+// camera zoom, and offset by CAM.x × factor × scale so each plane's
+// scroll rate stays in proportion to the turf. `extra` is any motion the
+// plane has of its own — the wind, for clouds.
+function drawTiled(c, tile, bottomY, factor, alpha, key, extra) {
   if (!tile) return;
-  const s = CAM.zoom;
+  const s = planeScale(key);
   const w = tile.w * s;
   const h = tile.h * s;
-  const offsetPx = CAM.x * factor * s;
+  const offsetPx = CAM.x * factor * s + (extra || 0);
   c.save();
   c.globalAlpha = alpha;
   let x = -(((offsetPx % w) + w) % w);
   for (; x < viewW + w; x += w) c.drawImage(tile.canvas, x, bottomY - h, w, h);
   c.restore();
+}
+
+// ── Sky ──────────────────────────────────────────────────────────
+function paintSky(c, skyBottom, warm) {
+  const sky = c.createLinearGradient(0, 0, 0, skyBottom);
+  sky.addColorStop(0,    '#35699e');
+  sky.addColorStop(0.34, '#5b93c8');
+  sky.addColorStop(0.66, '#98bedc');
+  sky.addColorStop(0.88, '#d0dad8');
+  sky.addColorStop(1,    '#e6d6b6');
+  c.fillStyle = sky;
+  c.fillRect(0, 0, viewW, skyBottom + 2);
+
+  // Afternoon light pooling on the sun side of the sky
+  const haze = c.createRadialGradient(SUN.x, SUN.y, 0, SUN.x, SUN.y, viewW * 0.55);
+  haze.addColorStop(0, 'rgba(255,236,196,' + (0.36 + warm * 0.14).toFixed(3) + ')');
+  haze.addColorStop(1, 'rgba(255,230,180,0)');
+  c.fillStyle = haze;
+  c.fillRect(0, 0, viewW, skyBottom + 2);
+}
+
+function paintSunDisc(c) {
+  const r = Math.max(6, viewH * 0.016);
+  const g = c.createRadialGradient(SUN.x, SUN.y, 0, SUN.x, SUN.y, r * 5);
+  g.addColorStop(0,    'rgba(255,253,244,1)');
+  g.addColorStop(0.2,  'rgba(255,248,226,0.95)');
+  g.addColorStop(0.45, 'rgba(255,236,196,0.35)');
+  g.addColorStop(1,    'rgba(255,230,180,0)');
+  c.fillStyle = g;
+  c.beginPath();
+  c.arc(SUN.x, SUN.y, r * 5, 0, Math.PI * 2);
+  c.fill();
+}
+
+// Drawn AFTER the clouds with a screen blend, so a cloud passing the sun
+// picks up a bright rim rather than simply blotting it out.
+function paintSunGlow(c) {
+  c.save();
+  c.globalCompositeOperation = 'screen';
+  const g = c.createRadialGradient(SUN.x, SUN.y, 0, SUN.x, SUN.y, viewW * 0.26);
+  g.addColorStop(0, 'rgba(255,238,204,0.42)');
+  g.addColorStop(1, 'rgba(255,238,204,0)');
+  c.fillStyle = g;
+  c.fillRect(SUN.x - viewW * 0.26, SUN.y - viewW * 0.26, viewW * 0.52, viewW * 0.52);
+  c.restore();
+}
+
+// Aerial haze sitting on the horizon, over the base of the stands and
+// the trees — distance, and a sunny afternoon's worth of moisture.
+function paintHorizonHaze(c, horizon, depth) {
+  const top = horizon - depth;
+  const g = c.createLinearGradient(0, top, 0, horizon + viewH * 0.05);
+  g.addColorStop(0,   'rgba(214,224,232,0)');
+  g.addColorStop(0.7, 'rgba(214,224,232,0.14)');
+  g.addColorStop(1,   'rgba(222,226,222,0.24)');
+  c.fillStyle = g;
+  c.fillRect(0, top, viewW, horizon + viewH * 0.05 - top);
 }
 
 // The backdrop lives on #particleCanvas, which sits behind the race
@@ -1321,39 +1910,33 @@ function drawTiled(c, tile, bottomY, factor, alpha) {
 function drawBackdrop() {
   pCtx.clearRect(0, 0, viewW, viewH);
 
-  const horizon = worldToScreenY(WORLD.horizonY);
-
-  // Sky — a daylight gradient that only deepens at the very top of
-  // frame. The band the viewer actually looks at, just above the
-  // grandstand roofline, stays bright.
-  const warm = DIRECTOR.progress;
+  const horizon  = worldToScreenY(WORLD.horizonY);
+  const standH   = TILES.stand ? TILES.stand.h * planeScale('stand') : viewH * 0.17;
+  const standTop = horizon + 2 - standH;
   const skyBottom = Math.max(horizon + viewH * 0.10, viewH * 0.30);
-  const sky = pCtx.createLinearGradient(0, 0, 0, skyBottom);
-  sky.addColorStop(0,    '#4d88bd');
-  sky.addColorStop(0.42, COL.skyTop    || '#7eb8e8');
-  sky.addColorStop(0.72, '#a9cbe6');
-  sky.addColorStop(0.90, '#d8dcd2');
-  sky.addColorStop(1,    COL.skyBottom || '#c9a66a');
-  pCtx.fillStyle = sky;
-  pCtx.fillRect(0, 0, viewW, skyBottom + 2);
 
-  // Low sun haze sitting just above the horizon.
-  const haze = pCtx.createRadialGradient(
-    viewW * 0.72, horizon - viewH * 0.06, 0,
-    viewW * 0.72, horizon - viewH * 0.06, viewW * 0.42
-  );
-  haze.addColorStop(0, 'rgba(255,240,205,' + (0.34 + warm * 0.16).toFixed(3) + ')');
-  haze.addColorStop(1, 'rgba(255,232,180,0)');
-  pCtx.fillStyle = haze;
-  pCtx.fillRect(0, 0, viewW, horizon + viewH * 0.10);
+  // The sun is at infinity: parallax zero, so the clouds sail past it.
+  // Placed clear of the Live Positions panel, which owns the top right.
+  SUN.x = viewW * (viewW <= 768 ? 0.5 : 0.64);
+  SUN.y = Math.max(viewH * 0.07, standTop - viewH * 0.11);
+  SUN.visible = Math.max(0, Math.min(1, (standTop - SUN.y) / (viewH * 0.08)));
 
-  // Each plane sits ON the horizon and scrolls at its own rate. The
-  // treeline overlaps it slightly so there is no seam where the turf
-  // starts.
-  drawTiled(pCtx, TILES.hills, horizon + 6,  PARALLAX.hills, 0.85);
-  drawTiled(pCtx, TILES.stand, horizon + 2, PARALLAX.stand, 0.97);
+  paintSky(pCtx, skyBottom, DIRECTOR.progress);
+  paintSunDisc(pCtx);
+
+  // Clouds sit behind the downland, so the ridge cuts off their bases.
+  const t = frameClock;
+  drawTiled(pCtx, TILES.cloudsHigh, standTop + viewH * 0.03, PARALLAX.cloudsHigh,
+            0.9, 'cloudsHigh', t * WIND.cloudsHigh);
+  drawTiled(pCtx, TILES.cloudsLow, standTop + viewH * 0.07, PARALLAX.cloudsLow,
+            1, 'cloudsLow', t * WIND.cloudsLow);
+  paintSunGlow(pCtx);
+  drawTiled(pCtx, TILES.hills, horizon + 6, PARALLAX.hills, 0.92, 'hills');
+
+  drawTiled(pCtx, TILES.stand, horizon + 2, PARALLAX.stand, 1, 'stand');
   drawTiled(pCtx, TILES.trees, horizon + Math.max(14, viewH * 0.045),
-            PARALLAX.trees, 1);
+            PARALLAX.trees, 1, 'trees');
+  paintHorizonHaze(pCtx, horizon, standH * 0.7);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1373,11 +1956,11 @@ const AMBIENT_DRIFT = 0.011;   // world px per ms — a very slow pan
 let ambientX = 0;
 let ambientPainted = false;
 
-function ambientTile(tile, bottomY, factor, alpha, scale) {
+function ambientTile(tile, bottomY, factor, alpha, scale, extra) {
   if (!tile) return;
   const w = tile.w * scale;
   const h = tile.h * scale;
-  const off = ambientX * factor;
+  const off = ambientX * factor + (extra || 0);
   pCtx.save();
   pCtx.globalAlpha = alpha;
   let x = -(((off % w) + w) % w);
@@ -1389,30 +1972,25 @@ function drawAmbient() {
   const horizon = viewH * 0.54;
   pCtx.clearRect(0, 0, viewW, viewH);
 
-  // Sky — the same palette as the race, pitched darker so it reads as
-  // late afternoon rather than competing with the foreground type.
-  const sky = pCtx.createLinearGradient(0, 0, 0, horizon + viewH * 0.06);
-  sky.addColorStop(0,    '#16273b');
-  sky.addColorStop(0.45, '#2f5878');
-  sky.addColorStop(0.82, '#5d7f96');
-  sky.addColorStop(1,    '#8b7f6a');
-  pCtx.fillStyle = sky;
-  pCtx.fillRect(0, 0, viewW, horizon + viewH * 0.06);
+  const standH   = TILES.stand ? TILES.stand.h : viewH * 0.17;
+  const standTop = horizon + 2 - standH;
+  SUN.x = viewW * (viewW <= 768 ? 0.5 : 0.64);
+  SUN.y = Math.max(viewH * 0.08, standTop - viewH * 0.12);
 
-  // Low sun sitting on the horizon
-  const haze = pCtx.createRadialGradient(
-    viewW * 0.74, horizon - viewH * 0.05, 0,
-    viewW * 0.74, horizon - viewH * 0.05, viewW * 0.4
-  );
-  haze.addColorStop(0, 'rgba(255,226,168,0.30)');
-  haze.addColorStop(1, 'rgba(255,226,168,0)');
-  pCtx.fillStyle = haze;
-  pCtx.fillRect(0, 0, viewW, horizon + viewH * 0.06);
+  // The same sky, sun and clouds as the race, so the parade and the reveal
+  // are unmistakably the same afternoon. The clouds drift on the wind
+  // here too; the scrim below takes the brightness down for the type.
+  paintSky(pCtx, horizon + viewH * 0.06, 0.4);
+  paintSunDisc(pCtx);
+  ambientTile(TILES.cloudsHigh, standTop + viewH * 0.03, PARALLAX.cloudsHigh, 0.9, 1, ambientX * 0.35);
+  ambientTile(TILES.cloudsLow,  standTop + viewH * 0.07, PARALLAX.cloudsLow,  1,   1, ambientX * 0.9);
+  paintSunGlow(pCtx);
 
-  ambientTile(TILES.hills, horizon + 6,  PARALLAX.hills, 0.7,  1);
-  ambientTile(TILES.stand, horizon + 2,  PARALLAX.stand, 0.85, 1);
+  ambientTile(TILES.hills, horizon + 6,  PARALLAX.hills, 0.8,  1);
+  ambientTile(TILES.stand, horizon + 2,  PARALLAX.stand, 0.95, 1);
   ambientTile(TILES.trees, horizon + Math.max(14, viewH * 0.045),
-              PARALLAX.trees, 0.95, 1);
+              PARALLAX.trees, 1, 1);
+  paintHorizonHaze(pCtx, horizon, standH * 0.7);
 
   // Turf running off the bottom of frame
   const turf = pCtx.createLinearGradient(0, horizon, 0, viewH);
@@ -1500,13 +2078,19 @@ function drawFarRail() {
     ctx.restore();
   }
 
-  // Advertising board band in front of them. Deliberately low contrast —
-  // it is scenery at depth, not a headline.
-  ctx.fillStyle = 'rgba(28,40,56,0.62)';
-  ctx.fillRect(from - step, y - 22, to - from + step * 2, 13);
-  ctx.fillStyle = 'rgba(212,175,55,0.10)';
-  for (let x = from; x < to; x += step * 4) {
-    ctx.fillRect(x, y - 22, step * 1.7, 13);
+  // Advertising hoardings in front of them: individual sponsor panels,
+  // lit along the top edge and hazed for distance, rather than the flat
+  // two-tone band V2 started with.
+  if (TILES.boards) {
+    const b = TILES.boards;
+    let bx = Math.floor((vis.min - shift) / b.w) * b.w;
+    ctx.save();
+    ctx.globalAlpha = 0.92;
+    for (; bx < to; bx += b.w) ctx.drawImage(b.canvas, bx, y - 22, b.w, 13);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = 'rgba(28,40,56,0.62)';
+    ctx.fillRect(from - step, y - 22, to - from + step * 2, 13);
   }
 
   // Running rail
@@ -1681,10 +2265,104 @@ function drawAtmosphere(flashEnergy) {
     ctx.fillRect(0, 0, viewW, viewH);
   }
 
+  drawLensFlare();
+  drawGrain();
+
   if (DIRECTOR.flash > 0.005) {
     ctx.fillStyle = 'rgba(255,252,240,' + (DIRECTOR.flash * 0.85).toFixed(3) + ')';
     ctx.fillRect(0, 0, viewW, viewH);
   }
+
+  drawLetterbox();
+}
+
+// ── Cinematic finishing ──────────────────────────────────────────
+// Three things a camera does that a canvas does not, and which between
+// them account for most of the difference between "rendered" and "shot".
+
+// A long lens looking toward a low sun throws an anamorphic streak and a
+// line of ghosts through the frame. It fades out as the camera pushes in
+// and the stands take the sun out of shot.
+function drawLensFlare() {
+  const k = SUN.visible * Math.max(0, Math.min(1, 1.4 - CAM.zoom)) * 0.9;
+  if (k < 0.02) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+
+  const sw = viewW * 0.55;
+  const streak = ctx.createLinearGradient(SUN.x - sw, 0, SUN.x + sw, 0);
+  streak.addColorStop(0,   'rgba(150,190,255,0)');
+  streak.addColorStop(0.5, 'rgba(200,222,255,' + (0.34 * k).toFixed(3) + ')');
+  streak.addColorStop(1,   'rgba(150,190,255,0)');
+  ctx.fillStyle = streak;
+  ctx.fillRect(SUN.x - sw, SUN.y - 1.2, sw * 2, 2.4);
+
+  const cx = viewW / 2, cy = viewH / 2;
+  const GHOSTS = [
+    [0.38, 0.020, '255,208,150', 0.10],
+    [0.62, 0.046, '150,220,210', 0.06],
+    [0.86, 0.028, '190,160,255', 0.07],
+    [1.22, 0.075, '255,196,140', 0.045],
+  ];
+  for (const [t, r, c, a] of GHOSTS) {
+    const gx = SUN.x + (cx - SUN.x) * t * 2;
+    const gy = SUN.y + (cy - SUN.y) * t * 2;
+    const rr = viewH * r;
+    const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, rr);
+    g.addColorStop(0,   'rgba(' + c + ',' + (a * k).toFixed(3) + ')');
+    g.addColorStop(0.7, 'rgba(' + c + ',' + (a * k * 0.5).toFixed(3) + ')');
+    g.addColorStop(1,   'rgba(' + c + ',0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(gx, gy, rr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Film grain: a small noise tile laid over the frame at a new random
+// offset every frame. Faint enough that nobody would call it grain, but
+// it breaks up the dead-flat fills a canvas produces and knits the
+// painted backdrop and the drawn horses into one image.
+function buildGrainTile() {
+  const S = 192;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const img = g.createImageData(S, S);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = Math.random() < 0.5 ? 255 : 0;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+    img.data[i + 3] = Math.pow(Math.random(), 2.4) * 40;
+  }
+  g.putImageData(img, 0, 0);
+  return { canvas: c, w: S, h: S };
+}
+
+function drawGrain() {
+  if (!TILES.grain) TILES.grain = buildGrainTile();
+  const t = TILES.grain;
+  // Static under reduced motion: texture without the dance.
+  const ox = prefersReducedMotion ? 0 : -((Math.random() * t.w) | 0);
+  const oy = prefersReducedMotion ? 0 : -((Math.random() * t.h) | 0);
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  for (let y = oy; y < viewH; y += t.h) {
+    for (let x = ox; x < viewW; x += t.w) ctx.drawImage(t.canvas, x, y, t.w, t.h);
+  }
+  ctx.restore();
+}
+
+// Cinema bars. They close in through the Build and the Drive and are
+// deepest through the final furlong — the frame literally narrows as the
+// race does — and ease back a little as the camera opens up at the line.
+function drawLetterbox() {
+  const f = DIRECTOR.letterbox;
+  if (f <= 0.002) return;
+  const bar = Math.round(viewH * f);
+  ctx.fillStyle = '#020306';
+  ctx.fillRect(0, 0, viewW, bar);
+  ctx.fillRect(0, viewH - bar, viewW, bar);
 }
 // ════════════════════════════════════════════════════════════════
 //  MARGINS
@@ -2321,7 +2999,7 @@ function drawHorseSilhouette(x, y, h, artScale) {
   // ── Ground shadow (tightens as the horse leaves the ground) ──
   ctx.fillStyle = 'rgba(0,0,0,' + (0.28 - suspension * 0.16).toFixed(3) + ')';
   ctx.beginPath();
-  ctx.ellipse(0, 28 - bodyLift, 26 - suspension * 6, 3.2, 0, 0, Math.PI * 2);
+  ctx.ellipse(-6, 28 - bodyLift, 29 - suspension * 6, 3.4, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // ── Off-side legs ───────────────────────────────────────────
@@ -3003,7 +3681,7 @@ function crossTheLine() {
   //     broadcast director makes to show you the placings. Without this
   //     the winner runs on alone and everyone else finishes off-frame.
   finishTL.to(DIRECTOR, {
-    zoom: FINISH_ZOOM, anchorX: 0.62, groupBias: 0.1, fieldFade: 0.10,
+    zoom: FINISH_ZOOM, anchorX: 0.62, groupBias: 0.1, fieldFade: 0.10, letterbox: 0.05,
     camY: 4, tilt: 0.003, vignette: 0.28,
     duration: 1.5, ease: 'power2.out',
   }, 0.05);
@@ -3439,7 +4117,7 @@ window.replayExperience = function () {
   Object.assign(DIRECTOR, {
     progress: 0, zoom: 1, anchorX: 0.50, camY: 0, tilt: 0, shake: 0,
     vignette: 0.10, groupBias: 0.12, fieldFade: 0, flash: 0, reveal: 0,
-    runOut: 0, pressFlash: 0, phase: 'cruise',
+    runOut: 0, pressFlash: 0, letterbox: 0, phase: 'cruise',
   });
   CAM.x = 0; CAM.zoom = 1; CAM.shakeX = 0; CAM.shakeY = 0;
 
