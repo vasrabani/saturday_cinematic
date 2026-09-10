@@ -145,48 +145,14 @@
   100% { opacity: 0; transform: translate(-50%, -50%) scale(1.0); }
 }
 
-/* ══════════════════════════════════════════════════════════════
-   PHOTO FINISH — overlay at progress = 1.0 for the freeze frame
-   ══════════════════════════════════════════════════════════════ */
-.flat-photo-finish {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 9;
-  opacity: 0;
-  transition: opacity 0.18s ease-out;
-}
+/* ── The legacy photo-finish overlay ──────────────────────────
+   Still in the markup (the production template has it too) but never
+   shown: the finish is its own sequence now. */
+.flat-photo-finish { display: none; }
 
-.flat-photo-finish__flash {
-  position: absolute;
-  inset: 0;
-  background: rgba(255, 255, 255, 0.85);
-  opacity: 0;
-}
-
-.flat-photo-finish__label {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%) scale(0.85);
-  font-family: 'Playfair Display', Georgia, serif;
-  font-size: clamp(46px, 9vw, 110px);
-  font-weight: 900;
-  font-style: italic;
-  letter-spacing: 0.06em;
-  color: var(--gold-lt, #F5E49A);
-  text-shadow:
-    0 0 16px rgba(0, 0, 0, 0.8),
-    0 0 36px rgba(212, 175, 55, 0.45);
-  opacity: 0;
-}
-
-/* ── Reduced motion: no flash, no transforms — just stay clear ── */
+/* ── Reduced motion: no stalls bang ── */
 @media (prefers-reduced-motion: reduce) {
-  .flat-stalls,
-  .flat-photo-finish {
-    display: none;
-  }
+  .flat-stalls { display: none; }
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -277,6 +243,7 @@
   text-overflow: ellipsis;
 }
 .reveal-podium__gap {
+  margin-left: 8px;
   font-family: "DM Sans", "Inter", sans-serif;
   font-size: 11.5px;
   font-weight: 700;

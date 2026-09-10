@@ -520,47 +520,6 @@ body.page-experience {
   .race-leaderboard { --lb-row-h: 30px; }
 }
 
-/* Probability-bar row layout — same component as flat.js. Two-line
-   row: name on top, AI win-probability bar + percent below. */
-.race-lb-name-prob {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.race-lb-prob {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.race-lb-prob__bar {
-  flex: 1;
-  height: 3px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.race-lb-prob__fill {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg,
-    rgba(212, 175, 55, 0.85) 0%,
-    rgba(232, 197, 88, 1) 100%);
-  border-radius: 2px;
-  box-shadow: 0 0 4px rgba(212, 175, 55, 0.35);
-}
-.race-lb-prob__pct {
-  font-family: "DM Sans", "Inter", sans-serif;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.55);
-  font-variant-numeric: tabular-nums;
-  min-width: 24px;
-  text-align: right;
-}
-
 #raceLeaderboard {
   position: relative;
   /* 8 visible rows. Overflow hides the trailing pack as they slide
@@ -1039,11 +998,6 @@ body.page-experience {
 @media (max-width: 768px) {
   .parade-header { padding: 16px 20px; }
   .parade-name { font-size: 28px; }
-  /* Commentary bar sits above leaderboard bottom bar (≈90px total) */
-  .race-commentary {
-    padding-bottom: 120px;   /* clear leaderboard bar */
-    padding-top: 60px;
-  }
   .race-commentary__text {
     font-size: clamp(15px, 4.5vw, 22px);
   }
@@ -1108,7 +1062,6 @@ body.page-experience {
   display: flex;
   justify-content: center;
   z-index: 20;
-  pointer-events: all;
 }
 
 .parade-skip-cta {
@@ -1268,17 +1221,6 @@ body.page-experience {
   font-variant-numeric: tabular-nums;
 }
 
-/* Flat engine uses a flat row layout — append the gap inline with
-   pos / name / odds. */
-.reveal-podium__gap {
-  margin-left: 8px;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: rgba(245, 228, 154, 0.78);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
 /* Hide the archive picker once the user has committed to a race
    (RUN THE RACE click → startExperience adds body.cinematic-experience-
    running). It re-appears when the user hits Run Again, which returns
@@ -1300,7 +1242,6 @@ body.cinematic-experience-running .cinematic-archive-picker {
   transform: translateX(-50%);
   z-index: 12;
   transition: opacity 0.4s ease, transform 0.3s ease;
-  pointer-events: auto;
 }
 .race-skip-wrap.race-skip-hidden {
   opacity: 0;
@@ -1349,11 +1290,8 @@ body.cinematic-experience-running .cinematic-archive-picker {
 }
 
 @media (max-width: 768px) {
-  /* Mobile commentary uses padding-top:60 + padding-bottom:120 + up
-     to 2 lines of text (~60px). Worst-case commentary box height ≈
-     240px from the bottom edge. Pill bottom must exceed that or it
-     sits INSIDE the commentary's text area. If the commentary
-     padding ever changes, bump this number to match. */
+  /* On a phone the Mr Fox commentary card, a line or two tall, sits
+     low in the frame: the pill is lifted clear of it. */
   .race-skip-wrap { bottom: 240px; }
   .race-skip-cta {
     padding: 7px 14px;

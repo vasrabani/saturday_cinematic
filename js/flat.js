@@ -80,14 +80,22 @@ const FLAT_DEFAULTS = {
 };
 
 // One level deep, so a seed that overrides one colour or one timing
-// keeps the defaults for the rest. Arrays and scalars replace outright.
+// keeps the defaults for the rest. Arrays and scalars replace outright;
+// null and undefined mean "use the default". Every key in FLAT_DEFAULTS
+// is therefore always present, and the engine reads the merged config
+// without fallbacks of its own.
 function mergeConfig(defaults, override) {
   const out = Object.assign({}, defaults);
   for (const [key, value] of Object.entries(override || {})) {
+    if (value === null || value === undefined) continue;
     const both = [value, defaults[key]].every((v) => v && typeof v === 'object' && !Array.isArray(v));
-    out[key] = both ? Object.assign({}, defaults[key], value) : value;
+    out[key] = both ? Object.assign({}, defaults[key], definedOnly(value)) : value;
   }
   return out;
+}
+
+function definedOnly(obj) {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined));
 }
 
 const FLAT_CONFIG = (() => {
@@ -123,8 +131,8 @@ function esc(value) {
 
 // ── Silk badge renderer ────────────────────────────────────────
 // Mirrors races/templates/races/components/atoms/_silk.html.
-// Duplicated from experience.js — Phase 3 will hoist this into a
-// shared module along with the rest of the engine code.
+// The same renderer lives in experience.js (the jumps engine); keep the
+// two in step.
 let silkIdCounter = 0;
 function renderSilkSvg(runner) {
   if (runner && runner.silk_url) {
@@ -244,17 +252,19 @@ const pCanvas = document.getElementById('particleCanvas');
 const ctx     = canvas.getContext('2d');
 const pCtx    = pCanvas.getContext('2d');
 
-if (!CanvasRenderingContext2D.prototype.roundRect) {
-  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
-    const radius = Math.max(0, Math.min(typeof r === 'number' ? r : 0, w / 2, h / 2));
-    this.moveTo(x + radius, y);
-    this.arcTo(x + w, y,     x + w, y + h, radius);
-    this.arcTo(x + w, y + h, x,     y + h, radius);
-    this.arcTo(x,     y + h, x,     y,     radius);
-    this.arcTo(x,     y,     x + w, y,     radius);
-    this.closePath();
-    return this;
-  };
+// A rounded-rectangle sub-path: the canvas's own roundRect() where the
+// browser has one (every current browser does), arcs where it does not.
+// A local helper, so the engine does not patch CanvasRenderingContext2D
+// for the whole page.
+function roundRectPath(c, x, y, w, h, r) {
+  if (typeof c.roundRect === 'function') { c.roundRect(x, y, w, h, r); return; }
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+  c.moveTo(x + radius, y);
+  c.arcTo(x + w, y,     x + w, y + h, radius);
+  c.arcTo(x + w, y + h, x,     y + h, radius);
+  c.arcTo(x,     y + h, x,     y,     radius);
+  c.arcTo(x,     y,     x + w, y,     radius);
+  c.closePath();
 }
 
 // ─── Viewport + world layout ────────────────────────────────────
@@ -465,7 +475,7 @@ function wireButtons() {
   if (raceSkip) raceSkip.addEventListener('click', skipToFinish);
   const rcSkip = document.getElementById('rollcallSkipBtn');
   if (rcSkip) rcSkip.addEventListener('click', skipRollCall);
-  document.querySelectorAll('[data-href]').forEach((b) => {
+  document.querySelectorAll('.screen [data-href]').forEach((b) => {
     b.addEventListener('click', () => { window.location.href = b.dataset.href; });
   });
 }
@@ -499,15 +509,20 @@ function cancelFlowTimers() {
 
 // ─── Screen management ──────────────────────────────────────────
 function showScreen(name) {
-  document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
   STATE.phase = name;
-  const el = document.getElementById('screen-' + name);
-  if (el) el.classList.add('active');
+  document.querySelectorAll('.screen').forEach((el) => {
+    const active = el.id === 'screen-' + name;
+    el.classList.toggle('active', active);
+    // A hidden screen's buttons are still in the DOM. Inert, they take no
+    // clicks, focus or key presses — Enter on a still-focused Run button,
+    // or a Tab onto an invisible Run Again, would restart the flow.
+    el.inert = !active;
+  });
 }
 
 // The viewer's own pick is identified by id; the Fox pick by name — it
 // arrives from the Fox model as a runner record of its own.
-function isUserPick(runner) { return !!(STATE.userPick && STATE.userPick.id === runner.id); }
+function isUserPick(runner) { return !!(STATE.userPick && String(STATE.userPick.id) === String(runner.id)); }
 function isFoxPick(runner)  { return !!(STATE.foxPick && STATE.foxPick.name === runner.name); }
 
 // ─── Intro chips ────────────────────────────────────────────────
@@ -541,16 +556,27 @@ function buildIntroChips() {
 // Idempotent via Math.max.
 const SKIP_TO_FINISH_REMAINING_S = 10;
 function skipToFinish() {
-  if (!raceRunning || !masterTL) return;
+  // Past the line there is nothing left to skip: snapping then would
+  // only pull the camera off the winning post.
+  if (!raceRunning || !masterTL || FINISH.active) return;
   const target = Math.max(masterTL.time(),
                           masterTL.duration() - SKIP_TO_FINISH_REMAINING_S);
   masterTL.seek(target, false);
   snapRaceState();
+  hideSkipButton();
+}
+
+function hideSkipButton() {
   const wrap = document.querySelector('.race-skip-wrap');
   if (wrap) wrap.classList.add('race-skip-hidden');
 }
 
+let experienceStarted = false;
+
 function startExperience() {
+  // Once per run: a double-click would otherwise start two parades.
+  if (experienceStarted || STATE.phase !== 'intro') return;
+  experienceStarted = true;
   // Hide the archive picker now that the user has committed to a
   // race — CSS body-class toggle. replayExperience drops it again.
   document.body.classList.add('cinematic-experience-running');
@@ -583,6 +609,10 @@ function runStaticReveal() {
   const { winner, positions } = STATE.simResult;
   buildRevealScreen(winner, positions);
   showScreen('reveal');
+  // No motion, so no entrance: the reveal's pieces start hidden (inline
+  // opacity in the markup) and only animateReveal() brings them in —
+  // jump it straight to its end.
+  animateReveal().progress(1);
 }
 
 // ─── Parade ─────────────────────────────────────────────────────
@@ -666,10 +696,8 @@ function showParadeHorse(idx) {
     gsap.fromTo('#paradeCard', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power2.out' });
   }
 
-  const T = BAND.timings || {};
-  const ms = STATE.runners.length > (T.paradeLargeFieldThreshold || 16)
-    ? (T.paradeDelayMsFast || 900)
-    : (T.paradeDelayMsSlow || 1300);
+  const T = BAND.timings;
+  const ms = STATE.runners.length > T.paradeLargeFieldThreshold ? T.paradeDelayMsFast : T.paradeDelayMsSlow;
   paradeTimer = after(ms, () => { if (STATE.phase === 'parade') showParadeHorse(idx + 1); });
 }
 
@@ -700,7 +728,7 @@ const STALLS_CLEAR_MS = 700;
 function bangStallsAndStart() {
   const stalls = document.getElementById('flatStalls');
   // Stalls cover the canvas; bang open after a short held breath.
-  after(SHARED.stallsOpenMs ?? 600, () => {
+  after(SHARED.stallsOpenMs, () => {
     if (stalls) stalls.classList.add('is-opening');
     after(STALLS_CLEAR_MS, () => { if (stalls) stalls.classList.add('is-hidden'); });
     startRace();
@@ -728,7 +756,7 @@ function startRace() {
   lbSampleTimer = 0;
 
   buildLeaderboard();
-  setPhaseTitle((BAND.phases && BAND.phases.raceStart) || "AND THEY'RE AWAY");
+  setPhaseTitle(BAND.phases.raceStart);
 
   // The timeline is built and started here, and it is the only clock
   // in the race from this point until crossTheLine() hands over.
@@ -754,9 +782,8 @@ function weightedRandom(runners) {
 // has_result is False (the default + the entire forecast path)
 // every consumer of REPLAY_DATA falls back to the sim. Pure
 // additive — the existing forecast code path is untouched when
-// no replay data is present. Mirrors experience.js exactly so
-// the two engines stay in lockstep until Phase 3 hoists this
-// into a shared module.
+// no replay data is present. Mirrors experience.js exactly; keep
+// the two engines in step.
 const REPLAY_DATA = (() => {
   const el = document.getElementById('replayData');
   if (!el) return null;
@@ -780,15 +807,19 @@ function buildRacePositions(winner) {
   if (REPLAY_DATA && REPLAY_DATA.has_result &&
       Array.isArray(REPLAY_DATA.result_order) &&
       REPLAY_DATA.result_order.length) {
-    const byId = new Map(STATE.runners.map((r) => [r.id, r]));
+    // Ids are compared as strings: the payload has been known to send
+    // the result's ids and the runners' ids as different types.
+    const byId = new Map(STATE.runners.map((r) => [String(r.id), r]));
     const ordered = REPLAY_DATA.result_order
-      .map((id) => byId.get(id))
+      .map((id) => byId.get(String(id)))
       .filter(Boolean);
-    const seen = new Set(REPLAY_DATA.result_order);
-    STATE.runners.forEach((r) => {
-      if (!seen.has(r.id)) ordered.push(r);
-    });
-    if (ordered.length) return ordered;
+    if (ordered.length) {
+      const seen = new Set(REPLAY_DATA.result_order.map(String));
+      STATE.runners.forEach((r) => {
+        if (!seen.has(String(r.id))) ordered.push(r);
+      });
+      return ordered;
+    }
     // Fall through to the sim only if the result payload didn't
     // map to any known runner — defensive.
   }
@@ -1242,8 +1273,7 @@ function shot(key, tween) {
 }
 
 function buildMasterTimeline() {
-  const T         = BAND.timings || {};
-  const durationS = (T.raceDurationMs || 46000) / 1000;
+  const durationS = BAND.timings.raceDurationMs / 1000;
 
   const tl = gsap.timeline({
     paused: true,
@@ -1322,7 +1352,7 @@ function addFinalFurlongSequence(tl, durationS) {
   // a call() so the tween driving timeScale is not itself being scaled
   // by the value it is changing.
   if (!prefersReducedMotion) {
-    const slowTo = (BAND.timings && BAND.timings.slowMoFactor) || 0.55;
+    const slowTo = BAND.timings.slowMoFactor;
     tl.call(() => {
       gsap.to(tl, { timeScale: slowTo, duration: 1.0, ease: 'power2.out' });
     }, null, 'line');
@@ -2232,7 +2262,7 @@ function buildTurfTile() {
   const turfW = 320;
   const turfH = Math.max(40, Math.round(viewH * 0.60));
   return makeTile(turfW, turfH, (g, w, h) => {
-    g.fillStyle = COL.trackTurf || '#2d5e3a';
+    g.fillStyle = COL.trackTurf;
     g.fillRect(0, 0, w, h);
     g.fillStyle = 'rgba(255,255,255,0.055)';
     g.fillRect(0, 0, w / 2, h);
@@ -2262,10 +2292,10 @@ function planeScale(key) {
   return 1 + (CAM.zoom - 1) * (PLANE_ZOOM[key] != null ? PLANE_ZOOM[key] : 1);
 }
 
-// Tiles are laid out in SCREEN space, scaled by the plane's share of the
-// camera zoom, and offset by CAM.x × factor × scale so each plane's
-// scroll rate stays in proportion to the turf. `extra` is any motion the
-// plane has of its own — the wind, for clouds.
+// A tile repeated across the screen: its bottom edge at bottomY, scrolled
+// by offsetPx and drawn at `scale`. racePlane() and ambientPlane() work out
+// the offset and scale for each plane — its parallax rate, its share of
+// the camera zoom, and any motion of its own, like the wind in the clouds.
 function blitTiled(c, tile, bottomY, offsetPx, alpha, scale) {
   if (!tile) return;
   const w = tile.w * scale, h = tile.h * scale;
@@ -2468,9 +2498,6 @@ function ambientFrame() {
   drawAmbient();
 }
 
-// Repaint on resize, since reallocating the canvas clears it and there
-// may be no frame due for a while on a static screen.
-
 // ════════════════════════════════════════════════════════════════
 //  TRACK PLANE
 // ════════════════════════════════════════════════════════════════
@@ -2553,7 +2580,7 @@ function drawTurf() {
       ctx.drawImage(TILES.turf.canvas, x, top, tw, bot - top);
     }
   } else {
-    ctx.fillStyle = COL.trackTurf || '#2d5e3a';
+    ctx.fillStyle = COL.trackTurf;
     ctx.fillRect(vis.min, top, vis.max - vis.min, bot - top);
   }
 
@@ -2573,7 +2600,7 @@ function drawTurf() {
 // and because they live in world space they sweep past at full rate.
 function drawFurlongMarkers() {
   const vis   = visibleWorldRange(200);
-  const every = WORLD.spanPx * (TRK.furlongPoleEvery || 0.125);
+  const every = WORLD.spanPx * TRK.furlongPoleEvery;
   const y     = WORLD.trackTopY;
 
   let i = Math.max(0, Math.floor(vis.min / every));
@@ -2587,7 +2614,7 @@ function drawFurlongMarkers() {
     ctx.fillRect(x - 1.5, y - 40, 3, 34);
     ctx.fillStyle = 'rgba(11,14,21,0.82)';
     ctx.beginPath();
-    ctx.roundRect(x - 11, y - 58, 22, 18, 3);
+    roundRectPath(ctx, x - 11, y - 58, 22, 18, 3);
     ctx.fill();
     ctx.strokeStyle = 'rgba(245,239,222,0.35)';
     ctx.lineWidth = 1;
@@ -2628,20 +2655,20 @@ function drawWinningPost() {
   ctx.rect(x - 3, top - 92, 6, 92);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = COL.gold || '#D4AF37';
+  ctx.fillStyle = COL.gold;
   ctx.beginPath();
   ctx.arc(x, top - 96, 5, 0, Math.PI * 2);
   ctx.fill();
 
   // Gantry banner
   ctx.fillStyle   = 'rgba(11,14,21,0.94)';
-  ctx.strokeStyle = COL.gold || '#D4AF37';
+  ctx.strokeStyle = COL.gold;
   ctx.lineWidth   = 1.5;
   ctx.beginPath();
-  ctx.roundRect(x - 58, top - 128, 116, 24, 4);
+  roundRectPath(ctx, x - 58, top - 128, 116, 24, 4);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = COL.gold || '#D4AF37';
+  ctx.fillStyle = COL.gold;
   ctx.font = 'bold 13px "DM Sans", sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('THE LINE', x, top - 111);
@@ -2974,8 +3001,8 @@ function drawField() {
     // the same mark: no text, no box, no glow around the animal.
     const markAlpha = Math.max(h.idGlow, (isUser || isFox) ? 0.5 : 0);
     if (markAlpha > 0.01) {
-      drawGroundMarker(h, markAlpha, isUser ? (COL.userLabel || '#D4AF37')
-                                   : isFox  ? (COL.foxLabel  || '#E8A050')
+      drawGroundMarker(h, markAlpha, isUser ? COL.userLabel
+                                   : isFox  ? COL.foxLabel
                                    :          (h.runner.silk || '#f5efde'));
     }
 
@@ -4284,7 +4311,7 @@ function drawJockeyHead(look, rig) {
 
 // ─── Commentary ─────────────────────────────────────────────────
 function fireCommentary(progress) {
-  (BAND.commentary || []).forEach((c) => {
+  BAND.commentary.forEach((c) => {
     if (!firedCommentary.has(c.at) && progress >= c.at) {
       firedCommentary.add(c.at);
       setCommentaryText(renderCommentary(c.text));
@@ -4300,9 +4327,11 @@ function renderCommentary(template) {
   const leaderName = liveLeader ? liveLeader.runner.name : '';
   const userName   = (STATE.userPick && STATE.userPick.name) || '';
   const foxName    = (STATE.foxPick  && STATE.foxPick.name)  || '';
+  // A pick that is not there takes its comma and space with it; one
+  // that is keeps whatever the template put in front of it.
   return template
-    .replace(/,?\s*\{USER\}/g, userName ? ', ' + userName : '')
-    .replace(/,?\s*\{FOX\}/g,  foxName  ? ', ' + foxName  : '')
+    .replace(/,?\s*\{USER\}/g, (m) => (userName ? m.replace('{USER}', () => userName) : ''))
+    .replace(/,?\s*\{FOX\}/g,  (m) => (foxName  ? m.replace('{FOX}', () => foxName) : ''))
     .replace(/\{LEADER\}/g,    leaderName || 'the leader')
     .replace(/\s{2,}/g, ' ')
     .replace(/,\s*\./g, '.');
@@ -4367,7 +4396,7 @@ function buildPhaseStrip(phaseTable) {
 }
 
 function setCommentaryText(text) {
-  commentaryTimer = (BAND.timings && BAND.timings.commentaryHoldMs) || 3000;
+  commentaryTimer = BAND.timings.commentaryHoldMs;
   const el = document.getElementById('racingCommentary');
   if (!el) return;
   gsap.fromTo(el, { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out' });
@@ -4400,8 +4429,7 @@ function showSubtitle(text, duration) {
 // (.race-lb-row / .race-lb-pos / .race-lb-silk / .race-lb-name) so it
 // inherits experience.css styling — no duplicate CSS in flat.css.
 
-// Mini jockey-cap SVG — duplicated from experience.js until Phase 3
-// hoists shared helpers. Renders a two-tone cap using the runner's
+// Mini jockey-cap SVG, as in experience.js. Renders a two-tone cap using the runner's
 // silk colours + silk_pattern so each row's cap matches its jersey.
 let lbCapCounter = 0;
 function renderCapSvg(runner) {
@@ -4454,13 +4482,17 @@ function lbRowHeightPx() {
   return lbRowH;
 }
 
+// The leaderboard's rows by runner id.
+let lbRows = new Map();
+
 function buildLeaderboard() {
   const c = document.getElementById('raceLeaderboard');
   if (!c) return;
   c.innerHTML = '';
+  lbRows = new Map();
 
-  // Win-probability bars — derived from the SAME sim_weight() the
-  // forecast engine uses to pick the outcome. Normalised across the
+  // Win-probability bars — derived from the same runner weights the
+  // forecast draws its winner from (weightedRandom). Normalised across the
   // field so they sum to 100%. Honest pre-race signal: these are what
   // the model thinks NOW, not animated "fake convergence" during the
   // race. The position number flips live during play; the bar stays
@@ -4501,6 +4533,7 @@ function buildLeaderboard() {
         '</span>' +
       '</span>';
     c.appendChild(row);
+    lbRows.set(r.id, row);
   });
 }
 
@@ -4533,7 +4566,7 @@ function updateLeaderboard(dt) {
   ranked.forEach((h, rank) => {
     if (h.lbRank === rank) return;          // nothing moved — leave it alone
 
-    const row = c.querySelector('[data-runner="' + h.runner.id + '"]');
+    const row = lbRows.get(h.runner.id);
     if (!row) return;
     const climbed = h.lbRank >= 0 && rank < h.lbRank;
     const fell    = h.lbRank >= 0 && rank > h.lbRank;
@@ -4632,6 +4665,7 @@ function crossTheLine() {
   const margin = computeWinningMargin();
   setPhaseTitle('PAST THE POST');
   clearBroadcastId();
+  hideSkipButton();
 
   // The field goes on through the line under its own model from here.
   beginRunThrough();
@@ -5016,7 +5050,7 @@ function runWinningMoment(margin) {
   winTL.call(() => showWinnerMomentCard(winner, margin), null, WINNING_MOMENT_S * 0.28);
   for (let i = 0; i < 4; i++) {
     winTL.call(() => {
-      burstHeroConfetti(viewW * 0.70, viewH * 0.34, 18, COL.gold || '#D4AF37');
+      burstHeroConfetti(viewW * 0.70, viewH * 0.34, 18, COL.gold);
       burstHeroConfetti(viewW * 0.30, viewH * 0.38, 12, '#ffffff');
     }, null, 1.55 + i * 0.21);
   }
@@ -5053,7 +5087,7 @@ function raceFinish(margin) {
 }
 // ─── Roll Call ──────────────────────────────────────────────────
 // Post-race walkthrough of every finisher, LAST → FIRST. Mirrors
-// experience.js — Phase 3 will hoist into a shared module. Reuses
+// experience.js (the jumps engine). Reuses
 // experience.css styling so jumps + flat look identical here.
 const ROLLCALL_HOLD_MS = {
   back:   750,
@@ -5295,7 +5329,7 @@ function buildRevealVerdict(positions, isUserWin) {
       verdictTitle.textContent = '🐾 Your pick wins!';
       verdictText.textContent  = 'You called it. Trust the read.';
     } else if (STATE.userPick) {
-      const userFinishIdx = positions.findIndex((r) => r.id === STATE.userPick.id);
+      const userFinishIdx = positions.findIndex((r) => isUserPick(r));
       verdictTitle.textContent = '🐾 Your pick: ' + STATE.userPick.name;
       verdictText.textContent  = userFinishIdx >= 0
         ? 'Finished ' + ordinal(userFinishIdx + 1)
@@ -5369,22 +5403,28 @@ function animateReveal() {
     { opacity: 0, x: -28 },
     { opacity: 1, x: 0, duration: 0.45, stagger: 0.12, ease: 'power3.out' }, '-=0.25');
   tl.to('.reveal-actions',         { opacity: 1, duration: 0.4 }, '-=0.1');
+  return tl;
 }
 
 // ─── Replay ────────────────────────────────────────────────────
 function replayExperience() {
   // User is going back to the intro — restore the archive picker.
   document.body.classList.remove('cinematic-experience-running');
-  resetRollCallAndSkip();
+  resetFlow();
   resetRaceEngine();
   resetRaceOverlays();
   resetScreens();
   showScreen('intro');
 }
 
-function resetRollCallAndSkip() {
+function resetFlow() {
   cancelFlowTimers();
+  experienceStarted = false;
   leavingParade = false;
+  // The next parade opens on its first card, with its entrance, not on
+  // the last run's card and the swap animation.
+  const paradeStage = document.getElementById('paradeStage');
+  if (paradeStage) paradeStage.innerHTML = '';
   rollCallHold = null;
   rollCallRun = null;
   // Re-arm the Skip-to-Finish pill for the next run.
