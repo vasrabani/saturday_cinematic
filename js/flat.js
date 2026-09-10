@@ -28,7 +28,7 @@ const FLAT_DEFAULTS = {
     photoFinishHoldMs: 900,
     subtitleDefaultMs: 2400,
     track: { startX: 0.05, finishX: 0.94, laneTopRatio: 0.24, laneBottomRatio: 0.78, furlongPoleEvery: 0.125 },
-    horse: { minSurges: 2, maxExtraSurges: 2, surgeStartRange: [0.10, 0.75], surgeDurationRange: [0.04, 0.10], surgeBoostRange: [0.5, 1.5], winnerFinalSurge: { start: 0.78, duration: 0.18, boost: 2.4 } },
+    horse: { minSurges: 2, maxExtraSurges: 2, surgeStartRange: [0.10, 0.75], surgeDurationRange: [0.14, 0.24], surgeBoostRange: [0.5, 1.5], winnerFinalSurge: { start: 0.78, duration: 0.18, boost: 2.4 } },
     colours: { gold: '#D4AF37', goldLight: '#F5E49A', userPick: 'rgba(212,175,55,0.28)', foxPick: 'rgba(200,120,20,0.22)', neutralGlow: 'rgba(120,150,200,0.10)', userLabel: '#D4AF37', foxLabel: '#E8A050', defaultLabel: 'rgba(244,240,232,0.88)', silkDefault: '#C8A951', silk2Default: '#1A2540', rankGold: '#D4AF37', rankSilver: '#C0C0C0', rankBronze: '#CD7F32', skyTop: '#7eb8e8', skyBottom: '#c9a66a', trackTurf: '#2d5e3a', speedLine: 'rgba(255,255,255,0.45)' },
   },
   band: {
@@ -310,7 +310,9 @@ const DIRECTOR = {
   fieldFade: 0,      // how far the back markers recede
   flash:     0,      // white flash at the line
   reveal:    0,      // finish-card reveal 0 → 1
-  runOut:    0,      // lengths run on past the post after the line
+  filmRate:  1,      // playback speed after the line: slow motion back up to real time
+  postHold:  0,      // 0 → 1, how firmly the camera holds the winning post in shot
+  postFrame: 0.40,   // where across the frame the post is held
   pressFlash: 0,     // press flashguns firing at the post, 0 → 1
   letterbox: 0,      // cinema bars, as a fraction of viewport height each
   phase:     'cruise',
@@ -575,6 +577,8 @@ function startRace() {
 
   frameClock  = 0;
   raceRunning = true;
+  FINISH.active = false;
+  _lastLeaderTravel = 0;
   firedCommentary.clear();
   _lbSampleTimer = 0;
   STATE.finishMargin = null;
@@ -662,21 +666,61 @@ function buildRacePositions(winner) {
 // leaves the tail of the field out of frame.
 const MAX_VISIBLE_LENGTHS = 46;
 
-function finalLengthsFor(runner, rank) {
+// How far, in lengths, the runner-up may poke his head in front of the
+// winner at the height of the finish duel. A long head.
+const DUEL_HEAD_IN_FRONT = 0.3;
+
+// Surge shape. The shortest a surge may be, as a fraction of the race,
+// and how many lengths one unit of surgeBoost is worth.
+const SURGE_MIN_SPAN = 0.14;
+const SURGE_LENGTHS  = 1.5;
+
+// No horse gallops more than this much faster or slower than the leader.
+// Every move in the race — the fan-out, the pace, the surges, the finish
+// duel — is a change in a horse's deficit, and the rate that deficit may
+// change at is capped at this fraction of the leader's own speed. A horse
+// losing ground is then a horse galloping at eighty per cent, which reads
+// as tiring; uncapped, the fastest moves had horses travelling backwards
+// over the turf, which read as being shoved.
+const REL_SPEED_CAP = 0.22;
+
+function finalLengthsFor(runner, rank, invented) {
   if (REPLAY_DATA && REPLAY_DATA.has_distances) {
     const raw = (REPLAY_DATA.lengths_behind_winner || {})[runner.id];
     if (raw !== undefined && raw !== null) {
       return Math.min(MAX_VISIBLE_LENGTHS, Math.max(0, Number(raw) || 0));
     }
   }
-  // Forecast, or a replay with no parsed distances: invent a plausible
-  // fan-out. Sprints finish tighter than stayers.
+  return invented[rank] || 0;
+}
+
+// Forecast, or a replay with no per-horse distances: invent the gaps —
+// and invent a close finish, because that is what the viewer is there
+// for. The winner wins by the real winning margin where the result has
+// one (a short head to a neck where it does not), second and third are
+// within a length, nine horses are inside five lengths, and only then
+// does the tail string out behind them. Built as a running total of the
+// gap from each horse to the one in front, so the finishing order can
+// never be contradicted by the jitter. Sprints finish tighter than
+// stayers.
+function inventFinishGaps(positions) {
   const band = STATE.raceBand === 'sprint' ? 0.86
              : STATE.raceBand === 'mile'   ? 0.95
              :                               1.05;
-  if (rank === 0) return 0;
-  const lengths = band * (0.42 * Math.pow(rank, 1.45) + Math.random() * 0.3);
-  return Math.min(MAX_VISIBLE_LENGTHS, lengths);
+  let margin = null;
+  if (REPLAY_DATA && REPLAY_DATA.has_result && positions[1]) {
+    const m = _parseBeatenDistance((REPLAY_DATA.beaten_distances || {})[positions[1].id]);
+    if (m === -1) margin = 0;                              // dead heat
+    else if (m != null) margin = Math.min(1.5, m);
+  }
+  const gaps = [0];
+  for (let r = 1; r < positions.length; r++) {
+    const step = r === 1 ? (margin != null ? margin : band * (0.12 + Math.random() * 0.23))
+               : r <= 8  ? band * (0.28 + 0.06 * (r - 2) + Math.random() * 0.12)
+               :           band * (0.8 + 0.12 * (r - 9) + Math.random() * 0.4);
+    gaps.push(Math.min(MAX_VISIBLE_LENGTHS, gaps[r - 1] + step));
+  }
+  return gaps;
 }
 
 // Pace style shapes a horse's race without changing its result.
@@ -708,8 +752,27 @@ function buildHorseObjects(positions) {
     const j = Math.floor(Math.random() * (i + 1));
     [lanes[i], lanes[j]] = [lanes[j], lanes[i]];
   }
+  // Except the finish. The horses that fight it out need clear daylight
+  // between them across the track: left to the shuffle, the winner and
+  // the runner-up were often in neighbouring lanes, drawn one over the
+  // other, and a nose-to-nose duel read as one horse out on its own.
+  // Spread the first four through the middle of the track, in a random
+  // order so the winner is not always on the same side, then fill the
+  // rest of the lanes around them.
+  const DUELLERS = Math.min(4, count);
+  if (count >= 6) {
+    const picks = [0.18, 0.40, 0.62, 0.84].slice(0, DUELLERS)
+      .map((t) => Math.min(count - 1, Math.round(t * (count - 1))));
+    for (let i = picks.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [picks[i], picks[j]] = [picks[j], picks[i]];
+    }
+    const rest = lanes.filter((l) => !picks.includes(l));
+    lanes.splice(0, lanes.length, ...picks, ...rest);
+  }
 
   const HORSE = SHARED.horse || {};
+  const invented = inventFinishGaps(positions);
 
   horses = positions.map((r, rank) => {
     // Surge windows — 3-5 moments where a horse quickens or drops away.
@@ -723,10 +786,14 @@ function buildHorseObjects(positions) {
       const dr = HORSE.surgeDurationRange || [0.04, 0.12];
       const br = HORSE.surgeBoostRange    || [0.5, 1.5];
       const sign = Math.random() < 0.32 ? -1 : 1;
+      // At least SURGE_MIN_SPAN of the race and SURGE_LENGTHS per unit of
+      // boost. A move over four percent of the race was a horse shot three
+      // lengths up the field and back in under a second — faster than the
+      // field itself was galloping, which is what read as being shoved.
       surges.push({
         start:    sr[0] + Math.random() * (sr[1] - sr[0]),
-        duration: dr[0] + Math.random() * (dr[1] - dr[0]),
-        lengths:  sign * (br[0] + Math.random() * (br[1] - br[0])) * 2.4,
+        duration: Math.max(SURGE_MIN_SPAN, dr[0] + Math.random() * (dr[1] - dr[0])),
+        lengths:  sign * (br[0] + Math.random() * (br[1] - br[0])) * SURGE_LENGTHS,
       });
     }
     if (rank === 0 && HORSE.winnerFinalSurge) {
@@ -734,22 +801,41 @@ function buildHorseObjects(positions) {
       surges.push({ start: w.start, duration: w.duration, lengths: w.boost * 2.0 });
     }
 
-    const finalLengths = finalLengthsFor(r, rank);
+    const finalLengths = finalLengthsFor(r, rank, invented);
 
     // The finish duel. The placed horses get a surge timed at the top of
-    // the straight that all but wipes out their deficit, so they draw
-    // upsides the leader and the last furlong is a question rather than
-    // a formality. surgeWeight collapses to zero by the line, so the
-    // margin the payload specifies is still exactly what gets drawn.
-    if (rank >= 1 && rank <= 2 && finalLengths > 0.15) {
+    // the straight that wipes out their deficit, so three or four of them
+    // come upsides the leader and the last furlong is a question rather
+    // than a formality. The runner-up goes further than level: he gets
+    // his head in front for a few strides (DUEL_HEAD_IN_FRONT, the only
+    // time a deficit may go negative), and the winner has to fight back.
+    // surgeWeight collapses to zero by the line, so the finishing order
+    // and the margins the payload specifies are still exactly what gets
+    // drawn.
+    let duelFloor = 0;
+    if (rank >= 1 && rank <= 3 && finalLengths > 0.02) {
       // Capped, and deliberately. Sized purely off the final margin, a
       // runaway would have the runner-up close thirteen lengths and then
       // shed them again in the last few strides, which looks like the
       // horse stopping rather than the winner going away. Three and a
       // half lengths is enough to make a close race a question without
       // rewriting a one-sided one.
-      const closing = Math.min(finalLengths * (rank === 1 ? 0.95 : 0.75), 3.5);
-      surges.push({ start: 0.84 + rank * 0.02, duration: 0.15, lengths: closing });
+      const share = rank === 1 ? 1 : rank === 2 ? 0.9 : 0.8;
+      const extra = rank === 1 && finalLengths < 3 ? DUEL_HEAD_IN_FRONT : 0;
+      const closing = Math.min(finalLengths * share + extra, 3.5);
+      // Peaking at 95–97% of the race, so the lead is still changing hands
+      // a few strides from the line and the winner only gets back up at
+      // the very end.
+      surges.push({ start: 0.86 + rank * 0.01, duration: 0.16, lengths: closing });
+      if (extra) duelFloor = -DUEL_HEAD_IN_FRONT;
+    }
+    // The chasing pack. Fifth to ninth close up behind the duel through
+    // the final furlong, so the last shot is a charging field rather than
+    // three horses and a lot of grass, then fade back to their true
+    // margins with everything else by the line.
+    if (rank >= 4 && rank <= 8 && finalLengths > 0.3) {
+      surges.push({ start: 0.80 + rank * 0.012, duration: 0.17,
+                    lengths: Math.min(finalLengths * 0.4, 2.6) });
     }
 
     return {
@@ -767,6 +853,7 @@ function buildHorseObjects(positions) {
       depth:         1,
       finalPos:      rank,
       surges:        surges,
+      duelFloor:     duelFloor,  // how far ahead of the winner he may get
       bobPhase:      Math.random() * Math.PI * 2,
       legPhase:      Math.random() * Math.PI * 2,
       bobRate:       0.88 + Math.random() * 0.26,
@@ -806,13 +893,22 @@ function relayoutLanes() {
 // whereas the deficit is slow-moving and settles exactly on its target.
 const DEFICIT_TAU_MS = 320;
 
-function updateRaceModel(dt) {
+let _lastLeaderTravel = 0;
+
+function updateRaceModel(dt, snap) {
+  // Past the post the field is handed to its own model (runThroughLine).
+  if (FINISH.active) { runThroughLine(dt); return; }
+
   const p = DIRECTOR.progress;
 
-  // Where the front of the race is, in lengths. runOut carries the field
-  // on past the winning post after the line — horses do not stop dead on
-  // it, and it is what gives the placed runners somewhere to finish.
-  const leaderTravel = p * WORLD.spanLengths + DIRECTOR.runOut;
+  // Where the front of the race is, in lengths.
+  const leaderTravel = p * WORLD.spanLengths;
+
+  // How far the front of the race moved this frame. The cap on every
+  // horse's relative move is a fraction of it, so it slows down in slow
+  // motion along with everything else.
+  const capStep = REL_SPEED_CAP * Math.max(0, leaderTravel - _lastLeaderTravel);
+  _lastLeaderTravel = leaderTravel;
 
   // Fan-out: 5% of the final spread at the gate, 100% at the line.
   const fan = (0.05 + 0.95 * smoothstep(0, 1, p)) * WORLD.spreadScale;
@@ -825,7 +921,7 @@ function updateRaceModel(dt) {
   // order nor the real margins are ever falsified by a bell curve.
   const surgeWeight = 1 - smoothstep(0.92, 1, p);
 
-  const k = 1 - Math.exp(-dt / DEFICIT_TAU_MS);
+  const k = snap ? 1 : 1 - Math.exp(-dt / DEFICIT_TAU_MS);
 
   horses.forEach((h) => {
     let surge = 0;
@@ -837,30 +933,86 @@ function updateRaceModel(dt) {
     }
 
     const target = Math.max(
-      0,
+      h.duelFloor * surgeWeight,
       h.finalLengths * fan + h.paceBias * paceWeight - surge * surgeWeight
     );
 
-    h.deficit += (target - h.deficit) * k;
+    let move = (target - h.deficit) * k;
+    if (!snap) move = Math.max(-capStep, Math.min(capStep, move));
+    h.deficit += move;
     h.travel   = Math.max(0, leaderTravel - h.deficit);
-
-    h.lastWorldX = h.worldX;
-    h.worldX     = h.travel * WORLD.lengthPx;
-
-    // Instantaneous ground speed, lightly smoothed — the gait cycle and
-    // the hoof dust both key off it, so a spiky value would flicker.
-    const inst = dt > 0 ? (h.worldX - h.lastWorldX) / dt : 0;
-    h.speed += (inst - h.speed) * 0.2;
-
-    // Galloping micro-motion. Stride rate follows ground speed so the
-    // legs stay in sync with the travel, slow motion included.
-    const strideRate = 0.010 + Math.min(0.030, h.speed * 0.020);
-    h.bobPhase  += dt * strideRate * 0.62 * h.bobRate;
-    h.legPhase  += dt * strideRate * h.bobRate;
-    h.swayPhase += dt * 0.0032 * h.bobRate;
+    placeHorse(h, dt, snap);
   });
 
   // The order is now stale by definition — every position just moved.
+  _rankedCacheAt = -1;
+}
+
+// World position, ground speed and gait from h.travel.
+function placeHorse(h, dt, snap) {
+  h.lastWorldX = snap ? h.travel * WORLD.lengthPx : h.worldX;
+  h.worldX     = h.travel * WORLD.lengthPx;
+  const dx = Math.max(0, h.worldX - h.lastWorldX);
+
+  // Instantaneous ground speed, lightly smoothed — the hoof dust keys off
+  // it, so a spiky value would flicker.
+  const inst = dt > 0 ? dx / dt : 0;
+  h.speed += (inst - h.speed) * 0.2;
+
+  // The gait is driven by distance, not by time. A planted hoof has to
+  // stay where it was planted while the body passes over it, and that
+  // only happens if one gait cycle carries the horse exactly one stride
+  // (STRIDE_LOCAL, in the horse's own units, times the scale it is drawn
+  // at). Tied to the clock instead, the legs kept galloping at nearly the
+  // same rate whatever the horse was doing: in slow motion, pulling up or
+  // standing still the hooves slid over the turf, and the small horses in
+  // the far lanes skated worst of all.
+  const cycles = dx / (STRIDE_LOCAL * WORLD.horseScale * h.depth);
+  h.legPhase  += cycles * Math.PI * 2;
+  h.bobPhase  += cycles * Math.PI * 2 * 0.62;
+  h.swayPhase += dt * 0.0032 * h.bobRate;
+}
+
+// ── Through the line ────────────────────────────────────────────
+// After the winner hits the line every horse keeps galloping at race
+// speed until IT reaches the line, then pulls up the way the winner did:
+// its speed eases from race pace towards EASE_TO of it with a time
+// constant of EASE_TAU. The whole field runs the same curve, each horse
+// starting it at its own moment, so a horse is still flat out as it
+// crosses, nobody passes anybody, and the finishers bunch up as they
+// pull up. The clock is race time: DIRECTOR.filmRate brings the
+// playback from the final furlong's slow motion back to real time.
+//
+// This replaced a single run-out distance tweened onto the front of the
+// race, which made the whole field jump from slow motion to six times
+// that speed on the line and then brake to a dead stop in two seconds,
+// the chasers included, with their legs still going.
+const FINISH  = { active: false, t: 0, v: 0 };
+const EASE_TO  = 0.42;
+const EASE_TAU = 1.1;    // seconds of race time
+
+function beginRunThrough() {
+  FINISH.active = true;
+  FINISH.t = 0;
+  FINISH.v = WORLD.spanLengths / Math.max(1, masterTL ? masterTL.duration() : 46);  // lengths per race second
+  horses.forEach((h) => {
+    h.lineGap = h.finalPos === 0 ? 0 : Math.max(0, WORLD.spanLengths - h.travel);
+  });
+}
+
+// Lengths run past the post, tau race-seconds after crossing it.
+function runOnPast(tau) {
+  return FINISH.v * (EASE_TO * tau + (1 - EASE_TO) * EASE_TAU * (1 - Math.exp(-tau / EASE_TAU)));
+}
+
+function runThroughLine(dt) {
+  FINISH.t += (dt / 1000) * DIRECTOR.filmRate;
+  const T = FINISH.t, v = FINISH.v, span = WORLD.spanLengths;
+  horses.forEach((h) => {
+    const reach = h.lineGap / v;             // when this horse gets there
+    h.travel = T < reach ? span - h.lineGap + v * T : span + runOnPast(T - reach);
+    placeHorse(h, dt, false);
+  });
   _rankedCacheAt = -1;
 }
 
@@ -869,7 +1021,8 @@ function updateRaceModel(dt) {
 // spend a second visibly sliding everything into place; snapping is
 // both correct and invisible.
 function snapRaceState() {
-  updateRaceModel(100000);
+  _lastLeaderTravel = DIRECTOR.progress * WORLD.spanLengths;
+  updateRaceModel(16.667, true);
   // Zoom first: the focus clamp that keeps the leader in frame is
   // computed against the zoom, so a stale one puts the leader outside
   // the very frame it is supposed to guarantee.
@@ -908,9 +1061,11 @@ function buildMasterTimeline() {
     onComplete: crossTheLine,
   });
 
-  // Race progress is linear in timeline time, which keeps every label
-  // below expressible as a plain progress fraction.
-  tl.to(DIRECTOR, { progress: 1, duration: durationS, ease: 'none' }, 0);
+  // Race progress is linear in timeline time after the break, which
+  // keeps every label below expressible as (very nearly) a plain
+  // progress fraction. The first START_EASE of it eases in: horses do
+  // not leave the stalls at full speed.
+  tl.to(DIRECTOR, { progress: 1, duration: durationS, ease: raceProgressEase }, 0);
   RACE_PHASES.forEach((ph) => tl.addLabel(ph.key, durationS * ph.from));
 
   // ── CRUISE ── wide, level, unhurried. The whole field is legible and
@@ -933,9 +1088,9 @@ function buildMasterTimeline() {
   // ── DRIVE ── down onto the principal group. Back markers recede, the
   //    camera drops and starts to breathe with the gallop.
   tl.to(DIRECTOR, {
-    zoom: 1.44, anchorX: 0.41, groupBias: 0.78, vignette: 0.26, letterbox: 0.058,
+    zoom: 1.34, anchorX: 0.50, groupBias: 0.62, vignette: 0.26, letterbox: 0.058,
     shake: SHAKE * 1.3, camY: 9, tilt: 0.004, fieldFade: 0.34,
-    duration: durationS * 0.18, ease: 'power2.in',
+    duration: durationS * 0.18, ease: 'sine.inOut',
   }, 'drive');
 
   // ── LINE ── the dedicated final-furlong sequence.
@@ -951,19 +1106,30 @@ function buildMasterTimeline() {
   return tl;
 }
 
+// The field accelerates out of the stalls over the first START_EASE of
+// the race, then gallops at a constant speed. Continuous in value and in
+// slope, so there is no jolt when the acceleration ends.
+const START_EASE = 0.04;
+function raceProgressEase(x) {
+  const a = START_EASE, k = 1 / (1 - a / 2);
+  return x < a ? k * x * x / (2 * a) : k * (x - a / 2);
+}
+
 // ── The final furlong ───────────────────────────────────────────
 // A dedicated sequence, not simply more of the same but faster. The
-// camera drops to the rail and closes down onto the two or three
-// runners that can still win it, the world goes into slow motion, and
-// the winning post finally comes into shot from the right — it has been
-// out beyond the frame edge for the whole race until now.
+// camera drops to the rail and frames the leader on the right of the
+// shot with the chasing pack filling the frame behind him — seven to
+// nine horses in shot, the duel for the lead among them — the world goes
+// into slow motion, and the winning post finally comes into shot from
+// the right: it has been out beyond the frame edge for the whole race
+// until now.
 function addFinalFurlongSequence(tl, durationS) {
   const seg = durationS * (1 - RACE_PHASES[3].from);
 
   tl.to(DIRECTOR, {
-    zoom: 1.52, anchorX: 0.42, groupBias: 0.94, vignette: 0.34, letterbox: 0.072,
-    shake: SHAKE * 2.4, camY: 12, tilt: 0.009, fieldFade: 0.45,
-    duration: seg * 0.75, ease: 'power2.in',
+    zoom: 1.36, anchorX: 0.62, groupBias: 1, vignette: 0.34, letterbox: 0.072,
+    shake: SHAKE * 2.4, camY: 12, tilt: 0.009, fieldFade: 0.40,
+    duration: seg * 0.75, ease: 'sine.inOut',
   }, 'line');
 
   tl.call(() => {
@@ -1012,6 +1178,15 @@ function syncRacePhase(p) {
 // moves past it.
 const CAM_FOLLOW_TAU_MS = 240;
 
+// From the drive onwards the shot has to hold the leader and the next
+// FRAME_PACK - 1 horses — seven to nine in shot is what makes the finish
+// read as a race. When the field is too strung out for the director's
+// framing to do that, the camera goes wider, down to ZOOM_FLOOR, and
+// centres on the group: the wide shot of a runaway winner with the field
+// toiling behind him.
+const FRAME_PACK = 8;
+const ZOOM_FLOOR = 0.9;
+
 function principalGroupFocus() {
   const ranked = rankedHorses();
   if (!ranked.length) return 0;
@@ -1039,19 +1214,43 @@ function updateCamera(dt) {
   // where the race is going rather than where it has been.
   let target = principalGroupFocus() + viewW * 0.05 * DIRECTOR.progress;
 
-  // While the field is running through the line, keep the winning post
-  // in shot. On a blanket finish the group centroid IS the winner, so
-  // the camera follows them ten lengths past the post and the line
-  // itself slides off the left edge — exactly the moment the viewer
-  // most wants to see it.
-  if (DIRECTOR.runOut > 0.01) {
-    const maxAhead = (viewW * DIRECTOR.anchorX - viewW * 0.10) / CAM.zoom;
-    target = Math.min(target, WORLD.spanPx + maxAhead);
+  // While the field is running through the line, hold the winning post
+  // in shot at DIRECTOR.postFrame across the frame, so the viewer sees
+  // the placed horses come through it and the rest still coming. Left to
+  // follow the group, the camera went with the winners and the post slid
+  // off the left edge at exactly the moment the viewer wants it.
+  if (FINISH.active && DIRECTOR.postHold > 0) {
+    const hold = WORLD.spanPx + (DIRECTOR.anchorX - DIRECTOR.postFrame) * viewW / CAM.zoom;
+    target += (hold - target) * DIRECTOR.postHold;
+  }
+
+  let zoom = DIRECTOR.zoom;
+  if (!FINISH.active && DIRECTOR.progress > 0.72) {
+    const ranked = rankedHorses();
+    const back = ranked[Math.min(ranked.length - 1, FRAME_PACK - 1)];
+    if (back) {
+      const packW = ranked[0].worldX - back.worldX + 3 * WORLD.lengthPx;
+      const fit = viewW * 0.9 / packW;
+      // Eased in as the pack stops fitting, so the camera never snaps
+      // between the two framings.
+      const w = smoothstep(0, 0.15, (DIRECTOR.zoom - fit) / DIRECTOR.zoom);
+      if (w > 0) {
+        const wide = Math.max(ZOOM_FLOOR, fit);
+        const mid  = (ranked[0].worldX + back.worldX) / 2 + 0.3 * WORLD.lengthPx;
+        // If even the widest shot cannot hold them all, the leader wins:
+        // he stays well inside the right of frame and the tail of the
+        // group goes off the left.
+        const packTarget = Math.max(mid + (DIRECTOR.anchorX - 0.5) * viewW / wide,
+                                    ranked[0].worldX - (0.84 - DIRECTOR.anchorX) * viewW / wide);
+        zoom   += (wide - zoom) * w;
+        target += (packTarget - target) * w;
+      }
+    }
   }
 
   const k = 1 - Math.exp(-dt / CAM_FOLLOW_TAU_MS);
   CAM.x    += (target - CAM.x) * k;
-  CAM.zoom += (DIRECTOR.zoom - CAM.zoom) * k;
+  CAM.zoom += (zoom - CAM.zoom) * k;
 
   // Hoof rumble. Amplitude comes off the director so it ramps with the
   // phases, and it is flat zero under prefers-reduced-motion.
@@ -2586,7 +2785,7 @@ function _spawnHoofDust(wx, y, h, cyc, artScale) {
   if (particles.length > MAX_PARTICLES) return;
   if (h.speed < 0.02) return;
 
-  const STRIKES = [0.00, 0.10, 0.26, 0.36];   // GAIT: the four footfalls
+  const STRIKES = [GAIT.farHind, GAIT.nearHind, GAIT.farFore, GAIT.nearFore];
   const prevCyc = h.lastDustCycle == null ? cyc : h.lastDustCycle;
   h.lastDustCycle = cyc;
 
@@ -2957,11 +3156,20 @@ function horseGrad(key, make) {
 // ── Gait ─────────────────────────────────────────────────────────
 // A transverse gallop, four beats then a moment of suspension. These are
 // the points in the stride cycle where each hoof strikes the ground:
-//   far hind 0.00 → near hind 0.10 → far fore 0.26 → near fore 0.36,
+//   far hind 0.00 → near hind 0.10 → far fore 0.29 → near fore 0.40,
 // each staying down for STANCE of the cycle, and then all four are off
-// the ground from 0.72 until the far hind lands again.
-const GAIT = { farHind: 0.00, nearHind: 0.10, farFore: 0.26, nearFore: 0.36 };
-const STANCE = 0.36;
+// the ground from 0.59 until the far hind lands again. A racehorse at
+// full gallop has each foot down for about a fifth of the stride.
+const GAIT = { farHind: 0.00, nearHind: 0.10, farFore: 0.29, nearFore: 0.40 };
+const STANCE = 0.19;
+const SUSPENSION = GAIT.nearFore + STANCE;     // all four off the ground from here
+
+// How far a planted hoof sweeps back under the body, in the horse's own
+// units, and so how far one gait cycle has to carry the horse for the
+// hooves not to slide: STRIDE_LOCAL, about 1.4 lengths. placeHorse()
+// advances the gait by distance against this.
+const STRIDE_SWEEP = 19.5;
+const STRIDE_LOCAL = STRIDE_SWEEP / STANCE;
 
 function _sstep(a, b, x) {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
@@ -3092,10 +3300,12 @@ function drawHorseSilhouette(x, y, h, artScale) {
   // Highest through the suspension, lowest as the forelegs take the
   // weight; the body pitches nose-up as the hinds drive and nose-down as
   // the fores land; the neck and head nod against that.
-  const susp = cyc > 0.72 ? Math.sin((cyc - 0.72) / 0.28 * Math.PI) : 0;
-  const bodyLift = -susp * 2.6 + Math.max(0, Math.sin((cyc - 0.3) * Math.PI * 2)) * 0.9;
-  const pitch = Math.sin((cyc - 0.12) * Math.PI * 2) * 0.03 + Math.sin(h.swayPhase) * 0.006;
-  const neckAng = Math.sin((cyc - 0.36) * Math.PI * 2) * 0.07;
+  const susp = cyc > SUSPENSION ? Math.sin((cyc - SUSPENSION) / (1 - SUSPENSION) * Math.PI) : 0;
+  const foreLoad = (cyc > GAIT.farFore && cyc < SUSPENSION)
+    ? Math.sin((cyc - GAIT.farFore) / (SUSPENSION - GAIT.farFore) * Math.PI) : 0;
+  const bodyLift = -susp * 2.6 + foreLoad * 0.9;
+  const pitch = Math.sin((cyc - 0.16) * Math.PI * 2) * 0.03 + Math.sin(h.swayPhase) * 0.006;
+  const neckAng = Math.sin((cyc - 0.40) * Math.PI * 2) * 0.07;
 
   ctx.save();
   ctx.translate(x, y);
@@ -3124,10 +3334,11 @@ function drawHorseSilhouette(x, y, h, artScale) {
     const s = solveLeg(rx, ry, tx, ty, a, b, fore ? -1 : 1);
     return { rx: rx, ry: ry, jx: s.jx, jy: s.jy, fx: s.fx, fy: s.fy, planted: hp.planted };
   };
-  const farFore  = leg('farFore',  16.5, -0.5, 10, -9, 15, 14, 16.2, true);
-  const nearFore = leg('nearFore', 18.5,  0.5, 10, -9, 15, 14, 16.2, true);
-  const farHind  = leg('farHind', -11.5, -2.5,  7, -13, 12, 15, 17.8, false);
-  const nearHind = leg('nearHind', -13.5, -1.5, 7, -13, 12, 15, 17.8, false);
+  // Every hoof sweeps STRIDE_SWEEP back while it is down.
+  const farFore  = leg('farFore',  16.5, -0.5, 10, -9.5, 15, 14, 16.2, true);
+  const nearFore = leg('nearFore', 18.5,  0.5, 10, -9.5, 15, 14, 16.2, true);
+  const farHind  = leg('farHind', -11.5, -2.5,  7, -12.5, 12, 15, 17.8, false);
+  const nearHind = leg('nearHind', -13.5, -1.5, 7, -12.5, 12, 15, 17.8, false);
 
   // Far-side legs sit in shadow behind the body.
   const farUpper = coat.shade;
@@ -3965,32 +4176,47 @@ function setPhaseTitle(text) {
 // order:
 //
 //   1. A single frame of flash as the field hits the line.
-//   2. A held shot. The horses stop, the camera does not — it keeps
-//      drifting in on the winner for the better part of a second with
-//      nothing on screen but the result of the race. This pause is the
-//      whole point of the sequence; take it out and the finish reads
-//      as an animation ending rather than a race being won.
-//   3. The result card, sized to the actual margin.
-//   4. Out to the roll call.
+//   2. The run-through. The camera opens up and holds the winning post
+//      while the rest of the field gallops through it (runThroughLine),
+//      the playback coming back from slow motion to real time.
+//   3. The result card, sized to the actual margin — not before seven
+//      finishers have come through the line behind the winner.
+//   4. Out to the Winning Moment, then the roll call.
 //
 // Like everything else in the race, it is one GSAP timeline.
-// The zoom the camera opens to at the line. Shared, because the run-out
-// distance is derived from how much track that zoom actually shows.
+// The zoom the camera opens to at the line: eighteen lengths of track
+// on a desktop, enough for the placed horses on one side of the post and
+// the stragglers on the other.
 const FINISH_ZOOM = 1.08;
 
-// How far the field runs on past the post. Enough that eight or nine
-// runners come through the line behind the winner, which is what makes
-// the finish read as a race rather than as one horse arriving — but it
-// has to be measured against the FRAME, not fixed. Ten lengths is about
-// half a desktop frame and reads perfectly; on a 375px phone ten lengths
-// is wider than the entire viewport, so the winner and the whole field
-// ran off the right-hand edge and the finish played to an empty screen.
-function runOutLengths() {
-  const frameLengths = viewW / FINISH_ZOOM / WORLD.lengthPx;
-  return Math.max(4, Math.min(12, frameLengths * 0.55));
-}
-const FINISH_PAUSE_S  = 2.45;  // line → placings settle → held beat → card
+const FINISH_PAUSE_S  = 2.45;  // line → card, at the least
+const FINISH_PAUSE_MAX_S = 6.5;
 const RESULT_HOLD_S   = 1.70;
+
+// The playback speed over the finish: the final furlong's slow motion
+// for a beat on the line, then back up to real time.
+const FILM_RAMP_AT_S  = 0.15;
+const FILM_RAMP_S     = 1.4;
+
+// When to bring the result card in. Not before FINISH_PAUSE_S, and not
+// before FINISHERS_BEFORE_CARD horses have come through the line behind
+// the winner — on a close finish that is well inside the minimum, but a
+// runaway's field is still a dozen lengths out when the winner crosses,
+// and the card used to arrive with nobody else in the picture.
+const FINISHERS_BEFORE_CARD = 7;
+function finishPauseS(slowFrom) {
+  const gaps = horses.map((h) => h.lineGap).sort((a, b) => a - b);
+  const gap = gaps[Math.min(gaps.length - 1, FINISHERS_BEFORE_CARD)] || 0;
+  const need = gap / FINISH.v + 0.1;              // race seconds until he is through
+  // Walk the playback-speed curve to find the wall-clock time.
+  let film = 0, wall = 0;
+  while (film < need && wall < FINISH_PAUSE_MAX_S) {
+    const u = Math.max(0, Math.min(1, (wall - FILM_RAMP_AT_S) / FILM_RAMP_S));
+    film += 0.02 * (slowFrom + (1 - slowFrom) * (0.5 - 0.5 * Math.cos(Math.PI * u)));
+    wall += 0.02;
+  }
+  return Math.max(FINISH_PAUSE_S, Math.min(FINISH_PAUSE_MAX_S, wall + 0.25));
+}
 
 function crossTheLine() {
   const margin = _computeWinningMargin();
@@ -3998,32 +4224,34 @@ function crossTheLine() {
   setPhaseTitle('PAST THE POST');
   clearBroadcastId();
 
+  // The field goes on through the line under its own model from here.
+  beginRunThrough();
+  DIRECTOR.filmRate = masterTL ? masterTL.timeScale() : 1;
+  const pause = finishPauseS(DIRECTOR.filmRate);
+
   finishTL = gsap.timeline({ onComplete: () => runWinningMoment(margin) });
 
   // 1 — the flash as the winner hits the line
   finishTL.to(DIRECTOR, { flash: 1, duration: 0.06, ease: 'none' }, 0);
   finishTL.to(DIRECTOR, { flash: 0, duration: 0.55, ease: 'power2.out' }, 0.06);
 
-  // 2 — the run-out. The field carries on past the post and decelerates,
-  //     which is both what horses actually do and what gives the placed
-  //     runners somewhere to finish. Twelve lengths is enough for eight
-  //     or nine of them to come through behind the winner.
-  finishTL.to(DIRECTOR, {
-    runOut: runOutLengths(),
-    duration: prefersReducedMotion ? 0.6 : 2.2,
-    ease: 'power2.out',
-  }, 0);
+  // 2 — the run-through (runThroughLine). A beat of slow motion on the
+  //     line itself, then the playback comes back up to real time as the
+  //     rest of the field comes through.
+  finishTL.to(DIRECTOR, { filmRate: 1, duration: FILM_RAMP_S, ease: 'sine.inOut' }, FILM_RAMP_AT_S);
 
-  // 3 — and the camera opens up to show them do it. Through the final
-  //     furlong the shot is tight on the leader; at the line it widens
-  //     and falls back off the winner onto the group, which is the cut a
-  //     broadcast director makes to show you the placings. Without this
-  //     the winner runs on alone and everyone else finishes off-frame.
+  // 3 — and the camera opens up and holds the post to show them do it.
+  //     Through the final furlong the shot is on the leader; at the line
+  //     it widens and settles with the post held a third of the way
+  //     across, then eases a little further across as the placed horses
+  //     pull up — the winners on the right, the stragglers still coming
+  //     on the left.
   finishTL.to(DIRECTOR, {
-    zoom: FINISH_ZOOM, anchorX: 0.62, groupBias: 0.1, fieldFade: 0.10, letterbox: 0.05,
-    camY: 4, tilt: 0.003, vignette: 0.28,
+    zoom: FINISH_ZOOM, anchorX: 0.5, groupBias: 0.1, fieldFade: 0.10, letterbox: 0.05,
+    camY: 4, tilt: 0.003, vignette: 0.28, postHold: 1,
     duration: 1.5, ease: 'power2.out',
   }, 0.05);
+  finishTL.to(DIRECTOR, { postFrame: 0.30, duration: 3.6, ease: 'sine.inOut' }, 0.6);
 
   // The flashguns keep going for a moment after they have passed, then
   // thin out as the photographers stop shooting.
@@ -4031,21 +4259,21 @@ function crossTheLine() {
     pressFlash: 0, duration: 2.8, ease: 'power2.out',
   }, 0.35);
 
-  // 4 — the held shot. Everything has settled; the camera drifts and
-  //     nothing else happens. This pause is the whole point of the
-  //     sequence — take it out and the finish reads as an animation
-  //     ending rather than a race being won.
+  // 4 — the held shot. The camera drifts in a touch and darkens its
+  //     edges while the last of the placed horses come through. Only a
+  //     touch: the winners are pulling up on the right of the frame and a
+  //     tighter shot would push them out of it.
   const drift = prefersReducedMotion ? 0 : 1;
   finishTL.to(DIRECTOR, {
-    zoom: FINISH_ZOOM + 0.10 * drift,
+    zoom: FINISH_ZOOM + 0.04 * drift,
     vignette: 0.42,
     duration: 1.6, ease: 'sine.out',
   }, 1.55);
 
   // 5 — the result card
-  finishTL.call(() => showResultCard(margin), null, FINISH_PAUSE_S);
-  finishTL.call(() => hideResultCard(), null, FINISH_PAUSE_S + RESULT_HOLD_S);
-  finishTL.to({}, { duration: FINISH_PAUSE_S + RESULT_HOLD_S + 0.5 }, 0);
+  finishTL.call(() => showResultCard(margin), null, pause);
+  finishTL.call(() => hideResultCard(), null, pause + RESULT_HOLD_S);
+  finishTL.to({}, { duration: pause + RESULT_HOLD_S + 0.5 }, 0);
 }
 
 // ── Result card ─────────────────────────────────────────────────
@@ -4131,7 +4359,7 @@ function hideResultCard() {
 // (HERO), and renderFrame() hands over to renderHeroFrame() while it
 // runs. Skipped entirely under prefers-reduced-motion, as theirs is.
 const WINNING_MOMENT_S = 5.2;
-const HERO_TURF_SPEED  = 1.1;     // screen px of turf per ms at full speed
+const HERO_STRIDE_HZ   = 2.2;     // strides a second at full speed
 let winTL = null;
 
 const HERO = {
@@ -4278,11 +4506,15 @@ function drawHeroConfetti(dt) {
 function renderHeroFrame(dt) {
   const h = HERO.horse;
   const L = heroLayout();
-  HERO.scroll += dt * HERO_TURF_SPEED * HERO.speed;
 
-  // The winner keeps galloping; the gait eases as the speed does.
-  h.legPhase  += dt * 0.018 * (0.7 + 0.3 * HERO.speed);
-  h.bobPhase  += dt * 0.011;
+  // The winner keeps galloping; the gait eases as the speed does, and the
+  // turf passes under him exactly one stride per cycle, so his hooves stay
+  // planted on it (see placeHorse).
+  const cycles = dt / 1000 * HERO_STRIDE_HZ * (0.55 + 0.45 * HERO.speed);
+  const passed = cycles * STRIDE_LOCAL * L.scale;
+  HERO.scroll += passed;
+  h.legPhase  += cycles * Math.PI * 2;
+  h.bobPhase  += cycles * Math.PI * 2 * 0.62;
   h.swayPhase += dt * 0.0032;
   h.speed = 0.3;                                 // keeps the hoof dust coming
 
@@ -4291,8 +4523,7 @@ function renderHeroFrame(dt) {
   drawHeroTrack();
 
   // Divots are thrown back and left behind as the ground goes past.
-  const drift = dt * HERO_TURF_SPEED * HERO.speed * 0.85;
-  for (const p of particles) p.x -= drift;
+  for (const p of particles) p.x -= passed * 0.85;
   drawHoofDust(dt);
 
   // Local y = +28 is the ground line of the horse artwork.
@@ -4756,8 +4987,10 @@ window.replayExperience = function () {
   Object.assign(DIRECTOR, {
     progress: 0, zoom: 1, anchorX: 0.50, camY: 0, tilt: 0, shake: 0,
     vignette: 0.10, groupBias: 0.12, fieldFade: 0, flash: 0, reveal: 0,
-    runOut: 0, pressFlash: 0, letterbox: 0, phase: 'cruise',
+    filmRate: 1, postHold: 0, postFrame: 0.40,
+    pressFlash: 0, letterbox: 0, phase: 'cruise',
   });
+  FINISH.active = false;
   CAM.x = 0; CAM.zoom = 1; CAM.shakeX = 0; CAM.shakeY = 0;
 
   pCtx.clearRect(0, 0, viewW, viewH);

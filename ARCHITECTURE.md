@@ -177,7 +177,7 @@ THE HORSE                        drawHorseSilhouette() — anatomy + gallop
 Commentary                       Mr Fox beats + the phase strip
 Leaderboard                      buildLeaderboard() + animated updates
 Phase title                      setPhaseTitle()
-CROSSING THE LINE                the flash, the held shot, the result card
+CROSSING THE LINE                the flash, the run-through, the result card
 Roll Call                        last-to-first walk-in, one row per horse
 Reveal                           trophy, winner, verdict card, podium
 Replay                           replayExperience() — the full teardown
@@ -212,7 +212,7 @@ The `#skip` buttons on each screen fast-forward to the next phase and are also a
 - **Cruise** — wide, level, unhurried. The whole field is legible and the camera keeps the principal group near the centre of frame with track ahead of them.
 - **Build** — the camera starts taking a side. Framing tightens onto the front half of the field; the ground moves faster past it.
 - **Drive** — down onto the principal group. Back markers recede, the camera drops and begins to breathe with the gallop.
-- **Line** — the dedicated final-furlong sequence. The camera closes onto the two or three runners that can still win, the world goes into slow motion, and the winning post comes into shot for the first time.
+- **Line** — the dedicated final-furlong sequence. The camera frames the leader on the right with the chasing pack filling the shot behind him (seven to nine horses in frame, the duel among them), the world goes into slow motion, and the winning post comes into shot for the first time.
 
 Each phase is one GSAP tween on the `DIRECTOR` object; the boundaries are labels on the master timeline. The active key is mirrored onto `#screen-race` as `data-race-phase`, which is how CSS reacts to it.
 
@@ -245,7 +245,11 @@ The consequence: the viewport only ever sets a scale factor. It never touches th
 
 **Runner movement is interpolated, never snapped.** Each frame the model computes a *target* deficit from the fan-out curve, the runner's pace style and any active surge, and then eases the live deficit toward it with an exponential filter (`DEFICIT_TAU_MS`). We smooth the deficit rather than the absolute position on purpose: a lagged absolute position would leave every runner, the winner included, short of the line at the finish, whereas a deficit is slow-moving and settles exactly on its target.
 
+**No horse gallops more than 22% faster or slower than the leader** (`REL_SPEED_CAP`). Every move in the race is a change in a horse's deficit, and the rate a deficit may change at is capped at that fraction of the leader's own travel that frame — so it slows down in slow motion along with everything else. Before the cap the fastest surges moved a horse 4.7 lengths a second against the leader while the field itself was galloping at 3.8: for a moment that horse was travelling *backwards* over the turf, which is what read as horses being shoved about. A horse losing ground is now a horse galloping at eighty per cent, which reads as tiring. Surges were lengthened to match (`SURGE_MIN_SPAN`, at least 14% of the race), so the cap rarely has to bite. The race also no longer leaves the stalls at full speed: `raceProgressEase` accelerates the field over the first 4% of the race (about 1.8s), continuous in value and slope so there is no jolt when it ends. Skip to Finish still lands in one step — `snapRaceState()` bypasses the cap.
+
 **The camera follows the race.** `principalGroupFocus()` returns a point somewhere between the centroid of the front 40% of the field and the leader on their own; `DIRECTOR.groupBias` slides between the two as the race develops. `updateCamera()` damps `CAM.x` toward that focus, so the camera never snaps and never overshoots into a visible wobble. A hard floor keeps the leader inside the frame no matter what — on a runaway the centroid sits thirty lengths behind the winner, and a camera that honoured it faithfully would spend the closing stages filming the horses that lost.
+
+**From the drive onwards the shot must hold the leader and the next seven** (`FRAME_PACK`). When the field is too strung out for the director's framing to do that, `updateCamera()` goes wider — down to `ZOOM_FLOOR` (0.9) — and centres on the group from the leader back to the eighth horse, eased in as the pack stops fitting so there is never a snap between the two framings. If even the widest shot cannot hold them all, the leader wins: he is kept inside 84% of the frame and the tail goes off the left. It never engages on a close race; on `race-runaway` it is the wide shot of the winner thirteen clear with the field toiling behind him, seven horses in frame instead of two.
 
 `pushWorldTransform(ctx)` then puts the canvas into world coordinates. Everything drawn between it and `ctx.restore()` uses world x and lane y; the transform handles the pan, the zoom, the camera drop, the roll and the hoof rumble.
 
@@ -326,11 +330,13 @@ That span is what makes `HORSE_ART_LENGTH` the definition of a "length" everywhe
 The gait is a transverse gallop, four footfalls then a moment of suspension (`GAIT`, `STANCE`):
 
 ```
-far hind 0.00 → near hind 0.10 → far fore 0.26 → near fore 0.36
-each hoof down for 0.36 of the cycle; all four off the ground 0.72 → 1.00
+far hind 0.00 → near hind 0.10 → far fore 0.29 → near fore 0.40
+each hoof down for 0.19 of the cycle; all four off the ground 0.59 → 1.00
 ```
 
-`_spawnHoofDust()` fires on the same four footfalls, so the divots come off the hooves that are actually on the ground. The ground target is expressed in the body's *pitched* frame, so the hooves don't skate while the body rocks.
+A racehorse at full gallop has each foot on the ground for about a fifth of the stride, and it matters for more than accuracy — see below. `_spawnHoofDust()` fires on the same four footfalls, so the divots come off the hooves that are actually on the ground. The ground target is expressed in the body's *pitched* frame, so the hooves don't skate while the body rocks.
+
+**The gait is driven by distance, not by time.** A planted hoof sweeps `STRIDE_SWEEP` (19.5 units) back under the body while it is down, so for it to stay where it was planted, one gait cycle has to carry the horse exactly `STRIDE_LOCAL` = `STRIDE_SWEEP / STANCE` of its own units — about 1.4 lengths — at whatever scale it is drawn. `placeHorse()` advances `legPhase` by the distance the horse actually travelled that frame over that stride, so cadence follows ground speed exactly: in slow motion the legs slow with the travel, a horse pulling up after the line canters, and the smaller horses in the far lanes take proportionally quicker strides. It used to be tied to the clock, at nearly the same rate whatever the horse was doing, and the hooves slid over the turf everywhere — the horses covered 1.5 lengths a stride on legs drawn for 0.7, worst of all in slow motion, after the line (when the field stopped dead with its legs still going) and in the far lanes. With a stance of 0.36 the stride needed for planted hooves would have meant five strides a second; 0.19 gives 2.7 at race speed, which is about what a racehorse does. The Winning Moment uses the same rule the other way round: the turf is scrolled one stride per cycle at hero scale.
 
 **The stride moves the whole animal.** The body rises through the suspension and drops as the forelegs take the weight; it pitches nose-up as the hinds drive and nose-down as the fores land; and the neck and head, drawn as one group pivoting at the withers, nod against that. **The jockey rides it**: his group counter-rotates and counter-lifts, so his upper body stays level while the horse moves under him. That is what makes a rider look like he is riding rather than glued on.
 
@@ -444,15 +450,21 @@ if (REPLAY_DATA && REPLAY_DATA.has_result) {
 if (REPLAY_DATA.has_distances) {
    lengths = lengths_behind_winner[runner.id]    // the real margin
 } else {
-   lengths = band * 0.42 * rank^1.45 + jitter    // a plausible fan-out
+   lengths = inventFinishGaps(positions)[rank]   // a close finish, invented
 }
 ```
 
 The engine then runs the same model, the same camera and the same timeline for both paths.
 
-**Why `rank^1.45` and not `rank`.** A linear fan-out finished second a length and a half back and eighth eleven lengths adrift, which is a procession — and it made Skip to Finish drop you into a race that was already decided. Real fields do not spread linearly: the placed horses finish close together and the tail strings out behind them. The exponent gives that shape, under half a length back in second while still leaving thirty-odd for the back markers.
+**Invented gaps are a close finish.** When the payload has no per-horse distances (a forecast, or a result whose `lengths_behind_winner` is empty, like the default fixture), `inventFinishGaps()` builds them as a running total of the gap from each horse to the one in front: the winner wins by the result's real winning margin where there is one (`beaten_distances` of the runner-up — a head in the default fixture) and by a short head to a neck where there is not; second to eighth are each a quarter to three quarters of a length behind the one in front; only from the ninth does the tail string out. That puts second and third within a length, nine horses inside about four lengths — all in the final shot — and the back markers still twenty-odd lengths adrift. Built as a running total, the jitter can never contradict the finishing order.
 
-**The finish duel.** `buildHorseObjects()` gives the second and third runners a surge timed at the top of the straight, sized off their final margin, which all but wipes out their deficit so they draw upsides the leader. Because it rides on the ordinary surge machinery — and `surgeWeight` collapses to zero over the last 8% — the margin the payload specifies is still exactly what gets drawn at the line. The closing sequence of a typical race now runs: level at 79%, winner a half-length up at 87%, level again at 93%, winner asserting to the true margin by the line.
+It used to be a power law — `0.42 × rank^1.45`, then `0.36 × rank^1.35` — on the reasoning that real fields string out. They do, but it put the fourth two and a half lengths back and the ninth seven or more, and because the chasing pack's surges fade out over the last 8% of the race, the pack visibly fell away from the winner in the final strides: the finish read as one horse winning easily, which is the opposite of what the viewer wants from it. Real distances, where the payload has them, are still drawn at their true size.
+
+**The finish duel.** `buildHorseObjects()` gives the second, third and fourth runners a surge timed at the top of the straight, sized off their final margin, which wipes out most of their deficit so they come upsides the leader. The runner-up goes further than level: his surge carries an extra `DUEL_HEAD_IN_FRONT` (0.3 lengths) and his `duelFloor` lets his deficit go that far negative, so for a few strides he has his head in front and the leaderboard shows him leading — then the winner fights back. That is the only time a deficit may go below zero. Because it all rides on the ordinary surge machinery — and `surgeWeight` collapses to zero over the last 8%, taking `duelFloor` with it — the finishing order and the margins the payload specifies are still exactly what gets drawn at the line. The duel surges peak at 95–97% of the race, so the lead is still changing hands a few strides out. After Skip to Finish the default fixture now runs: the runner-up in front from 85% to 97% with the winner a quarter of a length down and third within half a length, the winner getting back up at 97%, and a head in it at the line with nine horses inside four lengths. On the photo-finish fixture the lead changes hands the same way and the winner gets back up by the nose.
+
+**The chasing pack closes too.** Fifth to ninth get a smaller surge through the final furlong — 40% of their margin, at most 2.6 lengths — so the last shot is a charging field rather than three horses and a lot of grass, and they fade back to their true margins with everything else by the line.
+
+**The duellers get lanes with daylight between them.** Lanes are otherwise shuffled, and left to the shuffle the winner and the runner-up were often in neighbouring lanes, drawn one over the other — a nose-to-nose duel read as one horse out on its own. `buildHorseObjects()` puts the first four at 18%, 40%, 62% and 84% of the way across the track, in a random order, so a close finish shows as a line of horses across the course.
 
 It is **capped at 3.5 lengths**, and that matters. Sized purely off the final margin, a thirteen-length runaway would have the runner-up close the whole way and then shed it again in the last few strides — which reads as the second horse stopping rather than the winner going away. The cap makes a close race a question without rewriting a one-sided one: `race-runaway` still finishes with the winner alone and thirteen clear. The user cannot tell from the animation itself which mode is active — that's the point.
 
@@ -517,7 +529,7 @@ GSAP (self-hosted at `js/vendor/gsap.min.js`) drives the screen transitions and 
 
 `buildMasterTimeline()` returns a single `gsap.timeline()` that is the only clock in the race. It owns:
 
-- race progress (`DIRECTOR.progress`, tweened 0 to 1 with `ease: 'none'`, so timeline time and progress fraction are interchangeable)
+- race progress (`DIRECTOR.progress`, tweened 0 to 1 with `raceProgressEase` — an acceleration out of the stalls over the first 4%, then linear — so timeline time and progress fraction are interchangeable to within 2%)
 - every camera parameter, one tween per phase, labelled `cruise` / `build` / `drive` / `line`
 - the slow-motion ramp through the final furlong
 - the scripted broadcast identifications, as `.call()` beats
@@ -530,7 +542,7 @@ Everything a frame needs lives on one object:
 ```javascript
 const DIRECTOR = {
   progress, zoom, anchorX, camY, tilt, shake, vignette, groupBias,
-  fieldFade, flash, runOut, pressFlash, letterbox, phase,
+  fieldFade, flash, filmRate, postHold, postFrame, pressFlash, letterbox, phase,
 };
 ```
 
@@ -546,19 +558,21 @@ Three things fall out of it for free, and each was a bug or a limitation in V1:
 
 ### 8.3 The final furlong
 
-`addFinalFurlongSequence()` is its own sub-sequence rather than "more of the same, faster": the camera drops to the rail and closes down onto the two or three runners that can still win, the world goes into slow motion, and the winning post comes into shot from the right for the first time in the race. In V1 the finish line was pinned at 94% of the viewport from the moment the gates opened, so the viewer stared at the destination for forty seconds; in V2 it lives at the far end of the world and is only drawn when it is genuinely in frame, which works out at roughly the last three seconds.
+`addFinalFurlongSequence()` is its own sub-sequence rather than "more of the same, faster": the camera drops to the rail and frames the leader on the right of the shot (`anchorX` 0.62, `groupBias` 1, zoom 1.36) with the chasing pack filling the frame behind him — seven to nine horses, with the duel for the lead among them — the world goes into slow motion, and the winning post comes into shot from the right for the first time in the race. It used to close down onto the two or three runners that could still win, which left the finish looking like one horse on its own. In V1 the finish line was pinned at 94% of the viewport from the moment the gates opened, so the viewer stared at the destination for forty seconds; in V2 it lives at the far end of the world and is only drawn when it is genuinely in frame, which works out at roughly the last three seconds.
 
 ### 8.4 Crossing the line
 
 `crossTheLine()` builds `finishTL`, in order:
 
 1. A single frame of flash as the field hits the line.
-2. **The run-out.** `DIRECTOR.runOut` tweens to `runOutLengths()` on a `power2.out`, and `updateRaceModel` adds it to the leader's travel. The whole field carries on past the winning post and decelerates, because horses do not stop dead on the line — and because the placed runners need somewhere to finish.
+2. **The run-through.** `beginRunThrough()` hands the field to its own model, `runThroughLine()`. Every horse keeps galloping at race speed until *it* reaches the line, then pulls up the way the winner did — its speed easing from race pace towards `EASE_TO` (42%) of it with a time constant of `EASE_TAU` (1.1s). The whole field runs the same curve, each horse starting it at its own moment, so every horse is still flat out as it crosses, nobody passes anybody, and the finishers bunch up as they pull up. Its clock is race time: `DIRECTOR.filmRate` holds the final furlong's slow motion for a beat on the line and then brings the playback back up to real time as the rest come through.
 
-   The distance is measured **against the frame**, not fixed: `viewW / FINISH_ZOOM / WORLD.lengthPx × 0.55`, clamped to 4–12 lengths. Ten lengths is about half a desktop frame and reads perfectly, but on a 375px phone ten lengths is wider than the entire viewport — the winner and the whole field ran off the right-hand edge and the finish played to an empty screen. Desktop resolves to ~9.9, a phone to ~4.2.
-3. **The camera opens up.** Through the final furlong the shot is tight on the leader; at the line it widens to zoom 1.08 and the focus falls back off the winner onto the group (`groupBias` → 0.1). This is the cut a broadcast director makes to show you the placings, and without it the winner runs on alone while everyone else finishes off-frame. `updateCamera()` also clamps the focus so the post stays at least 10% in from the left edge while `runOut` is non-zero — on a blanket finish the group centroid *is* the winner, so an unclamped camera follows them past the post and the line slides out of shot at exactly the moment the viewer wants it.
-4. **A held shot.** Everything has settled; the camera drifts and nothing else happens. This pause is the whole point of the sequence; take it out and the finish reads as an animation ending rather than a race being won.
-5. The result card, sized to the actual margin: PHOTO FINISH under a head, DEAD HEAT when the API says so, otherwise WINNER with the margin spelled out. It sits high in the frame (`top: 27%`) because the finish shot now has most of a field running through the middle of it.
+   This replaced a single run-out distance tweened onto the front of the race (`DIRECTOR.runOut`). On a `power2.out` over 2.2s that made the whole field jump from 2.1 lengths a second to 13.4 on the line — six times the speed, in one frame — and then brake to a dead stop inside two seconds with their legs still going, the chasers included, several of them before they had reached the post. It was the "pushed, then skidding" finish.
+3. **The camera opens up and holds the post.** Through the final furlong the shot is on the leader; at the line it widens to zoom 1.08 (eighteen lengths of track on a desktop) and `updateCamera()` holds the winning post at `DIRECTOR.postFrame` across the frame — 40%, easing to 30% as the placed horses pull up — blended in by `DIRECTOR.postHold`. The winners pull up on the right, the stragglers are still coming on the left. Left to follow the group, the camera went with the winners and the post slid off the left edge at exactly the moment the viewer wants it.
+4. **A held shot.** The camera drifts in a touch (only a touch: the winners are on the right of the frame and a tighter shot would push them out of it) and the edges darken while the last of the placed horses come through.
+5. The result card, sized to the actual margin: PHOTO FINISH under a head, DEAD HEAT when the API says so, otherwise WINNER with the margin spelled out. It sits high in the frame (`top: 27%`) because the finish shot now has most of a field running through the middle of it. It comes in at `finishPauseS()`: not before 2.45s, and not before seven horses have come through the line behind the winner (`FINISHERS_BEFORE_CARD`), up to 6.5s. On a close finish that is well inside the minimum; on the runaway the field is still thirteen lengths out when the winner crosses, and the card used to arrive with nobody else in the picture.
+
+   Measured after Skip to Finish on a 1024px desktop: `race` — twelve or thirteen in frame through the final furlong, the lead changing hands three times, a head between the first two at the line with nine inside four lengths, eleven through the line behind the winner and four still coming when the card (PHOTO FINISH, won by a neck) appears; `race-close-finish` — the whole field in frame, a blanket finish won by a nose; `race-runaway` — seven in frame in the wide shot, eight through behind the winner and four still coming when the card appears at 6.3s.
 6. Out to the Winning Moment (§ 8.4c), and from there to the roll call. The result card is held for 1.7s rather than 2.3s now, because the Winning Moment card restates it.
 
 **Press flashguns.** The photographers are banked at the winning post, and the wall of flashguns going off as the field crosses is the single most recognisable image in racing. `DIRECTOR.pressFlash` ramps up through the final furlong on the master timeline and is faded out by `finishTL`; `spawnPressFlashes()` emits from it at a rate proportional to the intensity. Three things make them read as flashguns rather than fairy lights:
@@ -598,7 +612,7 @@ A 5.2-second scene between the finish and the roll call, `runWinningMoment()`. T
 
 How it is built, in the same shape as the race:
 
-- **One timeline, one state object.** `winTL` writes into `HERO` (`push`, `speed`, `scroll`, `confetti`) and into the winner's `h.salute`; nothing else advances. `renderFrame()` hands the frame to `renderHeroFrame()` while `HERO.active` is set, so there is still one render loop.
+- **One timeline, one state object.** `winTL` writes into `HERO` (`push`, `speed`, `scroll`, `confetti`) and into the winner's `h.salute`; nothing else advances. `renderFrame()` hands the frame to `renderHeroFrame()` while `HERO.active` is set, so there is still one render loop. The turf is scrolled one stride (`STRIDE_LOCAL` at hero scale) per gait cycle, so the winner's hooves stay planted in this shot too.
 - **The salute is part of the jockey rig**, blended by `h.salute` (0 → 1) rather than swapped in, so he rises into it. The upper body rotates back about the hip; the head takes back most of that lean, so his eyes stay up the track; the far arm is solved to keep hold of the reins; the near arm is posed in *world* space — straight up, a slight bend at the elbow — and carried back into the tilted frame, so it stays vertical however far he has sat up. The whip is put away. `h.salute` is 0 for every other horse, and the race never sets it, so the rig is unchanged in the race.
 - **Framing measures the whole drawing**, tail tip to muzzle — a quarter longer than `HORSE_ART_LENGTH` — and centres that, not the horse's origin. On a phone the horse is sized to two-thirds of the width; sizing it like desktop put its head off the right-hand edge.
 - **Teardown.** `resetWinningMoment()` kills `winTL`, hides the card and drops the class; `replayExperience()` and `startRace()` both call it. At the end of the scene only `HERO.active` is cleared, so the last hero frame stays on the canvas while the roll call fades in.
