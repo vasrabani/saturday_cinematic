@@ -32,25 +32,22 @@
 'use strict';
 
 // ─── CONFIG load ────────────────────────────────────────────────
-// Defaults are minimal — the seed JSON should always populate these.
+// The seed JSON (#flatConfig) overrides these. They are the keys the
+// engine reads, and nothing else: the seed may still carry V1-era tuning
+// keys (speed lines, a photo-finish hold, rank colours) that nothing
+// reads any more, and those are ignored.
 const FLAT_DEFAULTS = {
   shared: {
     stallsOpenMs: 600,
-    photoFinishHoldMs: 900,
     subtitleDefaultMs: 2400,
-    track: { startX: 0.05, finishX: 0.94, laneTopRatio: 0.24, laneBottomRatio: 0.78, furlongPoleEvery: 0.125 },
+    track: { furlongPoleEvery: 0.125 },
     horse: { minSurges: 2, maxExtraSurges: 2, surgeStartRange: [0.10, 0.75], surgeDurationRange: [0.14, 0.24], surgeBoostRange: [0.5, 1.5], winnerFinalSurge: { start: 0.78, duration: 0.18, boost: 2.4 } },
-    colours: { gold: '#D4AF37', goldLight: '#F5E49A', userPick: 'rgba(212,175,55,0.28)', foxPick: 'rgba(200,120,20,0.22)', neutralGlow: 'rgba(120,150,200,0.10)', userLabel: '#D4AF37', foxLabel: '#E8A050', defaultLabel: 'rgba(244,240,232,0.88)', silkDefault: '#C8A951', silk2Default: '#1A2540', rankGold: '#D4AF37', rankSilver: '#C0C0C0', rankBronze: '#CD7F32', skyTop: '#7eb8e8', skyBottom: '#c9a66a', trackTurf: '#2d5e3a', speedLine: 'rgba(255,255,255,0.45)' },
+    colours: { gold: '#D4AF37', userPick: 'rgba(212,175,55,0.28)', foxPick: 'rgba(200,120,20,0.22)', neutralGlow: 'rgba(120,150,200,0.10)', userLabel: '#D4AF37', foxLabel: '#E8A050', silkDefault: '#C8A951', silk2Default: '#1A2540', trackTurf: '#2d5e3a' },
   },
   band: {
-    label: 'Mile',
-    timings: { raceDurationMs: 46000, paradeDelayMsFast: 900, paradeDelayMsSlow: 1300, paradeLargeFieldThreshold: 16, commentaryHoldMs: 3000, winnerHoldMs: 3800, raceEndConfettiBursts: 7, raceEndConfettiIntervalMs: 170, slowMoStartProgress: 0.86, slowMoFactor: 0.55, closeupTriggerProgress: 0.74, finalFurlongProgress: 0.88 },
+    timings: { raceDurationMs: 46000, paradeDelayMsFast: 900, paradeDelayMsSlow: 1300, paradeLargeFieldThreshold: 16, commentaryHoldMs: 3000, slowMoFactor: 0.55 },
     phases: {
       raceStart: "AND THEY'RE AWAY",
-      midRace:   'STEADY THE PACE',
-      turn:      'INTO THE BACK STRAIGHT',
-      kick:      'TWO FURLONGS OUT',
-      finale:    'DRIVING TO THE LINE',
     },
     // Seven-stage narrative arc — drives phase-strip + title rotation.
     phaseTable: [
@@ -82,16 +79,28 @@ const FLAT_DEFAULTS = {
   },
 };
 
+// One level deep, so a seed that overrides one colour or one timing
+// keeps the defaults for the rest. Arrays and scalars replace outright.
+function mergeConfig(defaults, override) {
+  const out = Object.assign({}, defaults);
+  for (const [key, value] of Object.entries(override || {})) {
+    const both = [value, defaults[key]].every((v) => v && typeof v === 'object' && !Array.isArray(v));
+    out[key] = both ? Object.assign({}, defaults[key], value) : value;
+  }
+  return out;
+}
+
 const FLAT_CONFIG = (() => {
+  const el = document.getElementById('flatConfig');
+  if (!el) return FLAT_DEFAULTS;
   try {
-    const el = document.getElementById('flatConfig');
-    if (!el) return FLAT_DEFAULTS;
     const parsed = JSON.parse(el.textContent || '{}');
     return {
-      shared: Object.assign({}, FLAT_DEFAULTS.shared, parsed.shared || {}),
-      band:   Object.assign({}, FLAT_DEFAULTS.band,   parsed.band   || {}),
+      shared: mergeConfig(FLAT_DEFAULTS.shared, parsed.shared),
+      band:   mergeConfig(FLAT_DEFAULTS.band,   parsed.band),
     };
-  } catch {
+  } catch (err) {
+    console.warn('flat.js: #flatConfig is not valid JSON; using the built-in defaults.', err);
     return FLAT_DEFAULTS;
   }
 })();
@@ -104,6 +113,14 @@ const TRK    = SHARED.track;
 const prefersReducedMotion =
   window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+// Payload text — horse, jockey and trainer names, prices, silk colours
+// and image URLs — goes into markup through esc(). It is data, and data
+// does not get to write HTML. Ordinary names come out unchanged.
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function esc(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
+}
+
 // ── Silk badge renderer ────────────────────────────────────────
 // Mirrors races/templates/races/components/atoms/_silk.html.
 // Duplicated from experience.js — Phase 3 will hoist this into a
@@ -111,11 +128,11 @@ const prefersReducedMotion =
 let silkIdCounter = 0;
 function renderSilkSvg(runner) {
   if (runner && runner.silk_url) {
-    return '<img class="silk-img" src="' + runner.silk_url +
+    return '<img class="silk-img" src="' + esc(runner.silk_url) +
            '" alt="Silks" loading="lazy" decoding="async">';
   }
-  const body   = (runner && runner.silk)  || COL.silkDefault  || '#1A3A6B';
-  const accent = (runner && runner.silk2) || COL.silk2Default || '#FFFFFF';
+  const body   = esc((runner && runner.silk)  || COL.silkDefault);
+  const accent = esc((runner && runner.silk2) || COL.silk2Default);
   const pat    = (runner && runner.silk_pattern) || 'solid';
   const id = 'cinSilkClip-' + (++silkIdCounter);
   const BODY_PATH = 'M2 8 L7 4 L11 6 L17 6 L21 4 L26 8 L26 28 Q26 31 23 31 L5 31 Q2 31 2 28 Z';
@@ -157,10 +174,7 @@ const STATE = {
   runners:      [],
   userPick:     null,
   foxPick:      null,
-  raceName:     '',
-  raceDistance: '',
   raceBand:     'mile',
-  paradeIdx:    0,
   simResult:    null,
   phase:        'intro',
 };
@@ -193,6 +207,11 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
 // race model, which is what lets the window resize mid-race without
 // the field jumping.
 let viewW = 0, viewH = 0;
+
+// Up to this width the layout is a phone's: framing, the sun's position
+// and the hero shot all take their narrow variants.
+const NARROW_VIEWPORT_PX = 768;
+function isNarrowViewport() { return viewW <= NARROW_VIEWPORT_PX; }
 
 function getNavH() {
   // `parseInt(...) || 60` was wrong: a legitimate --nav-h of 0 is falsy,
@@ -308,7 +327,7 @@ const SHAKE = prefersReducedMotion ? 0 : 1;
 // and every one of them is written by GSAP — never by hand inside the
 // frame loop. Read it top to bottom and you have the entire visual
 // state of the race at any instant.
-const DIRECTOR = {
+const DIRECTOR_START = Object.freeze({
   progress:  0,      // 0 → 1 race progress
   zoom:      1,      // camera zoom
   anchorX:   0.50,   // screen fraction the camera's focus sits at
@@ -325,11 +344,13 @@ const DIRECTOR = {
   pressFlash: 0,     // press flashguns firing at the post, 0 → 1
   letterbox: 0,      // cinema bars, as a fraction of viewport height each
   phase:     'cruise',
-};
+});
+const DIRECTOR = Object.assign({}, DIRECTOR_START);
 
 // The camera itself. DIRECTOR supplies intent; CAM is the damped
-// result that actually gets drawn.
-const CAM = { x: 0, zoom: 1, shakeX: 0, shakeY: 0, seed: Math.random() * 1000 };
+// result that actually gets drawn. `seed` phases the hoof rumble.
+const CAM_START = Object.freeze({ x: 0, zoom: 1, shakeX: 0, shakeY: 0 });
+const CAM = Object.assign({}, CAM_START, { seed: Math.random() * 1000 });
 
 // ─── Race phases ────────────────────────────────────────────────
 // Cruise → Build → Drive → Line. These are DIRECTION phases: they
@@ -337,19 +358,24 @@ const CAM = { x: 0, zoom: 1, shakeX: 0, shakeY: 0, seed: Math.random() * 1000 };
 // BAND.phaseTable, which editorial tunes in the seed JSON and which
 // still drives the on-screen commentary and phase strip.
 const RACE_PHASES = [
-  { key: 'cruise', from: 0.00, label: 'CRUISE' },
-  { key: 'build',  from: 0.45, label: 'BUILD'  },
-  { key: 'drive',  from: 0.72, label: 'DRIVE'  },
-  { key: 'line',   from: 0.90, label: 'LINE'   },
+  { key: 'cruise', from: 0.00 },
+  { key: 'build',  from: 0.45 },
+  { key: 'drive',  from: 0.72 },
+  { key: 'line',   from: 0.90 },
 ];
+
+// Where a direction phase starts, as a fraction of the race.
+function phaseFrom(key) {
+  return RACE_PHASES.find((ph) => ph.key === key).from;
+}
 
 // ─── Init ───────────────────────────────────────────────────────
 function init(data) {
-  STATE.runners      = data.runners;
+  // Weights arrive as numbers from the Racing API serialiser, but have
+  // arrived as strings before; normalise once so nothing else has to.
+  STATE.runners      = data.runners.map((r) => Object.assign({}, r, { weight: Number(r.weight) || 0 }));
   STATE.userPick     = data.userPick;
   STATE.foxPick      = data.foxPick;
-  STATE.raceName     = data.raceName;
-  STATE.raceDistance = data.raceDistance;
   STATE.raceBand     = data.raceBand || 'mile';
 
   buildIntroChips();
@@ -357,19 +383,18 @@ function init(data) {
   gsap.ticker.add(ambientFrame);
   showScreen('intro');
 }
-window.init = init;
 
 function wireButtons() {
   const start = document.getElementById('flatStartBtn');
-  if (start) start.addEventListener('click', () => window.startExperience());
+  if (start) start.addEventListener('click', startExperience);
   const skip  = document.getElementById('flatSkipParadeBtn');
-  if (skip)  skip.addEventListener('click', () => window.skipParade());
+  if (skip)  skip.addEventListener('click', skipParade);
   const replay = document.getElementById('flatReplayBtn');
-  if (replay) replay.addEventListener('click', () => window.replayExperience());
+  if (replay) replay.addEventListener('click', replayExperience);
   const raceSkip = document.getElementById('raceSkipBtn');
-  if (raceSkip) raceSkip.addEventListener('click', () => window.skipToFinish());
+  if (raceSkip) raceSkip.addEventListener('click', skipToFinish);
   const rcSkip = document.getElementById('rollcallSkipBtn');
-  if (rcSkip) rcSkip.addEventListener('click', () => window.skipRollCall());
+  if (rcSkip) rcSkip.addEventListener('click', skipRollCall);
   document.querySelectorAll('[data-href]').forEach((b) => {
     b.addEventListener('click', () => { window.location.href = b.dataset.href; });
   });
@@ -383,24 +408,29 @@ function showScreen(name) {
   if (el) el.classList.add('active');
 }
 
+// The viewer's own pick is identified by id; the Fox pick by name — it
+// arrives from the Fox model as a runner record of its own.
+function isUserPick(runner) { return !!(STATE.userPick && STATE.userPick.id === runner.id); }
+function isFoxPick(runner)  { return !!(STATE.foxPick && STATE.foxPick.name === runner.name); }
+
 // ─── Intro chips ────────────────────────────────────────────────
 function buildIntroChips() {
   const container = document.getElementById('introRunnersPreview');
   if (!container) return;
   STATE.runners.slice(0, 20).forEach((r) => {
     const chip = document.createElement('div');
-    const isUser = STATE.userPick && STATE.userPick.id === r.id;
-    const isFox  = STATE.foxPick  && STATE.foxPick.name === r.name;
+    const isUser = isUserPick(r);
+    const isFox  = isFoxPick(r);
     chip.className = 'intro-runner-chip' +
       (isUser ? ' intro-runner-chip--user' : '') +
       (isFox  ? ' intro-runner-chip--fox'  : '');
-    // The runner's actual cap, not a plain text pill. Twenty-four names
-    // in a row is a list; twenty-four sets of colours is a racecard, and
-    // it primes the viewer for the silks they are about to follow.
+    // The runner's actual cap, not a plain text pill. Twenty names in a
+    // row is a list; twenty sets of colours is a racecard, and it primes
+    // the viewer for the silks they are about to follow.
     chip.innerHTML =
       '<span class="intro-runner-chip__silk">' + renderCapSvg(r) + '</span>' +
       '<span class="intro-runner-chip__name">' +
-        (isUser ? '🐾 ' : isFox ? '🦊 ' : '') + r.name +
+        (isUser ? '🐾 ' : isFox ? '🦊 ' : '') + esc(r.name) +
       '</span>';
     container.appendChild(chip);
   });
@@ -412,7 +442,7 @@ function buildIntroChips() {
 // consistent state; there is no second clock to keep in step.
 // Idempotent via Math.max.
 const SKIP_TO_FINISH_REMAINING_S = 10;
-window.skipToFinish = function () {
+function skipToFinish() {
   if (!raceRunning || !masterTL) return;
   const target = Math.max(masterTL.time(),
                           masterTL.duration() - SKIP_TO_FINISH_REMAINING_S);
@@ -420,9 +450,9 @@ window.skipToFinish = function () {
   snapRaceState();
   const wrap = document.querySelector('.race-skip-wrap');
   if (wrap) wrap.classList.add('race-skip-hidden');
-};
+}
 
-window.startExperience = function () {
+function startExperience() {
   // Hide the archive picker now that the user has committed to a
   // race — CSS body-class toggle. replayExperience drops it again.
   document.body.classList.add('cinematic-experience-running');
@@ -437,24 +467,28 @@ window.startExperience = function () {
       gsap.fromTo('#screen-parade', { opacity: 0 }, { opacity: 1, duration: 0.4, onComplete: beginParade });
     },
   });
-};
+}
 
-// buildRacePositions() honours REPLAY_DATA (Phase 4) — in replay mode
-// positions[0] is the real winner, in forecast it's the weighted sim
-// pick we passed in. Deriving `winner` from positions[0] means the
-// static reveal never lies about a settled result.
-function runStaticReveal() {
+// The race's finishing order and winner. buildRacePositions() honours
+// REPLAY_DATA: on a replay positions[0] is the real winner, in a forecast
+// it is the weighted draw passed in. The winner is always positions[0],
+// so the reveal announces the horse that actually crosses the line first,
+// never the pre-sim draw.
+function resolveResult() {
   const fallback = weightedRandom(STATE.runners);
   const positions = buildRacePositions(fallback);
-  const winner = (positions && positions[0]) || fallback;
-  STATE.simResult = { winner, positions };
+  return { winner: (positions && positions[0]) || fallback, positions };
+}
+
+function runStaticReveal() {
+  STATE.simResult = resolveResult();
+  const { winner, positions } = STATE.simResult;
   buildRevealScreen(winner, positions);
   showScreen('reveal');
 }
 
 // ─── Parade ─────────────────────────────────────────────────────
 function beginParade() {
-  STATE.paradeIdx = 0;
   buildParadeDots();
   showParadeHorse(0);
 }
@@ -487,18 +521,17 @@ function showParadeHorse(idx) {
     return;
   }
   const r = STATE.runners[idx];
-  STATE.paradeIdx = idx;
   updateParadeDots(idx);
   const counter = document.getElementById('paradeCounter');
   if (counter) counter.textContent = (idx + 1);
 
-  const isUser = STATE.userPick && STATE.userPick.id === r.id;
-  const isFox  = STATE.foxPick  && STATE.foxPick.name === r.name;
+  const isUser = isUserPick(r);
+  const isFox  = isFoxPick(r);
   const tagEls = [];
   if (isUser)   tagEls.push('<span class="parade-tag parade-tag--user">🐾 Your Pick</span>');
   if (isFox)    tagEls.push('<span class="parade-tag parade-tag--fox">🦊 Fox\'s Pick</span>');
   if (r.is_fav) tagEls.push('<span class="parade-tag parade-tag--fav">Favourite</span>');
-  if (r.sr)     tagEls.push('<span class="parade-tag parade-tag--sr">SR ' + r.sr + '</span>');
+  if (r.sr)     tagEls.push('<span class="parade-tag parade-tag--sr">SR ' + esc(r.sr) + '</span>');
   if (r.stars)  tagEls.push('<span class="parade-tag parade-tag--sr">' + '★'.repeat(r.stars) + '☆'.repeat(5 - r.stars) + '</span>');
 
   const glow = isUser ? COL.userPick : isFox ? COL.foxPick : COL.neutralGlow;
@@ -506,10 +539,10 @@ function showParadeHorse(idx) {
     '<div class="parade-bg-glow" style="background:radial-gradient(ellipse 80% 80% at 50% 50%, ' + glow + ', transparent)"></div>' +
     '<div class="parade-card" id="paradeCard">' +
     '  <div class="parade-silk">' + renderSilkSvg(r) + '</div>' +
-    '  <div class="parade-number">Horse ' + r.number + ' of ' + STATE.runners.length + '</div>' +
-    '  <div class="parade-name">' + r.name + '</div>' +
-    '  <div class="parade-connections"><strong>J:</strong> ' + r.jockey + ' &nbsp;·&nbsp; <strong>T:</strong> ' + r.trainer + '</div>' +
-    '  <div class="parade-odds-badge">' + r.odds + '</div>' +
+    '  <div class="parade-number">Horse ' + esc(r.number) + ' of ' + STATE.runners.length + '</div>' +
+    '  <div class="parade-name">' + esc(r.name) + '</div>' +
+    '  <div class="parade-connections"><strong>J:</strong> ' + esc(r.jockey) + ' &nbsp;·&nbsp; <strong>T:</strong> ' + esc(r.trainer) + '</div>' +
+    '  <div class="parade-odds-badge">' + esc(r.odds) + '</div>' +
     '  <div class="parade-tags">' + tagEls.join('') + '</div>' +
     '</div>';
 
@@ -535,10 +568,9 @@ function showParadeHorse(idx) {
   setTimeout(() => { if (STATE.phase === 'parade') showParadeHorse(idx + 1); }, ms);
 }
 
-window.skipParade = function () {
-  STATE.paradeIdx = STATE.runners.length;
+function skipParade() {
   transitionToRace();
-};
+}
 
 // ─── Transition → race (with stalls bang) ──────────────────────
 function transitionToRace() {
@@ -571,17 +603,8 @@ function startRace() {
   // race. One race, one clock.
   if (raceRunning) return;
 
-  // buildRacePositions() honours REPLAY_DATA (Phase 4): in replay
-  // mode positions[0] is the real winner, in forecast it's our
-  // weighted random pick passed in. Derive `winner` from positions[0]
-  // so the reveal screen announces the horse that ACTUALLY crossed
-  // the line first — not the pre-sim random fallback, which would
-  // be wrong on replay routes.
-  const fallback = weightedRandom(STATE.runners);
-  const positions = buildRacePositions(fallback);
-  const winner = (positions && positions[0]) || fallback;
-  STATE.simResult = { winner, positions };
-  buildHorseObjects(positions);
+  STATE.simResult = resolveResult();
+  buildHorseObjects(STATE.simResult.positions);
   resetWinningMoment();
 
   frameClock  = 0;
@@ -590,7 +613,6 @@ function startRace() {
   lastLeaderTravel = 0;
   firedCommentary.clear();
   lbSampleTimer = 0;
-  STATE.finishMargin = null;
 
   buildLeaderboard();
   setPhaseTitle((BAND.phases && BAND.phases.raceStart) || "AND THEY'RE AWAY");
@@ -623,10 +645,14 @@ function weightedRandom(runners) {
 // the two engines stay in lockstep until Phase 3 hoists this
 // into a shared module.
 const REPLAY_DATA = (() => {
+  const el = document.getElementById('replayData');
+  if (!el) return null;
   try {
-    const el = document.getElementById('replayData');
-    return el ? JSON.parse(el.textContent || '{}') : null;
-  } catch {
+    return JSON.parse(el.textContent || '{}');
+  } catch (err) {
+    // Loud, because the fallback is quiet: without the result the race
+    // is a random forecast that looks exactly like the real thing.
+    console.error('flat.js: #replayData is not valid JSON; running a forecast instead of the result.', err);
     return null;
   }
 })();
@@ -758,7 +784,7 @@ function smoothstep(edge0, edge1, x) {
 function buildHorseObjects(positions) {
   const count = positions.length;
   const lanes = assignLanes(count);
-  const HORSE = SHARED.horse || {};
+  const HORSE = SHARED.horse;
   const invented = inventFinishGaps(positions, STATE.raceBand, resultWinningMargin(positions));
 
   horses = positions.map((r, rank) => {
@@ -832,12 +858,12 @@ function randomSurges(rank, HORSE) {
   // Magnitudes are now in LENGTHS, so a surge is a move you can see
   // and the leaderboard can react to.
   const surges = [];
-  const surgeCount = (HORSE.minSurges || 2) + 1 +
-                     Math.floor(Math.random() * ((HORSE.maxExtraSurges || 2) + 1));
+  const surgeCount = HORSE.minSurges + 1 +
+                     Math.floor(Math.random() * (HORSE.maxExtraSurges + 1));
   for (let s = 0; s < surgeCount; s++) {
-    const sr = HORSE.surgeStartRange    || [0.05, 0.85];
-    const dr = HORSE.surgeDurationRange || [0.04, 0.12];
-    const br = HORSE.surgeBoostRange    || [0.5, 1.5];
+    const sr = HORSE.surgeStartRange;
+    const dr = HORSE.surgeDurationRange;
+    const br = HORSE.surgeBoostRange;
     const sign = Math.random() < 0.32 ? -1 : 1;
     // At least SURGE_MIN_SPAN of the race and SURGE_LENGTHS per unit of
     // boost. A move over four percent of the race was a horse shot three
@@ -901,7 +927,12 @@ function addFinishSurges(surges, rank, finalLengths) {
 // against the far rail (higher on screen, drawn smaller), the last lane
 // runs nearest the camera. That one trick is most of why the field
 // reads as a three-dimensional pack instead of a row of icons.
+// Horses far lane first, so nearer horses are drawn over them. Lanes
+// only change on a layout, so this is sorted there rather than per frame.
+let horsesByLane = [];
+
 function relayoutLanes() {
+  horsesByLane = [];
   if (!horses.length) return;
   const n    = horses.length;
   const band = WORLD.trackBotY - WORLD.trackTopY;
@@ -911,6 +942,7 @@ function relayoutLanes() {
     h.y     = WORLD.trackTopY + t * band;
     h.depth = 0.78 + t * 0.38;
   });
+  horsesByLane = horses.slice().sort((a, b) => a.laneT - b.laneT);
 }
 
 // Deficit smoothing time-constant. We smooth the DEFICIT rather than
@@ -1155,7 +1187,7 @@ function raceProgressEase(x) {
 // the right: it has been out beyond the frame edge for the whole race
 // until now.
 function addFinalFurlongSequence(tl, durationS) {
-  const seg = durationS * (1 - RACE_PHASES[3].from);
+  const seg = durationS * (1 - phaseFrom('line'));
 
   tl.to(DIRECTOR, shot('line', { duration: seg * 0.75, ease: 'sine.inOut' }), 'line');
 
@@ -1214,14 +1246,17 @@ const CAM_FOLLOW_TAU_MS = 240;
 const FRAME_PACK = 8;
 const ZOOM_FLOOR = 0.9;
 
+// The principal group is the front 40% of the field, floored at four
+// runners and capped at ten — beyond that the tail drags the centroid
+// backwards and the leaders creep off the right of frame.
+function principalGroupSize(count) {
+  return Math.min(count, 10, Math.max(4, Math.round(count * 0.4)));
+}
+
 function principalGroupFocus() {
   const ranked = rankedHorses();
   if (!ranked.length) return 0;
-  // The principal group is the front 40% of the field, floored at four
-  // runners and capped at ten — beyond that the tail drags the centroid
-  // backwards and the leaders creep off the right of frame.
-  const size = Math.min(ranked.length,
-                        Math.min(10, Math.max(4, Math.round(ranked.length * 0.4))));
+  const size = principalGroupSize(ranked.length);
   let sum = 0;
   for (let i = 0; i < size; i++) sum += ranked[i].worldX;
   const centroid = sum / size;
@@ -1252,7 +1287,7 @@ function updateCamera(dt) {
   }
 
   let zoom = DIRECTOR.zoom;
-  if (!FINISH.active && DIRECTOR.progress > 0.72) {
+  if (!FINISH.active && DIRECTOR.progress > phaseFrom('drive')) {
     const ranked = rankedHorses();
     const back = ranked[Math.min(ranked.length - 1, FRAME_PACK - 1)];
     if (back) {
@@ -2083,17 +2118,39 @@ function planeScale(key) {
 // camera zoom, and offset by CAM.x × factor × scale so each plane's
 // scroll rate stays in proportion to the turf. `extra` is any motion the
 // plane has of its own — the wind, for clouds.
-function drawTiled(c, tile, bottomY, factor, alpha, key, extra) {
+function blitTiled(c, tile, bottomY, offsetPx, alpha, scale) {
   if (!tile) return;
-  const s = planeScale(key);
-  const w = tile.w * s;
-  const h = tile.h * s;
-  const offsetPx = CAM.x * factor * s + (extra || 0);
+  const w = tile.w * scale, h = tile.h * scale;
   c.save();
   c.globalAlpha = alpha;
   let x = -(((offsetPx % w) + w) % w);
   for (; x < viewW + w; x += w) c.drawImage(tile.canvas, x, bottomY - h, w, h);
   c.restore();
+}
+
+// The scenery behind a shot, back to front: sky, sun, high and low
+// cloud, the sun's glow over them, downland, stands, trees, haze. The
+// race, the ambient backdrop and the Winning Moment each frame it their
+// own way: `planes` gives each tile's baseline, scroll offset (px),
+// opacity and scale.
+function paintScenery(c, sky, planes, haze) {
+  paintSky(c, sky.bottom, sky.warm);
+  paintSunDisc(c);
+  for (const key of ['cloudsHigh', 'cloudsLow']) blitPlane(c, key, planes[key]);
+  paintSunGlow(c);
+  for (const key of ['hills', 'stand', 'trees']) blitPlane(c, key, planes[key]);
+  paintHorizonHaze(c, haze.horizon, haze.height);
+}
+
+function blitPlane(c, key, p) {
+  blitTiled(c, TILES[key], p.bottom, p.offset, p.alpha, p.scale);
+}
+
+// A plane in the race shot: scrolled by the camera at its parallax rate,
+// scaled by its share of the zoom.
+function racePlane(key, bottom, alpha, extra) {
+  const scale = planeScale(key);
+  return { bottom, offset: CAM.x * PARALLAX[key] * scale + (extra || 0), alpha, scale };
 }
 
 // ── Sky ──────────────────────────────────────────────────────────
@@ -2166,26 +2223,19 @@ function drawBackdrop() {
 
   // The sun is at infinity: parallax zero, so the clouds sail past it.
   // Placed clear of the Live Positions panel, which owns the top right.
-  SUN.x = viewW * (viewW <= 768 ? 0.5 : 0.64);
+  SUN.x = viewW * (isNarrowViewport() ? 0.5 : 0.64);
   SUN.y = Math.max(viewH * 0.07, standTop - viewH * 0.11);
   SUN.visible = Math.max(0, Math.min(1, (standTop - SUN.y) / (viewH * 0.08)));
 
-  paintSky(pCtx, skyBottom, DIRECTOR.progress);
-  paintSunDisc(pCtx);
-
   // Clouds sit behind the downland, so the ridge cuts off their bases.
   const t = frameClock;
-  drawTiled(pCtx, TILES.cloudsHigh, standTop + viewH * 0.03, PARALLAX.cloudsHigh,
-            0.9, 'cloudsHigh', t * WIND.cloudsHigh);
-  drawTiled(pCtx, TILES.cloudsLow, standTop + viewH * 0.07, PARALLAX.cloudsLow,
-            1, 'cloudsLow', t * WIND.cloudsLow);
-  paintSunGlow(pCtx);
-  drawTiled(pCtx, TILES.hills, horizon + 6, PARALLAX.hills, 0.92, 'hills');
-
-  drawTiled(pCtx, TILES.stand, horizon + 2, PARALLAX.stand, 1, 'stand');
-  drawTiled(pCtx, TILES.trees, horizon + Math.max(14, viewH * 0.045),
-            PARALLAX.trees, 1, 'trees');
-  paintHorizonHaze(pCtx, horizon, standH * 0.7);
+  paintScenery(pCtx, { bottom: skyBottom, warm: DIRECTOR.progress }, {
+    cloudsHigh: racePlane('cloudsHigh', standTop + viewH * 0.03, 0.9, t * WIND.cloudsHigh),
+    cloudsLow:  racePlane('cloudsLow',  standTop + viewH * 0.07, 1,   t * WIND.cloudsLow),
+    hills:      racePlane('hills', horizon + 6, 0.92),
+    stand:      racePlane('stand', horizon + 2, 1),
+    trees:      racePlane('trees', horizon + Math.max(14, viewH * 0.045), 1),
+  }, { horizon, height: standH * 0.7 });
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2205,16 +2255,9 @@ const AMBIENT_DRIFT = 0.011;   // world px per ms — a very slow pan
 let ambientX = 0;
 let ambientPainted = false;
 
-function ambientTile(tile, bottomY, factor, alpha, scale, extra) {
-  if (!tile) return;
-  const w = tile.w * scale;
-  const h = tile.h * scale;
-  const off = ambientX * factor + (extra || 0);
-  pCtx.save();
-  pCtx.globalAlpha = alpha;
-  let x = -(((off % w) + w) % w);
-  for (; x < viewW + w; x += w) pCtx.drawImage(tile.canvas, x, bottomY - h, w, h);
-  pCtx.restore();
+// A plane in the ambient backdrop: drifting at its parallax rate.
+function ambientPlane(key, bottom, alpha, extra) {
+  return { bottom, offset: ambientX * PARALLAX[key] + (extra || 0), alpha, scale: 1 };
 }
 
 function drawAmbient() {
@@ -2223,23 +2266,19 @@ function drawAmbient() {
 
   const standH   = TILES.stand ? TILES.stand.h : viewH * 0.17;
   const standTop = horizon + 2 - standH;
-  SUN.x = viewW * (viewW <= 768 ? 0.5 : 0.64);
+  SUN.x = viewW * (isNarrowViewport() ? 0.5 : 0.64);
   SUN.y = Math.max(viewH * 0.08, standTop - viewH * 0.12);
 
   // The same sky, sun and clouds as the race, so the parade and the reveal
   // are unmistakably the same afternoon. The clouds drift on the wind
   // here too; the scrim below takes the brightness down for the type.
-  paintSky(pCtx, horizon + viewH * 0.06, 0.4);
-  paintSunDisc(pCtx);
-  ambientTile(TILES.cloudsHigh, standTop + viewH * 0.03, PARALLAX.cloudsHigh, 0.9, 1, ambientX * 0.35);
-  ambientTile(TILES.cloudsLow,  standTop + viewH * 0.07, PARALLAX.cloudsLow,  1,   1, ambientX * 0.9);
-  paintSunGlow(pCtx);
-
-  ambientTile(TILES.hills, horizon + 6,  PARALLAX.hills, 0.8,  1);
-  ambientTile(TILES.stand, horizon + 2,  PARALLAX.stand, 0.95, 1);
-  ambientTile(TILES.trees, horizon + Math.max(14, viewH * 0.045),
-              PARALLAX.trees, 1, 1);
-  paintHorizonHaze(pCtx, horizon, standH * 0.7);
+  paintScenery(pCtx, { bottom: horizon + viewH * 0.06, warm: 0.4 }, {
+    cloudsHigh: ambientPlane('cloudsHigh', standTop + viewH * 0.03, 0.9, ambientX * 0.35),
+    cloudsLow:  ambientPlane('cloudsLow',  standTop + viewH * 0.07, 1,   ambientX * 0.9),
+    hills:      ambientPlane('hills', horizon + 6, 0.8),
+    stand:      ambientPlane('stand', horizon + 2, 0.95),
+    trees:      ambientPlane('trees', horizon + Math.max(14, viewH * 0.045), 1),
+  }, { horizon, height: standH * 0.7 });
 
   // Turf running off the bottom of frame
   const turf = pCtx.createLinearGradient(0, horizon, 0, viewH);
@@ -2658,46 +2697,48 @@ function parseBeatenDistance(s) {
 // Format a numeric lengths value back into the standard racing copy
 // used by Racing Post / ATR. Tuned for the finish-line headline so
 // the eye reads it at a glance ("1¼ LENGTHS", "A SHORT HEAD").
-function formatBeatenDistance(lengths) {
-  if (lengths === null || lengths === undefined) return '';
-  if (lengths >= 50) return 'A DISTANCE';
-  if (lengths < 0.08) return 'A NOSE';
-  if (lengths < 0.12) return 'A SHORT HEAD';
-  if (lengths < 0.20) return 'A HEAD';
-  if (lengths < 0.40) return 'A NECK';
-  if (lengths < 0.65) return 'HALF A LENGTH';
-  if (lengths < 0.90) return 'THREE-QUARTERS OF A LENGTH';
-  if (lengths < 1.10) return 'A LENGTH';
-  // Round to nearest quarter for the headline.
+// Racing's words for a margin under a length and a bit:
+// [below this many lengths, headline copy, compact copy].
+const MARGIN_WORDS = [
+  [0.08, 'A NOSE',                     'nse'],
+  [0.12, 'A SHORT HEAD',               'shd'],
+  [0.20, 'A HEAD',                     'hd'],
+  [0.40, 'A NECK',                     'nk'],
+  [0.65, 'HALF A LENGTH',              '½L'],
+  [0.90, 'THREE-QUARTERS OF A LENGTH', '¾L'],
+  [1.10, 'A LENGTH',                   '1L'],
+];
+
+// A margin to the nearest quarter of a length, with a vulgar fraction:
+// { value: 2.75, text: '2¾' }.
+function quarterLengths(lengths) {
   const q = Math.round(lengths * 4) / 4;
   const whole = Math.floor(q);
   const frac  = q - whole;
-  const fracStr = frac === 0.25 ? '¼' : frac === 0.5 ? '½' :
-                  frac === 0.75 ? '¾' : '';
-  const num = whole + fracStr;
-  return num + (q === 1 ? ' LENGTH' : ' LENGTHS');
+  const fracStr = frac === 0.25 ? '¼' : frac === 0.5 ? '½' : frac === 0.75 ? '¾' : '';
+  return { value: q, text: whole + fracStr };
 }
 
-// Compact beaten-distance formatter — sized for chips + podium rows
-// where the full "HALF A LENGTH" would overflow. Mirrors the Racing
-// Post abbreviated style: nse / shd / hd / nk / ½L / ¾L / 1¼L etc.
+// Headline copy for a margin in lengths ("A NECK", "2¾ LENGTHS"); -1 is
+// a dead heat.
+function formatBeatenDistance(lengths) {
+  if (lengths === null || lengths === undefined) return '';
+  if (lengths === -1) return 'DEAD HEAT';
+  if (lengths >= 50) return 'A DISTANCE';
+  const words = MARGIN_WORDS.find(([below]) => lengths < below);
+  if (words) return words[1];
+  const q = quarterLengths(lengths);
+  return q.text + (q.value === 1 ? ' LENGTH' : ' LENGTHS');
+}
+
+// Racecard copy for the podium ("nk", "2¾L", "DH").
 function formatBeatenDistanceCompact(lengths) {
   if (lengths === null || lengths === undefined) return '';
   if (lengths === -1) return 'DH';
   if (lengths >= 50) return 'dist';
-  if (lengths < 0.08) return 'nse';
-  if (lengths < 0.12) return 'shd';
-  if (lengths < 0.20) return 'hd';
-  if (lengths < 0.40) return 'nk';
-  if (lengths < 0.65) return '½L';
-  if (lengths < 0.90) return '¾L';
-  if (lengths < 1.10) return '1L';
-  const q = Math.round(lengths * 4) / 4;
-  const whole = Math.floor(q);
-  const frac  = q - whole;
-  const fracStr = frac === 0.25 ? '¼' : frac === 0.5 ? '½' :
-                  frac === 0.75 ? '¾' : '';
-  return whole + fracStr + 'L';
+  const words = MARGIN_WORDS.find(([below]) => lengths < below);
+  if (words) return words[2];
+  return quarterLengths(lengths).text + 'L';
 }
 
 // Compute the winning margin at the finish.
@@ -2732,7 +2773,6 @@ function computeWinningMargin() {
   }
 
   // ── Forecast mode — derive from final X positions ──
-  // ~28px per length is calibrated against the existing track scale.
   // World space measures the gap in lengths directly — no pixels-per-
   // length fudge factor, because a length IS the unit the model runs in.
   if (ranked.length < 2) {
@@ -2762,20 +2802,18 @@ function drawField() {
   const ranked = rankedHorses();
 
   // Far lanes first so nearer horses occlude them.
-  const drawList = horses
-    .filter((h) => h.worldX >= vis.min && h.worldX <= vis.max)
-    .sort((a, b) => a.laneT - b.laneT);
+  const drawList = horsesByLane.filter((h) => h.worldX >= vis.min && h.worldX <= vis.max);
 
   // The principal group stays fully lit; the tail recedes as the
   // director closes the frame down. Nobody is removed — a horse coming
   // through from the back still reads.
-  const groupSize = Math.min(ranked.length, Math.max(4, Math.round(ranked.length * 0.4)));
+  const groupSize = principalGroupSize(ranked.length);
   const inGroup = new Set();
   for (let i = 0; i < groupSize; i++) inGroup.add(ranked[i].runner.id);
 
   drawList.forEach((h) => {
-    const isUser = STATE.userPick && STATE.userPick.id === h.runner.id;
-    const isFox  = STATE.foxPick  && STATE.foxPick.name === h.runner.name;
+    const isUser = isUserPick(h.runner);
+    const isFox  = isFoxPick(h.runner);
 
     ctx.save();
     if (!inGroup.has(h.runner.id) && DIRECTOR.fieldFade > 0) {
@@ -2794,7 +2832,9 @@ function drawField() {
                                    :          (h.runner.silk || '#f5efde'));
     }
 
-    drawHorseSilhouette(h.worldX, h.y, h, WORLD.horseScale * h.depth);
+    const scale = WORLD.horseScale * h.depth;
+    spawnHoofDust(h.worldX, h.y, h, strideCycle(h), scale);
+    drawHorseSilhouette(h.worldX, h.y, h, scale);
     ctx.restore();
   });
 }
@@ -2982,9 +3022,9 @@ function identifyRunner(role, tag) {
   } else {
     // Something the viewer has a reason to care about: their own pick,
     // then the Fox pick, then whoever is making the most ground.
-    const pick = STATE.userPick && horses.find((x) => x.runner.id === STATE.userPick.id);
-    const fox  = STATE.foxPick  && horses.find((x) => x.runner.name === STATE.foxPick.name);
-    if (pick)      { h = pick; label = label || 'YOUR PICK'; }
+    const mine = horses.find((x) => isUserPick(x.runner));
+    const fox  = horses.find((x) => isFoxPick(x.runner));
+    if (mine)      { h = mine; label = label || 'YOUR PICK'; }
     else if (fox)  { h = fox;  label = label || 'FOX PICK';  }
     else           { h = ranked[Math.min(2, ranked.length - 1)]; label = label || 'IN TOUCH'; }
   }
@@ -2999,8 +3039,8 @@ function showBroadcastId(h, tag) {
   el.innerHTML =
     '<span class="bcast-id__silk">' + renderCapSvg(h.runner) + '</span>' +
     '<span class="bcast-id__body">' +
-      '<span class="bcast-id__name">' + h.runner.name + '</span>' +
-      '<span class="bcast-id__meta">' + h.runner.jockey + ' &middot; ' + h.runner.odds + '</span>' +
+      '<span class="bcast-id__name">' + esc(h.runner.name) + '</span>' +
+      '<span class="bcast-id__meta">' + esc(h.runner.jockey) + ' &middot; ' + esc(h.runner.odds) + '</span>' +
     '</span>' +
     '<span class="bcast-id__tag">' + tag + '</span>';
 
@@ -3134,14 +3174,25 @@ function stopTicker() {
 
 // Coat palettes: body / shade (muscle shadow) / points (mane, tail,
 // lower legs) / belly (lit underline).
+// body, shade and belly are the coat; points the mane, tail and lower
+// legs. farLower and nearLower are the lower legs on each side (a bay's
+// are black, a chestnut's stay chestnut); muzzle the soft nose; a grey
+// has dapples.
+const MUZZLE = 'rgba(20,12,8,0.55)';
 const HORSE_COATS = [
-  { name: 'bay',            body: '#7b4a1f', shade: '#4f2e11', points: '#1a1008', belly: '#9d6531' },
-  { name: 'dark bay',       body: '#553219', shade: '#35200c', points: '#140c06', belly: '#724a22' },
-  { name: 'chestnut',       body: '#a0582a', shade: '#6d3915', points: '#8a4718', belly: '#c2783f' },
-  { name: 'liver chestnut', body: '#6a371b', shade: '#44220f', points: '#552a12', belly: '#8a532b' },
-  { name: 'black',          body: '#2f241c', shade: '#18120d', points: '#0d0a07', belly: '#4a392a' },
-  { name: 'grey',           body: '#aca6a0', shade: '#7b746f', points: '#5a534e', belly: '#cbc5bf' },
-];
+  { name: 'bay',            body: '#7b4a1f', shade: '#4f2e11', points: '#1a1008', belly: '#9d6531',
+    farLower: '#1a1008', nearLower: '#1a1008', muzzle: MUZZLE },
+  { name: 'dark bay',       body: '#553219', shade: '#35200c', points: '#140c06', belly: '#724a22',
+    farLower: '#140c06', nearLower: '#140c06', muzzle: MUZZLE },
+  { name: 'chestnut',       body: '#a0582a', shade: '#6d3915', points: '#8a4718', belly: '#c2783f',
+    farLower: '#5c3014', nearLower: '#6d3915', muzzle: MUZZLE },
+  { name: 'liver chestnut', body: '#6a371b', shade: '#44220f', points: '#552a12', belly: '#8a532b',
+    farLower: '#552a12', nearLower: '#44220f', muzzle: MUZZLE },
+  { name: 'black',          body: '#2f241c', shade: '#18120d', points: '#0d0a07', belly: '#4a392a',
+    farLower: '#0d0a07', nearLower: '#0d0a07', muzzle: MUZZLE },
+  { name: 'grey',           body: '#aca6a0', shade: '#7b746f', points: '#5a534e', belly: '#cbc5bf',
+    farLower: '#6a635e', nearLower: '#7b746f', muzzle: '#6c645e', dapples: true },
+].map(Object.freeze);
 
 function runnerHash(runner) {
   const id = String((runner && runner.id) || (runner && runner.name) || '');
@@ -3328,6 +3379,57 @@ function drawLimb(c, L, upperCol, lowerCol, sock, wRoot, wJoint, wCannon, detail
   }
 }
 
+// The fixed outlines — barrel, neck, head, the jockey's torso — in the
+// horse's own units. Built once, on first use: one set serves every horse
+// in every frame, where building them per horse per frame was 96 Path2D
+// allocations a frame for a full field.
+let horsePathCache = null;
+function horsePaths() {
+  if (horsePathCache) return horsePathCache;
+  // Deep through the girth, tucked up at the flank, a strong round
+  // hindquarter, a sloping shoulder. Shallower and longer than you would
+  // guess — that is the difference between a racehorse and a cob.
+  const body = new Path2D();
+  body.moveTo(-21, -6);
+  body.bezierCurveTo(-22.5, -12, -18.5, -16.5, -11, -16.2);   // quarters
+  body.bezierCurveTo(-4, -16, 2, -14.4, 8, -14.6);            // back
+  body.bezierCurveTo(11, -14.8, 14, -16.6, 17, -15.2);        // withers
+  body.bezierCurveTo(20.5, -13.6, 23.4, -10, 24.2, -5);       // shoulder
+  body.bezierCurveTo(25, -1.6, 24, 1.4, 21, 3.2);             // breast
+  body.bezierCurveTo(17, 4.7, 11, 4.7, 5, 3.9);               // girth
+  body.bezierCurveTo(-1, 3.1, -5, 1.4, -9, 1);                // belly, tucked
+  body.bezierCurveTo(-13, 0.6, -16, 1, -18, 0);               // flank → stifle
+  body.bezierCurveTo(-20, -1, -21, -3, -21, -6);              // back of thigh
+  body.closePath();
+  const neck = new Path2D();
+  neck.moveTo(12.5, -15.6);
+  neck.bezierCurveTo(19.5, -22.5, 28, -28.4, 37.2, -30.6);    // crest
+  neck.bezierCurveTo(39.8, -31.2, 41.4, -29.6, 40.8, -27.6);  // poll
+  neck.bezierCurveTo(35.4, -23.4, 28.4, -16.2, 24.2, -7);     // throat
+  neck.bezierCurveTo(21, -6, 16.4, -9, 12.5, -15.6);
+  neck.closePath();
+  const head = new Path2D();
+  head.moveTo(38.4, -31.2);
+  head.bezierCurveTo(43, -31.8, 47.2, -30.2, 50.6, -27.2);    // forehead
+  head.lineTo(54, -23.2);                                     // face
+  head.bezierCurveTo(55.4, -21.7, 55.1, -20, 53.5, -19.4);    // nose
+  head.bezierCurveTo(52.2, -18.9, 51, -18.4, 49.8, -18.6);    // lip
+  head.bezierCurveTo(48.8, -18.2, 47.8, -18.3, 47, -19);      // chin
+  head.bezierCurveTo(44, -19.8, 41, -21, 39.2, -24);          // jaw
+  head.bezierCurveTo(38.3, -26, 37.9, -28.6, 38.4, -31.2);
+  head.closePath();
+  // The torso, back flat, backside up.
+  const torso = new Path2D();
+  torso.moveTo(0.4, -23.4);
+  torso.bezierCurveTo(1.4, -27.8, 8, -30.2, 15, -29.4);
+  torso.bezierCurveTo(17.6, -29, 18.4, -27, 17.2, -25.2);
+  torso.bezierCurveTo(14.6, -23, 9, -22, 4, -21.8);
+  torso.bezierCurveTo(2, -21.8, 0.7, -22.4, 0.4, -23.4);
+  torso.closePath();
+  horsePathCache = { body, neck, head, torso };
+  return horsePathCache;
+}
+
 // ── Drawing a horse ──────────────────────────────────────────────
 // drawHorseSilhouette() works out the pose, sets up the transform and
 // draws the parts in painter's order: shadow, far legs, tail, body, neck
@@ -3337,7 +3439,6 @@ function drawLimb(c, L, upperCol, lowerCol, sock, wRoot, wJoint, wCannon, detail
 function drawHorseSilhouette(x, y, h, artScale) {
   const look = horseLook(h, artScale || 1);
   const pose = stridePose(h);
-  spawnHoofDust(x, y, h, pose.cyc, look.scale);
 
   ctx.save();
   ctx.translate(x, y);
@@ -3377,8 +3478,19 @@ function horseLook(h, scale) {
 // animal: highest through the suspension, lowest as the forelegs take the
 // weight; nose-up as the hinds drive and nose-down as the fores land; the
 // neck and head nodding against that.
+// Through the final furlong the jockey's hands pump and the whip comes
+// up; from ALL_OUT_FROM the horse is at full stretch — nostrils flared,
+// mouth open. (Both are race progress, not the slow-motion ramp.)
+const FINAL_STRETCH_FROM = 0.85;
+const ALL_OUT_FROM       = 0.88;
+
+// Where the horse is in its gait cycle, 0 → 1 from the far hind's strike.
+function strideCycle(h) {
+  return (h.legPhase / (Math.PI * 2)) % 1;
+}
+
 function stridePose(h) {
-  const cyc = (h.legPhase / (Math.PI * 2)) % 1;
+  const cyc = strideCycle(h);
   const susp = cyc > SUSPENSION ? Math.sin((cyc - SUSPENSION) / (1 - SUSPENSION) * Math.PI) : 0;
   const foreLoad = (cyc > GAIT.farFore && cyc < SUSPENSION)
     ? Math.sin((cyc - GAIT.farFore) / (SUSPENSION - GAIT.farFore) * Math.PI) : 0;
@@ -3390,8 +3502,8 @@ function stridePose(h) {
     pitch:    Math.sin((cyc - 0.16) * Math.PI * 2) * 0.03 + Math.sin(h.swayPhase) * 0.006,
     neckAng:  Math.sin((cyc - 0.40) * Math.PI * 2) * 0.07,
     progress: progress,
-    finalStretch: progress >= 0.85,    // hands pump, whip up
-    slowMo:       progress >= 0.88,    // nostrils flare, mouth open
+    finalStretch: progress >= FINAL_STRETCH_FROM,
+    allOut:       progress >= ALL_OUT_FROM,
   };
 }
 
@@ -3424,19 +3536,16 @@ function solveHorseLegs(pose) {
 // Far-side legs sit in shadow behind the body.
 function drawFarLegs(legs, look) {
   const { coat, marks } = look;
-  const farLower = coat.name === 'grey' ? '#6a635e' : (coat.name === 'chestnut' ? '#5c3014' : coat.points);
-  drawLimb(ctx, legs.farHind, coat.shade, farLower, marks.socks[2], 6.2, 3.2, 2.2, false);
-  drawLimb(ctx, legs.farFore, coat.shade, farLower, marks.socks[0], 5.2, 3.0, 2.1, false);
+  drawLimb(ctx, legs.farHind, coat.shade, coat.farLower, marks.socks[2], 6.2, 3.2, 2.2, false);
+  drawLimb(ctx, legs.farFore, coat.shade, coat.farLower, marks.socks[0], 5.2, 3.0, 2.1, false);
 }
 
 // Near-side legs, over the body.
 function drawNearLegs(legs, look) {
   const { coat, marks, detail } = look;
   const { nearHind, nearFore } = legs;
-  const nearLower = coat.name === 'grey' ? coat.shade :
-                    (coat.name === 'chestnut' || coat.name === 'liver chestnut') ? coat.shade : coat.points;
-  drawLimb(ctx, nearHind, coat.body, nearLower, marks.socks[3], 7.2, 3.4, 2.4, detail);
-  drawLimb(ctx, nearFore, coat.body, nearLower, marks.socks[1], 6.0, 3.2, 2.3, detail);
+  drawLimb(ctx, nearHind, coat.body, coat.nearLower, marks.socks[3], 7.2, 3.4, 2.4, detail);
+  drawLimb(ctx, nearFore, coat.body, coat.nearLower, marks.socks[1], 6.0, 3.2, 2.3, detail);
   if (detail) {
     // Gaskin and forearm take the light on their front edges.
     ctx.fillStyle = 'rgba(255,240,214,0.12)';
@@ -3474,21 +3583,7 @@ function drawHorseTail(h, look) {
 function drawHorseBody(look) {
   const { coat, detail } = look;
   // ── Body ───────────────────────────────────────────────────
-  // Deep through the girth, tucked up at the flank, a strong round
-  // hindquarter, a sloping shoulder. Shallower and longer than you would
-  // guess — that is the difference between a racehorse and a cob.
-  const body = new Path2D();
-  body.moveTo(-21, -6);
-  body.bezierCurveTo(-22.5, -12, -18.5, -16.5, -11, -16.2);   // quarters
-  body.bezierCurveTo(-4, -16, 2, -14.4, 8, -14.6);            // back
-  body.bezierCurveTo(11, -14.8, 14, -16.6, 17, -15.2);        // withers
-  body.bezierCurveTo(20.5, -13.6, 23.4, -10, 24.2, -5);       // shoulder
-  body.bezierCurveTo(25, -1.6, 24, 1.4, 21, 3.2);             // breast
-  body.bezierCurveTo(17, 4.7, 11, 4.7, 5, 3.9);               // girth
-  body.bezierCurveTo(-1, 3.1, -5, 1.4, -9, 1);                // belly, tucked
-  body.bezierCurveTo(-13, 0.6, -16, 1, -18, 0);               // flank → stifle
-  body.bezierCurveTo(-20, -1, -21, -3, -21, -6);              // back of thigh
-  body.closePath();
+  const body = horsePaths().body;
 
   ctx.fillStyle = coat.body;
   ctx.fill(body);
@@ -3522,7 +3617,7 @@ function drawHorseBody(look) {
     });
     ctx.fillRect(8, -18, 18, 20);
     // Dapples on a grey
-    if (coat.name === 'grey') {
+    if (coat.dapples) {
       ctx.fillStyle = 'rgba(255,255,255,0.14)';
       for (let i = 0; i < 14; i++) {
         const a = i * 2.4, rr = 3 + (i % 4) * 1.6;
@@ -3574,24 +3669,7 @@ function drawHorseFront(h, look, pose) {
 // The neck and head shapes, their light and volume, and the face marking.
 function drawNeckAndHead(look) {
   const { coat, marks, detail } = look;
-  const neck = new Path2D();
-  neck.moveTo(12.5, -15.6);
-  neck.bezierCurveTo(19.5, -22.5, 28, -28.4, 37.2, -30.6);    // crest
-  neck.bezierCurveTo(39.8, -31.2, 41.4, -29.6, 40.8, -27.6);  // poll
-  neck.bezierCurveTo(35.4, -23.4, 28.4, -16.2, 24.2, -7);     // throat
-  neck.bezierCurveTo(21, -6, 16.4, -9, 12.5, -15.6);
-  neck.closePath();
-
-  const head = new Path2D();
-  head.moveTo(38.4, -31.2);
-  head.bezierCurveTo(43, -31.8, 47.2, -30.2, 50.6, -27.2);    // forehead
-  head.lineTo(54, -23.2);                                     // face
-  head.bezierCurveTo(55.4, -21.7, 55.1, -20, 53.5, -19.4);    // nose
-  head.bezierCurveTo(52.2, -18.9, 51, -18.4, 49.8, -18.6);    // lip
-  head.bezierCurveTo(48.8, -18.2, 47.8, -18.3, 47, -19);      // chin
-  head.bezierCurveTo(44, -19.8, 41, -21, 39.2, -24);          // jaw
-  head.bezierCurveTo(38.3, -26, 37.9, -28.6, 38.4, -31.2);
-  head.closePath();
+  const { neck, head } = horsePaths();
 
   ctx.fillStyle = coat.body;
   ctx.fill(neck);
@@ -3653,7 +3731,7 @@ function drawNeckAndHead(look) {
 // open under maximum effort in the slow-motion finish.
 function drawHeadFeatures(look, pose) {
   const { coat, detail } = look;
-  const inSlowMo = pose.slowMo;
+  const inSlowMo = pose.allOut;
   if (detail) {
     // Throatlatch and jawline shadow, separating the head from the neck.
     ctx.strokeStyle = 'rgba(0,0,0,0.3)';
@@ -3696,7 +3774,7 @@ function drawHeadFeatures(look, pose) {
   }
 
   // Muzzle, nostril — flaring under maximum effort — and an open mouth
-  ctx.fillStyle = coat.name === 'grey' ? '#6c645e' : 'rgba(20,12,8,0.55)';
+  ctx.fillStyle = coat.muzzle;
   ctx.beginPath();
   ctx.ellipse(52.6, -20.6, 2.2, 1.7, 0.5, 0, Math.PI * 2);
   ctx.fill();
@@ -3935,13 +4013,7 @@ function drawRiddenHand(look, rig) {
 function drawJockeyTorso(look) {
   const { silk, silk2, pat } = look;
   // Torso in the runner's silks, back flat, backside up
-  const torso = new Path2D();
-  torso.moveTo(0.4, -23.4);
-  torso.bezierCurveTo(1.4, -27.8, 8, -30.2, 15, -29.4);
-  torso.bezierCurveTo(17.6, -29, 18.4, -27, 17.2, -25.2);
-  torso.bezierCurveTo(14.6, -23, 9, -22, 4, -21.8);
-  torso.bezierCurveTo(2, -21.8, 0.7, -22.4, 0.4, -23.4);
-  torso.closePath();
+  const torso = horsePaths().torso;
   ctx.fillStyle = silk;
   ctx.fill(torso);
   ctx.save();
@@ -4002,7 +4074,7 @@ function drawJockeyArm(look, rig) {
 function drawWhip(pose, rig) {
   const progressNow = pose.progress, cyc = pose.cyc;
   const { handX, handY } = rig;
-  const t = Math.min(1, (progressNow - 0.85) / 0.06);
+  const t = Math.min(1, (progressNow - FINAL_STRETCH_FROM) / 0.06);
   const swing = Math.max(0, Math.sin(cyc * Math.PI * 2 + 1.2));
   const ang = -Math.PI / 2 - 0.5 + (1 - t) * 0.7 + swing * 0.55;
   ctx.strokeStyle = '#120d08';
@@ -4086,7 +4158,7 @@ function updatePhaseStrip(progress, phaseTable, activePhase) {
     strip.className = 'race-phase-strip';
     strip.innerHTML = phaseTable.map((p, i) =>
       '<span class="race-phase-strip__dot" data-phase="' + i + '" ' +
-            'title="' + p.label + '"></span>' +
+            'title="' + esc(p.label) + '"></span>' +
       (i < phaseTable.length - 1
         ? '<span class="race-phase-strip__rail" data-rail="' + i + '"></span>'
         : '')
@@ -4151,8 +4223,8 @@ function showSubtitle(text, duration) {
 // silk colours + silk_pattern so each row's cap matches its jersey.
 let lbCapCounter = 0;
 function renderCapSvg(runner) {
-  const body   = (runner && runner.silk)  || '#1A3A6B';
-  const accent = (runner && runner.silk2) || '#FFFFFF';
+  const body   = esc((runner && runner.silk)  || '#1A3A6B');
+  const accent = esc((runner && runner.silk2) || '#FFFFFF');
   const pat    = (runner && runner.silk_pattern) || 'solid';
   const id = 'lbCap-' + (++lbCapCounter);
   let patternMarkup = '';
@@ -4207,11 +4279,7 @@ function buildLeaderboard() {
   // race. The position number flips live during play; the bar stays
   // fixed — that's the contract with the viewer.
   //
-  // parseFloat() defends against the runner-payload serialiser
-  // emitting weight as a numeric string in some shapes — without it,
-  // (string || 0) keeps the string and arithmetic collapses to NaN,
-  // making every probability render as the same low number (~5%).
-  const horseWeight = (h) => parseFloat(h.runner.weight) || 0;
+  const horseWeight = (h) => h.runner.weight;
   const totalWeight = horses.reduce((s, h) => s + horseWeight(h), 0) || 1;
   // Find the field maximum so the bar fill is normalised to the front
   // runner's probability instead of 100% — most realistic. The favourite
@@ -4221,8 +4289,8 @@ function buildLeaderboard() {
 
   horses.forEach(h => {
     const r = h.runner;
-    const isUser = STATE.userPick && STATE.userPick.id === r.id;
-    const isFox  = STATE.foxPick  && STATE.foxPick.name === r.name;
+    const isUser = isUserPick(r);
+    const isFox  = isFoxPick(r);
     const prob   = horseWeight(h) / totalWeight;
     const probPct = Math.round(prob * 100);
     // Bar width relative to the field leader's probability — keeps the
@@ -4237,7 +4305,7 @@ function buildLeaderboard() {
       '<span class="race-lb-pos">—</span>' +
       '<span class="race-lb-silk">' + renderCapSvg(r) + '</span>' +
       '<span class="race-lb-name-prob">' +
-        '<span class="race-lb-name' + (isUser ? ' user-horse' : isFox ? ' fox-horse' : '') + '">' + r.name + '</span>' +
+        '<span class="race-lb-name' + (isUser ? ' user-horse' : isFox ? ' fox-horse' : '') + '">' + esc(r.name) + '</span>' +
         '<span class="race-lb-prob" title="AI win probability">' +
           '<span class="race-lb-prob__bar">' +
             '<span class="race-lb-prob__fill" style="width:' + barWidth + '%"></span>' +
@@ -4379,7 +4447,6 @@ function finishPauseS(lineGaps, v, slowFrom) {
 
 function crossTheLine() {
   const margin = computeWinningMargin();
-  STATE.finishMargin = margin;
   setPhaseTitle('PAST THE POST');
   clearBroadcastId();
 
@@ -4474,7 +4541,7 @@ function showResultCard(margin) {
 
   el.innerHTML =
     '<span class="race-result__eyebrow">' + eyebrow + '</span>' +
-    '<span class="race-result__name">' + headline + '</span>' +
+    '<span class="race-result__name">' + esc(headline) + '</span>' +
     '<span class="race-result__margin">' + sub + '</span>';
   el.classList.toggle('race-result--photo', isPhoto || isDH);
 
@@ -4531,20 +4598,9 @@ const HERO = {
   confetti: [],
 };
 
-// A tile laid across the screen at an explicit offset and scale.
-function blitTiled(c, tile, bottomY, offsetPx, alpha, scale) {
-  if (!tile) return;
-  const w = tile.w * scale, h = tile.h * scale;
-  c.save();
-  c.globalAlpha = alpha;
-  let x = -(((offsetPx % w) + w) % w);
-  for (; x < viewW + w; x += w) c.drawImage(tile.canvas, x, bottomY - h, w, h);
-  c.restore();
-}
-
 // Where the rail sits in the hero frame, and how big the winner is.
 function heroLayout() {
-  const narrow = viewW <= 768;
+  const narrow = isNarrowViewport();
   const railY = viewH * (narrow ? 0.60 : 0.655);
   // Horse length on screen at the end of the push. The push itself is
   // theirs: 1.55× → 2.25×, i.e. the horse grows by 1.45 across it.
@@ -4570,19 +4626,17 @@ function drawHeroBackdrop() {
   const standTop = horizon + 2 - standH;
   const sc = HERO.scroll;
 
-  SUN.x = viewW * (viewW <= 768 ? 0.74 : 0.8);
+  SUN.x = viewW * (isNarrowViewport() ? 0.74 : 0.8);
   SUN.y = Math.max(viewH * 0.06, standTop - viewH * 0.1);
   SUN.visible = 1;
 
-  paintSky(pCtx, horizon + viewH * 0.08, 0.9);
-  paintSunDisc(pCtx);
-  blitTiled(pCtx, TILES.cloudsHigh, standTop + viewH * 0.05, sc * 0.012 + frameClock * WIND.cloudsHigh, 0.9, 1.25);
-  blitTiled(pCtx, TILES.cloudsLow,  standTop + viewH * 0.10, sc * 0.03  + frameClock * WIND.cloudsLow,  1,   1.35);
-  paintSunGlow(pCtx);
-  blitTiled(pCtx, TILES.hills, horizon + 6, sc * 0.05, 0.9, 1.4);
-  blitTiled(pCtx, TILES.stand, horizon + 2, sc * 0.16, 1, S);
-  blitTiled(pCtx, TILES.trees, horizon + viewH * 0.035, sc * 0.3, 1, 1.9);
-  paintHorizonHaze(pCtx, horizon, standH * 0.6);
+  paintScenery(pCtx, { bottom: horizon + viewH * 0.08, warm: 0.9 }, {
+    cloudsHigh: { bottom: standTop + viewH * 0.05, offset: sc * 0.012 + frameClock * WIND.cloudsHigh, alpha: 0.9, scale: 1.25 },
+    cloudsLow:  { bottom: standTop + viewH * 0.10, offset: sc * 0.03  + frameClock * WIND.cloudsLow,  alpha: 1,   scale: 1.35 },
+    hills:      { bottom: horizon + 6,             offset: sc * 0.05, alpha: 0.9, scale: 1.4 },
+    stand:      { bottom: horizon + 2,             offset: sc * 0.16, alpha: 1,   scale: S },
+    trees:      { bottom: horizon + viewH * 0.035, offset: sc * 0.3,  alpha: 1,   scale: 1.9 },
+  }, { horizon, height: standH * 0.6 });
 }
 
 function drawHeroTrack() {
@@ -4686,6 +4740,7 @@ function renderHeroFrame(dt) {
   drawHoofDust(dt);
 
   // Local y = +28 is the ground line of the horse artwork.
+  spawnHoofDust(L.x, L.groundY - 28 * L.scale, h, strideCycle(h), L.scale);
   drawHorseSilhouette(L.x, L.groundY - 28 * L.scale, h, L.scale);
 
   // Dark edges, then the celebration.
@@ -4728,8 +4783,8 @@ function showWinnerMomentCard(winner, margin) {
   const meta = ['WINNER', odds ? String(odds) : '', marginText].filter(Boolean).join('   ·   ');
   el.innerHTML =
     '<span class="win-moment__eyebrow">SATURDAY RACING  ·  WINNING MOMENT</span>' +
-    '<span class="win-moment__name">' + String(winner.name || 'WINNER') + '</span>' +
-    '<span class="win-moment__meta">' + meta + '</span>';
+    '<span class="win-moment__name">' + esc(winner.name || 'WINNER') + '</span>' +
+    '<span class="win-moment__meta">' + esc(meta) + '</span>';
   el.style.display = 'flex';
   // Theirs resolves over 18% of the moment with a cubic ease-out.
   gsap.fromTo(el, { opacity: 0, y: -8 },
@@ -4817,7 +4872,7 @@ function raceFinish(margin) {
 // Post-race walkthrough of every finisher, LAST → FIRST. Mirrors
 // experience.js — Phase 3 will hoist into a shared module. Reuses
 // experience.css styling so jumps + flat look identical here.
-const ROLLCALL_HOLD = {
+const ROLLCALL_HOLD_MS = {
   back:   750,
   third:  1400,
   second: 1600,
@@ -4826,15 +4881,15 @@ const ROLLCALL_HOLD = {
 const ROLLCALL_FADE_MS = 220;
 let rollCallSkipped = false;
 
-window.skipRollCall = function () {
+function skipRollCall() {
   rollCallSkipped = true;
-};
+}
 
 function rollCallHoldFor(rank) {
-  if (rank === 1) return ROLLCALL_HOLD.first;
-  if (rank === 2) return ROLLCALL_HOLD.second;
-  if (rank === 3) return ROLLCALL_HOLD.third;
-  return ROLLCALL_HOLD.back;
+  if (rank === 1) return ROLLCALL_HOLD_MS.first;
+  if (rank === 2) return ROLLCALL_HOLD_MS.second;
+  if (rank === 3) return ROLLCALL_HOLD_MS.third;
+  return ROLLCALL_HOLD_MS.back;
 }
 
 // 1st, 2nd, 3rd, 4th … 11th, 12th, 13th … 21st, 22nd, 23rd.
@@ -4858,7 +4913,7 @@ function buildRollCallCard(horse, rank, total) {
   let distHtml = '';
   if (!isWinner && REPLAY_DATA && REPLAY_DATA.has_result) {
     const raw = (REPLAY_DATA.beaten_distances || {})[horse.id];
-    if (raw) distHtml = '<div class="rollcall-distance">+' + raw + '</div>';
+    if (raw) distHtml = '<div class="rollcall-distance">+' + esc(raw) + '</div>';
   }
   const cardCls = isWinner ? 'rollcall-card rollcall-card--winner' : 'rollcall-card';
   return (
@@ -4866,10 +4921,10 @@ function buildRollCallCard(horse, rank, total) {
       '<div class="rollcall-medallion ' + medalCls + '">' + rank + '</div>' +
       '<div class="rollcall-position-label">' + rollCallPositionLabel(rank, total) + '</div>' +
       '<div class="parade-silk">' + renderSilkSvg(horse) + '</div>' +
-      '<div class="rollcall-name">' + horse.name + '</div>' +
+      '<div class="rollcall-name">' + esc(horse.name) + '</div>' +
       '<div class="rollcall-connections">' +
-        '<strong>J:</strong> ' + horse.jockey + ' &nbsp;·&nbsp; ' +
-        '<strong>T:</strong> ' + horse.trainer +
+        '<strong>J:</strong> ' + esc(horse.jockey) + ' &nbsp;·&nbsp; ' +
+        '<strong>T:</strong> ' + esc(horse.trainer) +
       '</div>' +
       distHtml +
     '</div>'
@@ -4961,7 +5016,14 @@ function transitionToReveal(winner, positions) {
 }
 
 function buildRevealScreen(winner, positions) {
-  const isUserWin = STATE.userPick && STATE.userPick.id === winner.id;
+  const isUserWin = isUserPick(winner);
+  buildRevealHeader(winner, isUserWin);
+  buildRevealPodium(positions);
+  buildRevealVerdict(positions, isUserWin);
+}
+
+// Background, winner's name, odds and silks under the trophy.
+function buildRevealHeader(winner, isUserWin) {
   const revBg = document.getElementById('revealBg');
   if (revBg) {
     revBg.style.background = isUserWin
@@ -4981,7 +5043,10 @@ function buildRevealScreen(winner, positions) {
     silkEl.classList.add('reveal-silk--jersey');
     silkEl.innerHTML = renderSilkSvg(winner);
   }
+}
 
+// The first three, with their silks, margins and prices.
+function buildRevealPodium(positions) {
   const podium = document.getElementById('revealPodium');
   if (podium) {
     // Replay mode: format the raw beaten-distance into compact racing
@@ -5020,14 +5085,17 @@ function buildRevealScreen(winner, positions) {
           '<span class="reveal-podium__medal" aria-hidden="true">' + MEDALS[i] + '</span>' +
           '<span class="reveal-podium__pos">' + POS_LABELS[i] + '</span>' +
           silkHtml +
-          '<span class="reveal-podium__name">' + r.name + '</span>' +
+          '<span class="reveal-podium__name">' + esc(r.name) + '</span>' +
           gapHtml +
-          '<span class="reveal-podium__odds">' + r.odds + '</span>' +
+          '<span class="reveal-podium__odds">' + esc(r.odds) + '</span>' +
         '</div>'
       );
     }).join('');
   }
+}
 
+// How the viewer's own pick got on.
+function buildRevealVerdict(positions, isUserWin) {
   const verdictBox = document.getElementById('revealVerdictBox');
   const verdictTitle = document.getElementById('revealVerdictTitle');
   const verdictText  = document.getElementById('revealVerdictText');
@@ -5117,7 +5185,7 @@ function animateReveal() {
 }
 
 // ─── Replay ────────────────────────────────────────────────────
-window.replayExperience = function () {
+function replayExperience() {
   // User is going back to the intro — restore the archive picker.
   document.body.classList.remove('cinematic-experience-running');
   resetRollCallAndSkip();
@@ -5125,7 +5193,7 @@ window.replayExperience = function () {
   resetRaceOverlays();
   resetScreens();
   showScreen('intro');
-};
+}
 
 function resetRollCallAndSkip() {
   // Re-arm the Skip-to-Finish pill for the next run.
@@ -5153,22 +5221,17 @@ function resetRaceEngine() {
   particles    = [];
   pressFlashes = [];
   horses      = [];
+  horsesByLane = [];
   frameClock  = 0;
   lastPhaseTitle = '';
   firedCommentary.clear();
   lbSampleTimer = 0;
   rankedCache   = [];
   rankedCacheAt = -1;
-  STATE.finishMargin = null;
 
-  Object.assign(DIRECTOR, {
-    progress: 0, zoom: 1, anchorX: 0.50, camY: 0, tilt: 0, shake: 0,
-    vignette: 0.10, groupBias: 0.12, fieldFade: 0, flash: 0,
-    filmRate: 1, postHold: 0, postFrame: 0.40,
-    pressFlash: 0, letterbox: 0, phase: 'cruise',
-  });
+  Object.assign(DIRECTOR, DIRECTOR_START);
+  Object.assign(CAM, CAM_START);
   FINISH.active = false;
-  CAM.x = 0; CAM.zoom = 1; CAM.shakeX = 0; CAM.shakeY = 0;
 
   pCtx.clearRect(0, 0, viewW, viewH);
   ctx.clearRect(0, 0, viewW, viewH);
@@ -5216,22 +5279,21 @@ function resetScreens() {
 }
 
 // ─── Public API ─────────────────────────────────────────────────
-// init() and the window.* functions above are what the page calls.
-// FlatEngine groups them with the build's version and feature list (the
-// sandbox's staleness badge reads these), QA hooks for deterministic
-// regression runs (tools/visual-regression.js) and the pure helpers the
-// unit tests in tests/ exercise. Nothing in the product reads debug or
-// internals.
-window.FlatEngine = Object.freeze({
+// What the page calls: the production boot script calls init() and, on
+// the reduced-motion path, startExperience(); the buttons are wired in
+// wireButtons(). FlatEngine groups the same functions with the build's
+// version and feature list (the sandbox's staleness badge reads these),
+// QA hooks for deterministic regression runs (tools/visual-regression.js)
+// and the pure helpers the unit tests in tests/ exercise. Nothing in the
+// product reads debug or internals.
+const PUBLIC_API = { init, startExperience, skipParade, skipToFinish, skipRollCall, replayExperience };
+Object.assign(window, PUBLIC_API);
+
+window.FlatEngine = Object.freeze(Object.assign({
   version: '2.5.0',
   features: Object.freeze(['world-camera', 'coat-palette', 'rail-crowd',
                            'run-through', 'distance-gait', 'encapsulated']),
-  init: init,
-  startExperience: window.startExperience,
-  skipParade: window.skipParade,
-  skipToFinish: window.skipToFinish,
-  skipRollCall: window.skipRollCall,
-  replayExperience: window.replayExperience,
+}, PUBLIC_API, {
   debug: Object.freeze({
     // Replace the engine's load-time randomness, for a repeatable run.
     reseed(camSeed) {
@@ -5246,8 +5308,9 @@ window.FlatEngine = Object.freeze({
     hoofPath, solveLeg, coatFor, markingsFor,
     LEG_RIG, STRIDE_SWEEP, STANCE, STRIDE_LOCAL, START_EASE, EASE_TO,
     FINISH_PAUSE_S, FINISH_PAUSE_MAX_S, MAX_VISIBLE_LENGTHS,
+    esc, mergeConfig,
   }),
-});
+}));
 
 // First layout. Deliberately the last statement in the module: resize()
 // builds the scenery tiles, which needs every tile painter above to be
