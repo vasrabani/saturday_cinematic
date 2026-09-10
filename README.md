@@ -30,7 +30,7 @@ long after they have changed on disk — which turns every review into
 
 As a backstop, the scenario picker shows an **engine build check**. It
 asks the loaded engine which features it was built with (`FlatEngine.features`).
-If it reads `engine:` and a version number (`engine: 2.5.0`), the
+If it reads `engine:` and a version number (`engine: 2.6.0`), the
 `flat.js` you are running has everything this page expects.
 If it turns red and says `STALE ENGINE`, the browser served you a cached
 copy: hard-refresh with `Ctrl+Shift+R` (`Cmd+Shift+R` on a Mac), or
