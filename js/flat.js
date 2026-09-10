@@ -5506,7 +5506,7 @@ window.FlatEngine = Object.freeze(Object.assign({
     hoofPath, solveLeg, coatFor, markingsFor,
     LEG_RIG, STRIDE_SWEEP, STANCE, STRIDE_LOCAL, START_EASE, EASE_TO,
     FINISH_PAUSE_S, FINISH_PAUSE_MAX_S, MAX_VISIBLE_LENGTHS,
-    esc, mergeConfig,
+    esc, mergeConfig, buildRacePositions, renderCommentary,
   }),
 }));
 

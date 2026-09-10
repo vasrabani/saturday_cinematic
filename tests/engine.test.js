@@ -9,6 +9,11 @@ const { loadEngine } = require('./load-engine');
 
 const E = loadEngine().internals;
 
+// Values built inside the engine's vm context have that context's
+// prototypes; strict deep-equality compares prototypes, so compare plain
+// copies.
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
 // Deterministic Math.random for the tests that invent a race.
 function seeded(seed) {
   let a = seed | 0;
@@ -156,4 +161,57 @@ test('coats and markings are stable per runner and vary across a field', () => {
   const socks = new Set();
   for (let i = 1; i <= 24; i++) socks.add(JSON.stringify(E.markingsFor({ id: String(i) }).socks));
   assert.ok(socks.size > 3, 'short ids must not all get the same socks');
+});
+
+// ── The result, the commentary, the config, the markup ──────────────
+
+const FIELD = [
+  { id: 1, name: 'Opportunity', weight: 105 },
+  { id: 2, name: 'Hopewell Rock', weight: 99 },
+  { id: 3, name: 'Daiquiri Bay', weight: 108 },
+  { id: 4, name: 'Ascending', weight: 97 },
+];
+const raceData = (extra) => Object.assign({ runners: FIELD, userPick: null, foxPick: null,
+                                            raceName: 'Test', raceDistance: '1m', raceBand: 'mile' }, extra);
+
+test('a replay runs in the real finishing order, non-finishers appended', () => {
+  const api = loadEngine({ replayData: { has_result: true, result_order: [3, 1, 4] } });
+  api.init(raceData());
+  const order = plain(api.internals.buildRacePositions(FIELD[0]).map((r) => r.id));
+  assert.deepEqual(order, [3, 1, 4, 2]);
+});
+
+test('a forecast puts the drawn winner first and every runner in once', () => {
+  const api = loadEngine({ random: seeded(7) });
+  api.init(raceData());
+  const order = plain(api.internals.buildRacePositions(FIELD[1]).map((r) => r.id));
+  assert.equal(order[0], 2);
+  assert.deepEqual(order.slice().sort(), [1, 2, 3, 4]);
+});
+
+test('commentary fills in the picks and drops the ones that are missing', () => {
+  const api = loadEngine();
+  api.init(raceData({ userPick: FIELD[0] }));
+  const say = api.internals.renderCommentary;
+  assert.equal(say('Halfway. {LEADER} travelling like a winner, {USER} closing.'),
+               'Halfway. the leader travelling like a winner, Opportunity closing.');
+  assert.equal(say('{LEADER} kicks first, {FOX} tracking him.'), 'the leader kicks first tracking him.');
+  assert.equal(say('No placeholders here.'), 'No placeholders here.');
+});
+
+test('a partial config override keeps the other defaults', () => {
+  const merge = E.mergeConfig;
+  const merged = plain(merge({ colours: { gold: '#D4AF37', userPick: 'x' }, horse: { range: [1, 2] }, n: 1 },
+                             { colours: { gold: '#FFF' }, horse: { range: [5] } }));
+  assert.deepEqual(merged.colours, { gold: '#FFF', userPick: 'x' });
+  assert.deepEqual(merged.horse.range, [5], 'arrays replace');
+  assert.equal(merged.n, 1);
+  assert.deepEqual(plain(merge({ a: 1 }, undefined)), { a: 1 });
+});
+
+test('payload text is escaped on its way into markup, and ordinary names are not touched', () => {
+  assert.equal(E.esc('<img src=x onerror="alert(1)">'), '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;');
+  assert.equal(E.esc("Fox's Pick & Co"), 'Fox&#39;s Pick &amp; Co');
+  assert.equal(E.esc('Daiquiri Bay (GB)'), 'Daiquiri Bay (GB)');
+  assert.equal(E.esc(8), '8');
 });

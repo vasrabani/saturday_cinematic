@@ -55,6 +55,18 @@ Each JSON file in `data/` is a self-contained race payload matching the producti
 
 ---
 
+## Development checks
+
+Running the sandbox needs nothing but Python. The quality checks need Node 18+ and are development-only — production still loads `js/flat.js` directly:
+
+```
+npm install        # once
+npm run lint       # ESLint, zero warnings allowed
+npm test           # unit tests for the engine's pure logic
+```
+
+To show that a change does not alter what the viewer sees, use the visual regression check in `tools/visual-regression.js` (see ARCHITECTURE.md §13).
+
 ## What you can (and cannot) change
 
 **Edit freely:**

@@ -58,11 +58,14 @@ cinematic-lab/
 ├── ARCHITECTURE.md         ← this document
 ├── README.md               ← quick-start + payload contract + scope contract
 ├── index.html              ← sandbox bootstrap (production replaces this with a Django template)
+├── serve.py                ← dev server: caching off, this machine only
+├── package.json            ← dev tooling only (ESLint, the unit tests) — nothing here ships
+├── eslint.config.js
 ├── css/
 │   ├── experience.css      ← shared cinematic chrome (screens, buttons, roll call, reveal, trophy)
-│   └── flat.css            ← flat-race specifics (stalls, photo finish, leaderboard, band pill)
+│   └── flat.css            ← flat-race specifics (stalls, race-screen chrome, podium, band pill, intro type)
 ├── js/
-│   ├── flat.js             ← THE ENGINE — ~2,900 lines, do the work here
+│   ├── flat.js             ← THE ENGINE — one classic script, ~5,500 lines in ~220 functions; do the work here
 │   ├── experience.js       ← jumps-race engine (Grand National etc.); dormant in this sandbox
 │   └── vendor/
 │       └── gsap.min.js     ← self-hosted (production pins the exact same copy)
@@ -72,6 +75,11 @@ cinematic-lab/
 │   └── race-runaway.json   ← 24-runner runaway-winner scenario
 ├── img/
 │   └── silks/              ← sample silk images referenced by runners' silk_url
+├── tests/
+│   ├── engine.test.js      ← unit tests for the engine's pure logic (`npm test`)
+│   └── load-engine.js      ← runs flat.js in Node against an inert browser
+├── tools/
+│   └── visual-regression.js ← proves a change does not alter what the viewer sees (§13)
 └── fonts/
     ├── saturday-fonts.css  ← @font-face rules mirrored from production
     └── *.woff2             ← Playfair Display (4 faces) + DM Sans (5 weights)
@@ -94,13 +102,25 @@ The sandbox startup is deliberately different from production. Understand it bef
    - Populates the intro title, meta chips, band pill, parade header from the payload.
    - **Creates a `<script type="application/json" id="replayData">` tag** containing the payload.
 5. **Only then** does it dynamically load `gsap.min.js` and `flat.js`.
-6. `flat.js` reads `#replayData` synchronously into a top-level `const REPLAY_DATA` (`REPLAY_DATA`, near the top of the race-model section).
+6. `flat.js` reads `#replayData` synchronously into its `REPLAY_DATA` constant (near the top of the race-model section).
 
 ### Why the dynamic load
 
 `flat.js` reads `#replayData` **once**, at parse time, into a `const`. There's no runtime lookup, no polling, no fallback if the node doesn't exist yet. If `flat.js` runs before `#replayData` is in the DOM, `REPLAY_DATA` is `null` for the rest of the page's life — and the engine silently falls back to a simulated result instead of honouring `result_order`. Loading `flat.js` via a normal `<script src>` at the top of the file reproduces exactly that bug.
 
-The contractor who reconstructed the sandbox found this behaviour and documented it in `index.html:187-208`. Don't undo that pattern.
+The contractor who reconstructed the sandbox found this behaviour and documented it in the comment above `loadScript()` in `index.html`. Don't undo that pattern.
+
+### The module and its public API
+
+`flat.js` is one classic script (no modules, no bundler — production includes it with a plain `<script>` tag) wrapped in an IIFE, so nothing it declares leaks into the page. What the page may call is exported in one place, at the bottom of the file:
+
+| Name | Called by |
+|---|---|
+| `init(data)` | the page's boot script, once `#replayData` is in the DOM and GSAP is loaded |
+| `startExperience()` | the intro's Run the Race button, and the boot script on the reduced-motion path |
+| `skipParade()`, `skipToFinish()`, `skipRollCall()`, `replayExperience()` | the skip and replay buttons (wired in `wireButtons()`) |
+
+`window.FlatEngine` groups the same functions with the build's `version` and `features` — the sandbox's staleness badge checks these to catch a cached engine — plus `debug.reseed()`, which the visual regression tool uses to make a run repeatable, and `internals`, the pure helpers the unit tests call. Nothing in the product reads `debug` or `internals`.
 
 ### Production
 
@@ -141,47 +161,62 @@ If `has_result` is `false` or the whole `replay_data` block is missing, the engi
 
 ## 6. The engine — `js/flat.js` deep dive
 
-About 2,900 lines. The layout in the file matches the runtime sequence, so scrolling top-to-bottom follows the race. The race scene is split into banner-commented sections (`// ═══ RACE MODEL ═══` and so on) — grep for those banners and you have the table of contents.
+About 5,500 lines in some 220 functions, none longer than 70 lines. The layout in the file matches the runtime sequence, so scrolling top-to-bottom follows the race; the header comment at the top lists the sections, and the race scene is split into banner-commented sections (`// ═══ RACE MODEL ═══` and so on) — grep for those banners and you have the table of contents.
 
 ### 6.1 Module structure (top-to-bottom)
 
 ```
 Section                          What lives there
 ─────────────────────────────────────────────────────────────────────────
-CONFIG load                      FLAT_DEFAULTS, the #flatConfig read, COL/TRK
-Silk badge renderer              renderSilkSvg() — the silks primitive (§6.5)
-State                            STATE — the single source of runtime truth
+CONFIG load                      FLAT_DEFAULTS, mergeConfig(), COL/TRK
+Silk badge renderer              esc(), renderSilkSvg() — the silks primitive (§6.5)
+Data shapes, State               JSDoc types (Runner, RaceData, ReplayData,
+                                 Horse); STATE — the runtime truth
 Canvas + DPI                     raceCanvas + particleCanvas contexts
 Viewport + world layout          WORLD, layoutWorld(), resize()
 Race state                       horses, particles, masterTL, DIRECTOR, CAM
-Race phases                      RACE_PHASES — Cruise / Build / Drive / Line
-Init                             init(), wireButtons(), showScreen()
-Intro chips                      intro previews + the reduced-motion reveal
-Parade                           per-horse walkout, dots, skip
-Transition → race                stalls BANG, startRace()
+                                 (DIRECTOR_START / CAM_START: the one
+                                 definition of their starting values)
+Race phases                      RACE_PHASES, phaseFrom()
+Init                             init(), wireButtons()
+Scheduled steps                  after() / cancelFlowTimers() — the flow's
+                                 timers, cancellable by skip and replay
+Screens, intro, parade           showScreen(), intro chips, the walkout
+Transition → race                stalls BANG, startRace(), resolveResult(),
                                  weightedRandom(), buildRacePositions()
-RACE MODEL                       deficits in lengths, pace shape, surges,
-                                 smoothing, buildHorseObjects, relayoutLanes
-MASTER TIMELINE                  buildMasterTimeline(), the four phases,
+RACE MODEL                       deficits in lengths, inventFinishGaps(),
+                                 pace shape, surges, the relative-speed cap,
+                                 placeHorse() (gait by distance), the
+                                 run-through (runThroughLine)
+MASTER TIMELINE                  SHOTS (the camera per phase),
+                                 buildMasterTimeline(), raceProgressEase(),
                                  addFinalFurlongSequence()
 VIRTUAL CAMERA                   principalGroupFocus(), updateCamera(),
                                  pushWorldTransform(), visibleWorldRange()
-PARALLAX — DEPTH PLANES          scenery tiles, clouds, drawBackdrop()
+PARALLAX — DEPTH PLANES          one builder per scenery tile,
+                                 paintScenery(), drawBackdrop()
 TRACK PLANE                      turf, far rail, furlong markers,
                                  winning post, foreground, atmosphere
 MARGINS                          beaten-distance parse/format helpers
 THE FIELD                        drawField(), ground markers, hoof dust
 BROADCAST IDENTIFICATION         the lower-third that replaced the labels
-RENDER LOOP                      renderFrame() on gsap.ticker
-THE HORSE                        drawHorseSilhouette() — anatomy + gallop
+RENDER LOOP                      renderFrame() on gsap.ticker,
+                                 drawRaceScene(), redrawFrame()
+THE HORSE                        GAIT, LEG_RIG, HORSE_COATS; the pose
+                                 (stridePose) and one function per part,
+                                 in painter's order, jockey last
 Commentary                       Mr Fox beats + the phase strip
 Leaderboard                      buildLeaderboard() + animated updates
 Phase title                      setPhaseTitle()
 CROSSING THE LINE                the flash, the run-through, the result card
 Roll Call                        last-to-first walk-in, one row per horse
 Reveal                           trophy, winner, verdict card, podium
-Replay                           replayExperience() — the full teardown
+Replay                           replayExperience() — the full teardown,
+                                 in four resets
+Public API                       the window exports and FlatEngine
 ```
+
+**Conventions.** Everything in the file is private to it, so nothing carries an underscore prefix. Tuning values live in named tables next to the code that reads them — `SHOTS`, `LEG_RIG`, `HORSE_COATS`, `MARGIN_WORDS`, `BAND_SPREAD`, `FLAT_DEFAULTS` — rather than as numbers inside functions. Payload text reaches markup only through `esc()`. Anything that animates does it on GSAP's clock or the flow's `after()` timers, so skip and replay can stop it. Randomness is `Math.random`, called in a fixed order; that is what lets `tools/visual-regression.js` replay a run exactly.
 
 Read the file this way and it tells you the story of a race.
 
@@ -199,7 +234,7 @@ Transitions happen through `showScreen(name)`, which:
 2. Removes `.active` from every `.screen` element.
 3. Adds `.active` to `#screen-<name>`.
 
-Each phase's entry function does the work: `beginParade()`, `startRace()`, `runRollCall()`, `runReveal()`. There's no formal state machine library — the transitions are hardcoded at the end of each phase (parade ends → `transitionToRace()`; race ends → `runWinningMoment()` → `runRollCall()`; etc.). Simple and readable; hard to accidentally skip a phase.
+Each phase's entry function does the work: `beginParade()`, `startRace()`, `runRollCall()`, `transitionToReveal()`. There's no formal state machine library — the transitions are hardcoded at the end of each phase (parade ends → `transitionToRace()`; race ends → `runWinningMoment()` → `runRollCall()`; etc.). Simple and readable; hard to accidentally skip a phase.
 
 The `#skip` buttons on each screen fast-forward to the next phase and are also allowed to short-circuit long GSAP timelines.
 
@@ -334,7 +369,7 @@ far hind 0.00 → near hind 0.10 → far fore 0.29 → near fore 0.40
 each hoof down for 0.19 of the cycle; all four off the ground 0.59 → 1.00
 ```
 
-A racehorse at full gallop has each foot on the ground for about a fifth of the stride, and it matters for more than accuracy — see below. `_spawnHoofDust()` fires on the same four footfalls, so the divots come off the hooves that are actually on the ground. The ground target is expressed in the body's *pitched* frame, so the hooves don't skate while the body rocks.
+A racehorse at full gallop has each foot on the ground for about a fifth of the stride, and it matters for more than accuracy — see below. `spawnHoofDust()` fires on the same four footfalls, so the divots come off the hooves that are actually on the ground. The ground target is expressed in the body's *pitched* frame, so the hooves don't skate while the body rocks.
 
 **The gait is driven by distance, not by time.** A planted hoof sweeps `STRIDE_SWEEP` (19.5 units) back under the body while it is down, so for it to stay where it was planted, one gait cycle has to carry the horse exactly `STRIDE_LOCAL` = `STRIDE_SWEEP / STANCE` of its own units — about 1.4 lengths — at whatever scale it is drawn. `placeHorse()` advances `legPhase` by the distance the horse actually travelled that frame over that stride, so cadence follows ground speed exactly: in slow motion the legs slow with the travel, a horse pulling up after the line canters, and the smaller horses in the far lanes take proportionally quicker strides. It used to be tied to the clock, at nearly the same rate whatever the horse was doing, and the hooves slid over the turf everywhere — the horses covered 1.5 lengths a stride on legs drawn for 0.7, worst of all in slow motion, after the line (when the field stopped dead with its legs still going) and in the far lanes. With a stance of 0.36 the stride needed for planted hooves would have meant five strides a second; 0.19 gives 2.7 at race speed, which is about what a racehorse does. The Winning Moment uses the same rule the other way round: the turf is scrolled one stride per cycle at hero scale.
 
@@ -343,7 +378,7 @@ A racehorse at full gallop has each foot on the ground for about a fifth of the 
 Each horse has:
 
 - **A coat** — `coatFor()` gives each runner a bay / dark bay / chestnut / liver chestnut / black / grey, hashed from the runner id so the same horse looks the same on every replay, and weighted the way a real field looks (mostly bay and chestnut, with the grey and the black as the two that catch the eye). Bays and blacks get black points on mane, tail and lower legs; greys get dapples. A field of 24 identical brown horses was the single most artificial thing about V1.
-- **Markings** — `markingsFor()` gives about a third of horses a star, stripe or blaze and about a fifth of legs a white sock, from the same id. Note the `_mixHash()` step: runner ids are short (`"12"`, `"1043"`), so the high bits of the raw string hash are always zero, and reading markings straight off it gave every horse in the field identical socks.
+- **Markings** — `markingsFor()` gives about a third of horses a star, stripe or blaze and about a fifth of legs a white sock, from the same id. Note the `mixHash()` step: runner ids are short (`"12"`, `"1043"`), so the high bits of the raw string hash are always zero, and reading markings straight off it gave every horse in the field identical socks.
 - **Volume** — the coat is lit: warm along the topline with a rim of sunlight, sheen over the quarters and shoulder, dark under the barrel, creases at the stifle and behind the elbow. Forearm and gaskin are tapered muscle shapes (`drawLimb()` / `taper()`), not strokes, with joint bulges at knee, hock and fetlock, a pastern sloping into the hoof, and a tendon line down the back of the cannon. The far-side legs are drawn first in the shade colour so the near pair reads in front of them.
 - **A head that reads** — a long wedge with a round jowl, a straight face, flared nostril (more so in the final furlong), pricked ears, an eye with a catch-light, and the throatlatch shadow that separates head from neck. A bridle with noseband and reins running back to the jockey's hands.
 - **Racing tack** — number cloth under a small racing saddle, a girth and a breastgirth. The number is where it lives on a real racecourse, which makes it the quiet identification the brief asked for: it travels with the horse and needs no floating chip.
@@ -367,7 +402,7 @@ The most valuable levers for a designer looking at horse aesthetics:
 - `drawHorseSilhouette()` — the anatomy itself.
 - `hoofPath()` and the `leg()` calls inside `drawHorseSilhouette()` — stride length (`front`, `back`), how high each hoof lifts, and bone lengths. Change these and the gait changes; the IK keeps the joints honest.
 - `HORSE_COATS` / `coatFor()` / `markingsFor()` — the palette, how often each colour comes up, and how common blazes and socks are.
-- `_spawnHoofDust()` — density, size and colour of the divots.
+- `spawnHoofDust()` — density, size and colour of the divots.
 
 ### 6.7 Parallax — the depth planes
 
@@ -489,7 +524,7 @@ CSS lives in two files that split responsibilities on subject, not scope:
 
 - Flat band pill styling (colour-swaps by `.flat-band-pill--sprint / --mile / --stayer`)
 - Starting stalls (`#flatStalls`) and the "BANG" animation
-- Photo-finish overlay (`#flatPhotoFinish` flash + label)
+- The legacy photo-finish overlay (`#flatPhotoFinish`): still in the markup, never shown; its base rules keep it hidden
 - Race leaderboard (`#raceLeaderboard`) rows, silks column, positions
 - Race commentary (`#racingCommentary`) — the ticker line at the bottom
 - Parade stage horse card
@@ -634,7 +669,7 @@ Outside the race screen, GSAP is used as it was before:
 | Roll call | Per-row entry from off-screen right, position number count-up |
 | Reveal | Trophy scale + glow, winner name slide-up, verdict box fade, podium row stagger, gold confetti, action bar entry |
 
-**Reveal confetti** is DOM (`spawnRevealConfetti()`), not canvas, because the reveal screen sits above both canvases. Forty-four nodes, GSAP-driven, torn down by the last piece to land and again on `replayExperience()` so nothing accumulates across replays. Confetti stays out of the race itself, where it read as an arcade flourish over a sports broadcast; it appears only after the result is in — in the Winning Moment (canvas, § 8.4c) and here.
+**Reveal confetti** is DOM (`spawnRevealConfetti()`), not canvas, because the reveal screen sits above both canvases. Forty-four nodes, GSAP-driven; the layer is removed when the fall completes, and again on `replayExperience()`, so nothing accumulates across replays. Confetti stays out of the race itself, where it read as an arcade flourish over a sports broadcast; it appears only after the result is in — in the Winning Moment (canvas, § 8.4c) and here.
 
 **Intro runner chips** carry the runner's actual cap (`renderCapSvg`) rather than being text pills. Twenty-four names in a row is a list; twenty-four sets of colours is a racecard, and it primes the viewer for the silks they are about to follow.
 
@@ -670,7 +705,7 @@ Common jobs you might take on and where they belong.
 
 ### Change how a horse looks
 
-`js/flat.js` → the `THE HORSE` section, `drawHorseSilhouette()`. Also `_spawnHoofDust()` for the divots. Please do not reintroduce trails, rings or floating labels on the animals (§ 6.6).
+`js/flat.js` → the `THE HORSE` section, `drawHorseSilhouette()`. Also `spawnHoofDust()` for the divots. Please do not reintroduce trails, rings or floating labels on the animals (§ 6.6).
 
 ### Change the camera
 
@@ -754,9 +789,29 @@ If you're picking up work fresh:
 
 1. Run `python serve.py` and watch `race`, then `race-close-finish`, then `race-runaway` end-to-end. Understand what changes between them. (Use `serve.py` rather than `python -m http.server` — it disables caching, without which the browser will happily serve you a stale engine while you wonder why your change did nothing.)
 2. Open `js/flat.js` and scan the section headers (they're commented every ~50 lines). You don't need to understand every function — just know where each concern lives.
-3. Pick something small first — a colour tweak, a font-weight change on the reveal screen, a slight change to the speed lines. Ship it as a scoped PR. Vas will merge and integrate to production, and you'll see the shape of the review loop.
+3. Pick something small first — a colour tweak, a font-weight change on the reveal screen, a slight change to a camera shot in `SHOTS`. Run `npm run lint`, `npm test` and, for anything that should not change the picture, the visual regression check (§13). Ship it as a scoped PR. Vas will merge and integrate to production, and you'll see the shape of the review loop.
 4. From there, take on bigger visual work.
 
 **Golden rule**: if you find yourself wanting to change something in `data/*.json` or `index.html` to make your visual change work, stop and ask. Data-shape changes and structural changes need to land in production template + Python code, so they're separate PRs with different reviewers.
 
 For anything visual — colours, motion, geometry, layout, typography, silks — you're in charge. That's what this sandbox is for.
+
+---
+
+## 13. Lint, tests and the visual check
+
+Three checks, all development-only — nothing here is loaded by the product. `npm install` once (Node 18+), then:
+
+- **`npm run lint`** — ESLint over `js/flat.js`, `tests/` and `tools/`, zero warnings allowed. It is what catches the write-only variable and the undefined name before they ship.
+- **`npm test`** — unit tests for the engine's pure logic, on Node's own test runner: the margin parser and formatters, ordinals, the invented finishing gaps (monotonic, a close finish), the replay's finishing order, the start ease and the run-through curves, the card's pause, the "a planted hoof cannot skate" invariant of the leg rig, the IK, commentary templating, the config merge and `esc()`. `tests/load-engine.js` loads the real `flat.js` into a Node `vm` against an inert browser and calls `FlatEngine.internals`.
+- **The visual regression check** — `tools/visual-regression.js`, pasted into the console on the sandbox page. It replays the whole experience (intro, parade, race, Skip to Finish, the line, the Winning Moment, roll call, reveal) on a manual clock with seeded randomness, and fingerprints both canvases and the active screen's markup at about 140 checkpoints. Two runs of the same code match exactly, so a refactor that is meant to change nothing can be *shown* to change nothing:
+
+  ```
+  VisualRegression.run(); VisualRegression.save('before');   // reload
+  // …make the change, reload, paste the tool again…
+  VisualRegression.run(); VisualRegression.compare('before');
+  ```
+
+  Record both runs at the same window size and fixture. The run takes over `Math.random`, the timers and the GSAP ticker, so reload afterwards. A change that consumes random numbers in a different order (a new `Math.random()` call anywhere) makes it a different race: compare the flow (labels, frames, screens), and re-baseline deliberately.
+
+The quality pass that split the long functions, wrapped the module and removed the duplicated CSS was checked this way: the canvases and markup matched at every checkpoint, and for the CSS every element on every screen was compared for computed style, at desktop and phone widths, with the old and new stylesheets swapped in the same page.

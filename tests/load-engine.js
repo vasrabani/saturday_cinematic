@@ -62,7 +62,8 @@ function loadEngine(options = {}) {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  if (options.random) vm.runInContext('Math.random = ' + options.random.toString(), sandbox);
+  // The function itself, not its source: a seeded generator keeps its state in a closure.
+  if (options.random) vm.runInContext('Math', sandbox).random = options.random;
   vm.runInContext(fs.readFileSync(ENGINE, 'utf8'), sandbox, { filename: ENGINE });
   return sandbox.FlatEngine;
 }
