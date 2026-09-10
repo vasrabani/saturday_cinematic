@@ -166,7 +166,7 @@ MASTER TIMELINE                  buildMasterTimeline(), the four phases,
                                  addFinalFurlongSequence()
 VIRTUAL CAMERA                   principalGroupFocus(), updateCamera(),
                                  pushWorldTransform(), visibleWorldRange()
-PARALLAX — SEVEN DEPTH PLANES    offscreen tiles + drawBackdrop()
+PARALLAX — DEPTH PLANES          scenery tiles, clouds, drawBackdrop()
 TRACK PLANE                      turf, far rail, furlong markers,
                                  winning post, foreground, atmosphere
 MARGINS                          beaten-distance parse/format helpers
@@ -310,26 +310,42 @@ The horses are drawn procedurally in `drawHorseSilhouette()` as a chain of ellip
 **Proportions carry this drawing, not detail.** A thoroughbred is leggy and shallow through the body: the legs are about as long as the barrel is deep, the girth is deep but narrow, and there is a pronounced tuck-up at the flank. Draw it with a round belly and short legs and you get a pony however good the shading is — which is exactly what the first V2 attempt produced. The local grid the paths are laid out on:
 
 ```
-y = -30   top of the jockey's cap
-y = -14   withers / topline
-y =  +2   belly (tucked up)
+y = -33   top of the jockey's cap
+y = -15   withers / topline
+y =  +3   belly (tucked up)
 y = +28   ground line
 x = -40   tip of the streaming tail
-x = +48   muzzle
+x = -21   point of buttock
+x = +55   muzzle
 ```
 
 That span is what makes `HORSE_ART_LENGTH` the definition of a "length" everywhere else in the engine — get the drawing's proportions wrong and every gap the Racing API gives us is drawn at the wrong size.
 
+**The legs are a rig, not an animation.** This is the single change that most separates a real-looking horse from a drawn one. Each hoof follows a gallop path — planted and sweeping back through the stance, then lifting, folding and reaching forward through the swing (`hoofPath()`) — and the knee or hock between the leg's root and its hoof is *solved* from where the hoof is, with two-bone inverse kinematics (`solveLeg()`). So the foreleg folds hard at the knee as it comes through, the hind leg tucks up under the belly, and a planted hoof stays planted while the body travels over it. A leg that is animated as an angle swings like a stick however carefully the angles are chosen.
+
+The gait is a transverse gallop, four footfalls then a moment of suspension (`GAIT`, `STANCE`):
+
+```
+far hind 0.00 → near hind 0.10 → far fore 0.26 → near fore 0.36
+each hoof down for 0.36 of the cycle; all four off the ground 0.72 → 1.00
+```
+
+`_spawnHoofDust()` fires on the same four footfalls, so the divots come off the hooves that are actually on the ground. The ground target is expressed in the body's *pitched* frame, so the hooves don't skate while the body rocks.
+
+**The stride moves the whole animal.** The body rises through the suspension and drops as the forelegs take the weight; it pitches nose-up as the hinds drive and nose-down as the fores land; and the neck and head, drawn as one group pivoting at the withers, nod against that. **The jockey rides it**: his group counter-rotates and counter-lifts, so his upper body stays level while the horse moves under him. That is what makes a rider look like he is riding rather than glued on.
+
 Each horse has:
 
-- **A coat** — `coatFor()` gives each runner a bay / dark bay / chestnut / liver chestnut / black / grey, hashed from the runner id so the same horse looks the same on every replay, and weighted the way a real field looks (mostly bay and chestnut, with the grey and the black as the two that catch the eye). Bays and blacks get black points on mane, tail and lower legs. A field of 24 identical brown horses was the single most artificial thing about V1.
-- **Articulated legs** — forearm / cannon / hoof, with a real hock angle on the hind pair: the hock kicks backward behind the quarters and the cannon runs down and forward. Drawn as a straight line a leg reads as a stick. The off-side pair is drawn first, darker and at lower alpha, so the near pair reads in front of it.
-- **A gallop cycle** — the 4-beat transverse gallop, with legs animated by a phase offset per horse. Adjacent horses get slightly different cycles so they don't visually sync ("lane jitter + stride variance").
-- **A saddle cloth with the runner's number** — where the number lives on a real racecourse. This is the quiet identification the brief asked for: it travels with the horse and needs no floating chip.
-- **A jockey in the runner's real silks** — the crouch is a `Path2D` that the runner's actual `silk_pattern` (hooped / striped / halved / quartered / starred / solid) is clipped into, so the rider matches the racecard, the leaderboard cap and the podium.
-- **Micro-motion** — a body roll and a head nod driven off `swayPhase`, a couple of degrees and a couple of pixels. Not visible as an effect; very visible by its absence.
+- **A coat** — `coatFor()` gives each runner a bay / dark bay / chestnut / liver chestnut / black / grey, hashed from the runner id so the same horse looks the same on every replay, and weighted the way a real field looks (mostly bay and chestnut, with the grey and the black as the two that catch the eye). Bays and blacks get black points on mane, tail and lower legs; greys get dapples. A field of 24 identical brown horses was the single most artificial thing about V1.
+- **Markings** — `markingsFor()` gives about a third of horses a star, stripe or blaze and about a fifth of legs a white sock, from the same id. Note the `_mixHash()` step: runner ids are short (`"12"`, `"1043"`), so the high bits of the raw string hash are always zero, and reading markings straight off it gave every horse in the field identical socks.
+- **Volume** — the coat is lit: warm along the topline with a rim of sunlight, sheen over the quarters and shoulder, dark under the barrel, creases at the stifle and behind the elbow. Forearm and gaskin are tapered muscle shapes (`drawLimb()` / `taper()`), not strokes, with joint bulges at knee, hock and fetlock, a pastern sloping into the hoof, and a tendon line down the back of the cannon. The far-side legs are drawn first in the shade colour so the near pair reads in front of them.
+- **A head that reads** — a long wedge with a round jowl, a straight face, flared nostril (more so in the final furlong), pricked ears, an eye with a catch-light, and the throatlatch shadow that separates head from neck. A bridle with noseband and reins running back to the jockey's hands.
+- **Racing tack** — number cloth under a small racing saddle, a girth and a breastgirth. The number is where it lives on a real racecourse, which makes it the quiet identification the brief asked for: it travels with the horse and needs no floating chip.
+- **A jockey who is a jockey** — short irons with the stirrup leather visible, knee up at the withers, white breeches and black boots with tan tops, a flat back, arms down the neck to the reins, a silk-covered helmet with goggles. The torso is a `Path2D` that the runner's actual `silk_pattern` is clipped into, sleeves in the secondary colour, so the rider matches the racecard, the leaderboard cap and the podium. Through the final furlong his hands pump with the stride and the whip comes up.
 - **Depth** — runners are scaled by their lane's distance from the camera and drawn far-lane-first, so the pack overlaps and occludes the way a real field does.
-- **Hoof dust** — divots kicked up at each ground-contact beat, spawned and drawn in *world* space so the camera leaves them behind.
+- **Hoof dust** — divots kicked up at each footfall, spawned and drawn in *world* space so the camera leaves them behind.
+
+**Shading is cheap because the gradients are cached** (`horseGrad()`). A canvas gradient is defined in user space and read through whatever transform is current when it is used, so one gradient in local horse coordinates serves every horse in every frame. Building them per horse per frame would be over a thousand allocations a second for nothing. Measured frame cost with the full field: about 5ms at 1440×860 with 16 horses on screen, about 4ms on a 375px phone.
 
 **Three things V1 attached to the horses are gone, and should stay gone.** They are the main reason the old scene read as a browser game:
 
@@ -337,32 +353,48 @@ Each horse has:
 - **Persistent labels.** No name chip, no rank pill on any runner at any point. See § 6.8.
 - **Highlight rings.** No pulsing gold ring, no radial aura around the leader or the viewer's pick.
 
-**Level of detail.** Below `scale >= 0.72` — a phone, or a runner against the far rail — the eye glint, the bridle, the goggles, the cheek plane and half the mane strands are sub-pixel, and across 24 runners they cost real time. The `detail` flag drops them. The silhouette, the coat, the silks and the number always draw, because those are what carry at any size.
+**Level of detail.** Below `scale >= 0.72` — a phone, or a runner against the far rail — the catch-light, the bridle, the goggles, the sheen, the creases, the tendon lines and most of the mane and tail strands are sub-pixel, and across 24 runners they cost real time. The `detail` flag drops them. The silhouette, the coat, the silks and the number always draw, because those are what carry at any size.
 
 Two traps worth not repeating, both of which turned the animal into an unreadable dark mass on earlier passes: filling the head in the shade colour rather than the coat colour, and running the mane strokes over the poll. A horse without a readable head does not read as a horse.
 
 The most valuable levers for a designer looking at horse aesthetics:
 - `drawHorseSilhouette()` — the anatomy itself.
-- `HORSE_COATS` / `coatFor()` — the palette and how often each colour comes up.
+- `hoofPath()` and the `leg()` calls inside `drawHorseSilhouette()` — stride length (`front`, `back`), how high each hoof lifts, and bone lengths. Change these and the gait changes; the IK keeps the joints honest.
+- `HORSE_COATS` / `coatFor()` / `markingsFor()` — the palette, how often each colour comes up, and how common blazes and socks are.
 - `_spawnHoofDust()` — density, size and colour of the divots.
 
-### 6.7 Parallax — seven depth planes
+### 6.7 Parallax — the depth planes
 
 The horses barely move on screen. What moves is the world, and the difference in scroll rate between these planes is what sells the speed.
 
 | Rate | Plane | Surface |
 |---|---|---|
-| 0.00 | sky + sun haze | `#particleCanvas` |
-| 0.06 | distant downland | `#particleCanvas` |
-| 0.17 | grandstand + crowd | `#particleCanvas` |
-| 0.34 | treeline / hedge | `#particleCanvas` |
-| 0.68 | rail-side spectators, running rail + advertising boards | `#raceCanvas` |
+| 0.00 | sky + sun | `#particleCanvas` |
+| 0.03 | high cloud (cirrus), plus wind | `#particleCanvas` |
+| 0.045 | distant downland, two ridges | `#particleCanvas` |
+| 0.07 | low cloud (cumulus), plus wind | `#particleCanvas` |
+| 0.17 | grandstands, big screen, crowd | `#particleCanvas` |
+| 0.34 | treeline | `#particleCanvas` |
+| 0.68 | rail-side spectators, hoardings, running rail | `#raceCanvas` |
 | 1.00 | the turf the race is run on | `#raceCanvas` |
 | 1.32 | foreground grass, in front of the field | `#raceCanvas` |
 
-The repeating planes are pre-painted into offscreen tiles once per resize and blitted after that — repainting a grandstand from paths every frame is the kind of thing that quietly costs 4ms.
+The repeating planes are pre-painted into offscreen tiles once per resize and blitted after that — repainting a grandstand from paths every frame is the kind of thing that quietly costs 4ms. That is also what makes realism affordable: the stand tile holds tens of thousands of spectators, and the cost is paid once. Because the rebuild is now tens of milliseconds, `resize()` calls `scheduleTileRebuild()`, which debounces it until a window drag settles; the old tiles keep drawing in the meantime.
 
-**The crowd is two separate planes, and it needs to be.** The grandstand tile (0.17) seats its crowd in rows on a raked terrace, each spectator a head and a pair of shoulders, densest at the front and thinning toward the back — which is both how a stand fills up and what makes it read as people rather than as texture. But a stand on the horizon is scenery; what makes a racecourse feel attended is people close to the action, so `TILES.railCrowd` puts a row of spectators right behind the running rail at 0.68, with the advertising boards drawn in front of them so the boards cut them off at the waist the way a real one does. The rail crowd is scaled by `WORLD.horseScale`: they are people standing next to horses, so on a phone they have to shrink by the same factor the horses do.
+**Clouds move backwards past the field for two reasons at once.** They have a parallax rate like every other plane, and they also drift on the wind (`WIND`, screen px per ms), so the sky keeps moving even in a held shot. The low cumulus drifts faster than the high cirrus, which gives the sky its own depth. The sun sits at parallax zero — it is at infinity — so the clouds sail across it, and its glow is drawn *after* the clouds with a `screen` blend so a cloud passing it picks up a bright rim instead of simply blotting it out. The clouds sit behind the downland, so the ridge cuts off their bases.
+
+**Each plane takes only part of the camera's zoom** (`PLANE_ZOOM`). An optical zoom magnifies everything equally, but this camera behaves like a dolly-in: pushing toward the track makes near planes grow much faster than far ones. Scaling the whole backdrop by the full zoom flattened the scene and, in the tight phases, pushed the grandstand roof up over the entire sky. The bottom anchor of each plane still comes from the full-zoom horizon, so nothing opens a gap against the turf — only the plane's *height* and scroll take the reduced scale.
+
+**Why the scenery used to look like a cartoon, and what fixed it.** Flat fills, hard edges and regular repetition. Every tile painter now does four things:
+
+- *Lighting.* A consistent sun, upper right. Cloud billows have their hot spot pushed toward it; tree clumps are shaded by where they sit in the crown; the stand's fascia is sunlit while everything under the roof is in deep shade.
+- *Irregularity.* The crowd is a textured mass — mostly dark and neutral clothing, uneven spacing, empty seats showing through, riser shadows under each row, aisles cutting through — not neat heads on neat shoulders in neat rows.
+- *Aerial perspective.* `hazeTile()` lifts and blues each far plane a little, and `paintHorizonHaze()` lays moisture over the base of the stands. A grandstand three furlongs away is not as contrasty as the horse in front of you.
+- *Depth of field.* `softenTile()` blurs the far planes slightly behind the pin-sharp field. It blurs a copy laid out three tiles wide and keeps the middle third, so edges blur into the next repeat rather than into transparency — otherwise every tile join shows as a faint seam. Where `ctx.filter` is unsupported the tile is used as painted.
+
+The grandstand tile is also one composed skyline rather than one stand repeated: a cantilevered main stand with flags, a glazed hospitality level and a sunlit lower tier; an older stand with a slate roof, a clock pediment and white cast-iron columns; and a big screen showing the race.
+
+**The crowd is two separate planes, and it needs to be.** The grandstand tile (0.17) seats its crowd on raked terraces, sunlit in the lower tier and in deep shade under the roof. But a stand on the horizon is scenery; what makes a racecourse feel attended is people close to the action, so `TILES.railCrowd` puts a row of spectators right behind the running rail at 0.68, with the advertising boards drawn in front of them so the boards cut them off at the waist the way a real one does. The rail crowd is scaled by `WORLD.horseScale`: they are people standing next to horses, so on a phone they have to shrink by the same factor the horses do.
 
 Two gotchas if you add a plane:
 
@@ -486,8 +518,8 @@ Everything a frame needs lives on one object:
 
 ```javascript
 const DIRECTOR = {
-  progress, zoom, anchorX, camY, tilt, shake,
-  vignette, groupBias, fieldFade, flash, phase,
+  progress, zoom, anchorX, camY, tilt, shake, vignette, groupBias,
+  fieldFade, flash, runOut, pressFlash, letterbox, phase,
 };
 ```
 
@@ -525,6 +557,16 @@ Three things fall out of it for free, and each was a bug or a limitation in V1:
 - The freshest ones get a short horizontal streak, because a bank of flashes reads as a line of light rather than a field of dots.
 
 A capped screen-space bloom (`drawAtmosphere`) lifts the whole frame slightly while they are firing.
+
+### 8.4b Cinematic finishing
+
+Three things a camera does that a canvas does not, drawn last in `drawAtmosphere()`:
+
+- **Cinema bars.** `DIRECTOR.letterbox` is 0 through the Cruise and closes in through Build (3%), Drive (5.8%) and the final furlong (7.2% of the viewport height, top and bottom) — the frame narrows as the race does — then eases back to 5% as the camera opens up at the line. The DOM chrome sits over the bars, which is how broadcast graphics sit over a letterboxed picture anyway.
+- **Lens flare.** An anamorphic streak through the sun and a line of ghosts toward the frame centre, faded out as the camera pushes in and the stands take the sun out of shot.
+- **Film grain.** A small noise tile laid over the frame at a new random offset each frame, faint enough that nobody would call it grain. It breaks up the dead-flat fills a canvas produces and knits the painted backdrop and the drawn horses into one image. Static under `prefers-reduced-motion`.
+
+Horse shadows are offset away from the sun, so every shadow in the frame agrees about where the light is.
 
 ### 8.5 The leaderboard
 
