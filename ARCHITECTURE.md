@@ -59,7 +59,7 @@ cinematic-lab/
 ├── README.md               ← quick-start + payload contract + scope contract
 ├── index.html              ← sandbox bootstrap (production replaces this with a Django template)
 ├── serve.py                ← dev server: caching off, this machine only
-├── package.json            ← dev tooling only (ESLint, the unit tests) — nothing here ships
+├── package.json            ← dev tooling only (ESLint, the tests, jsdom) — nothing here ships
 ├── eslint.config.js
 ├── css/
 │   ├── experience.css      ← shared cinematic chrome (screens, buttons, roll call, reveal, trophy)
@@ -77,6 +77,7 @@ cinematic-lab/
 │   └── silks/              ← sample silk images referenced by runners' silk_url
 ├── tests/
 │   ├── engine.test.js      ← unit tests for the engine's pure logic (`npm test`)
+│   ├── flow.test.js        ← the whole experience, screen to screen, in jsdom (`npm test`)
 │   └── load-engine.js      ← runs flat.js in Node against an inert browser
 ├── tools/
 │   └── visual-regression.js ← proves a change does not alter what the viewer sees (§13)
@@ -524,11 +525,12 @@ CSS lives in two files that split responsibilities on subject, not scope:
 
 - Flat band pill styling (colour-swaps by `.flat-band-pill--sprint / --mile / --stayer`)
 - Starting stalls (`#flatStalls`) and the "BANG" animation
-- The legacy photo-finish overlay (`#flatPhotoFinish`): still in the markup, never shown; its base rules keep it hidden
-- Race leaderboard (`#raceLeaderboard`) rows, silks column, positions
-- Race commentary (`#racingCommentary`) — the ticker line at the bottom
-- Parade stage horse card
-- **V2 broadcast chrome**, in a block at the end of the file:
+- The legacy photo-finish overlay (`#flatPhotoFinish`): still in the markup, never shown; one `display: none` rule keeps it hidden
+- The reveal podium (`.reveal-podium*`) — the three result rows under the trophy, with their medal tints
+
+The leaderboard (`#raceLeaderboard`), the race commentary (`#racingCommentary`) and the parade card are shared components, so their base rules are in `experience.css`; `flat.css` only adds the flat-race states below.
+
+- **V2 broadcast chrome**, in a block after the podium:
   - `.bcast-id` — the lower-third that replaced the on-canvas name chips
   - `.race-result` — the card shown after the pause at the line
   - `.race-lb-row.is-climbing / .is-falling` — the direction tint on a
@@ -550,7 +552,7 @@ CSS lives in two files that split responsibilities on subject, not scope:
   caption under the button carries an inline style in `index.html`, so its
   three rules are `!important`
 
-**Rule of thumb**: if a style would apply equally well to a jumps race (Grand National, Cheltenham), it belongs in `experience.css`. If it's specific to the flat-race visual grammar (stalls, band pills, photo-finish flash), it belongs in `flat.css`.
+**Rule of thumb**: if a style would apply equally well to a jumps race (Grand National, Cheltenham), it belongs in `experience.css`. If it's specific to the flat-race visual grammar (stalls, band pills, the broadcast chrome, the Winning Moment card), it belongs in `flat.css`.
 
 The parent body carries a state class the CSS reads: `body.page-experience--sprint / --mile / --stayer`. That class is set by `boot()` in `index.html` from `payload.band` and drives palette variations across both stylesheets.
 
@@ -721,12 +723,12 @@ Common jobs you might take on and where they belong.
 
 ### Change how silks look
 
-- **Procedural**: `js/flat.js` → `renderSilkSvg()` (line ~101). Modify body path, sleeves path, or pattern markup.
+- **Procedural**: `js/flat.js` → `renderSilkSvg()`. Modify body path, sleeves path, or pattern markup.
 - **Per-runner override**: populate `silk_url` on runners in the fixture JSON, pointing at any image the browser can render. Fallback is transparent — if the image 404s the browser shows the alt text; the procedural path only runs if `silk_url` is falsy.
 
 ### Change screen transitions
 
-`js/flat.js` → find the phase's entry function (`beginParade`, `transitionToRace`, `runRollCall`, `runReveal`) or `showScreen()` for the top-level fade behaviour.
+`js/flat.js` → find the phase's entry function (`beginParade`, `transitionToRace`, `runRollCall`, `transitionToReveal`, with `animateReveal()` for the reveal's own entrance) or `showScreen()` for which screen is showing. `showScreen()` also makes every other screen `inert`: the screens are stacked, and a hidden one must not take clicks or focus meant for the one on top.
 
 ### Add a new decorative element to a screen
 
@@ -779,7 +781,7 @@ Nothing else. The engine will pick it up automatically.
 - **The camera has a hard floor that keeps the leader in frame.** On a runaway the group centroid sits thirty lengths behind the winner. Honouring it faithfully would mean filming the horses that lost.
 - **`getNavH()` cannot use `||` for its fallback.** It reads `--nav-h` and falls back to 60px when the variable is absent — but `parseInt('0px') || 60` is `60`, so a page that legitimately has no nav bar still had 60px carved off the bottom of the canvas and a dead band across the top of every screen. It tests `Number.isFinite` instead. Any other zero-valued CSS variable read this way has the same trap.
 - **A resize is not free during a race.** Reallocating the canvas backing store clears it, and runner positions are stored in lengths but `CAM.x` is world *pixels* — so `resize()` rescales the camera by the change in `WORLD.lengthPx` and repaints once. Without the rescale, a browser zoom mid-race leaves the camera pointing at empty track while the field jumps somewhere else.
-- **The Fox overlay** (a small avatar that appears with certain race narratives) is a DOM element the race screen manages, not a canvas draw. Look for `fox` in `flat.js` for the trigger logic.
+- **Mr Fox has no overlay of his own.** The Fox pick (`fox_pick`, matched by *name*, where the viewer's pick is matched by id) is marked wherever runners are listed: the intro chips, the parade tags, the leaderboard, the broadcast identification and a quiet mark on the canvas. His voice is the race commentary: the config's `commentary` lines, templated by `renderCommentary()`. Search `isFoxPick` in `flat.js`.
 
 ---
 
@@ -803,7 +805,9 @@ For anything visual — colours, motion, geometry, layout, typography, silks —
 Three checks, all development-only — nothing here is loaded by the product. `npm install` once (Node 18+), then:
 
 - **`npm run lint`** — ESLint over `js/flat.js`, `tests/` and `tools/`, zero warnings allowed. It is what catches the write-only variable and the undefined name before they ship.
-- **`npm test`** — unit tests for the engine's pure logic, on Node's own test runner: the margin parser and formatters, ordinals, the invented finishing gaps (monotonic, a close finish), the replay's finishing order, the start ease and the run-through curves, the card's pause, the "a planted hoof cannot skate" invariant of the leg rig, the IK, commentary templating, the config merge and `esc()`. `tests/load-engine.js` loads the real `flat.js` into a Node `vm` against an inert browser and calls `FlatEngine.internals`.
+- **`npm test`** — two suites on Node's own test runner:
+  - `tests/engine.test.js`, the engine's pure logic: the margin parser and formatters, ordinals, the invented finishing gaps (monotonic, a close finish), the replay's finishing order (ids as numbers or strings, and the fall-back to the forecast when none match), the start ease and the run-through curves, the card's pause, the "a planted hoof cannot skate" invariant of the leg rig, the IK, commentary templating, the config merge and `esc()`. `tests/load-engine.js` loads the real `flat.js` into a Node `vm` against an inert browser and calls `FlatEngine.internals`.
+  - `tests/flow.test.js`, the flow between screens: the real `index.html` markup, GSAP and `flat.js` in jsdom, on a manual clock. It walks the whole experience from Run the Race to Run Again and checks what the viewer would notice going wrong: the engine adds only its public API to the page, only the showing screen takes clicks and focus, a double press of Run or Skip starts one parade and one race, Run Again leaves nothing behind, and with reduced motion the result is on screen at once. jsdom has no canvas, so nothing is drawn — the picture is the visual check's job.
 - **The visual regression check** — `tools/visual-regression.js`, pasted into the console on the sandbox page. It replays the whole experience (intro, parade, race, Skip to Finish, the line, the Winning Moment, roll call, reveal) on a manual clock with seeded randomness, and fingerprints both canvases and the active screen's markup at about 140 checkpoints. Two runs of the same code match exactly, so a refactor that is meant to change nothing can be *shown* to change nothing:
 
   ```
@@ -812,6 +816,6 @@ Three checks, all development-only — nothing here is loaded by the product. `n
   VisualRegression.run(); VisualRegression.compare('before');
   ```
 
-  Record both runs at the same window size and fixture. The run takes over `Math.random`, the timers and the GSAP ticker, so reload afterwards. A change that consumes random numbers in a different order (a new `Math.random()` call anywhere) makes it a different race: compare the flow (labels, frames, screens), and re-baseline deliberately.
+  Record both runs at the same window size and fixture. The run takes over `Math.random`, the timers and the GSAP ticker, so reload afterwards. It also ignores window resizes once it has started: a resize repaints and rebuilds the scenery, which draws random numbers, so a resize in the middle of a run (a devtools panel opening, a screenshot tool reflowing the page) would quietly make it a different race. A change that consumes random numbers in a different order (a new `Math.random()` call anywhere) makes it a different race too: compare the flow (labels, frames, screens), and re-baseline deliberately.
 
-The quality pass that split the long functions, wrapped the module and removed the duplicated CSS was checked this way: the canvases and markup matched at every checkpoint, and for the CSS every element on every screen was compared for computed style, at desktop and phone widths, with the old and new stylesheets swapped in the same page.
+The quality passes (splitting the long functions, wrapping the module, removing the duplicated and dead CSS) were checked this way: the canvases and markup matched at every checkpoint. For the CSS, every element on every screen was compared for computed style, at desktop and phone widths, with the old and new stylesheets swapped in the same page, and the only differences were the intended ones.
