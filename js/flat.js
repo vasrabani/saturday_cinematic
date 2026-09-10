@@ -470,6 +470,10 @@ function wireButtons() {
   });
 }
 
+// One frame at 60fps, in ms: how GSAP's deltaRatio becomes milliseconds,
+// and the unit the particle systems step in.
+const FRAME_MS = 1000 / 60;
+
 // ─── Scheduled steps ────────────────────────────────────────────
 // The flow between screens runs on timers — the parade's pace, the
 // stalls, the roll call's holds. They are kept here so a skip can cancel
@@ -789,11 +793,14 @@ function buildRacePositions(winner) {
     // map to any known runner — defensive.
   }
 
-  const rest = STATE.runners.filter((r) => r.id !== winner.id);
-  const sorted = rest.sort((a, b) =>
-    (b.weight + Math.random() * 20) - (a.weight + Math.random() * 20)
-  );
-  return [winner, ...sorted];
+  // The rest in order of strength, with some luck in it: each runner's
+  // weight plus a random draw, drawn once per runner and then sorted.
+  const rest = STATE.runners
+    .filter((r) => r.id !== winner.id)
+    .map((r) => ({ r, key: r.weight + Math.random() * 20 }))
+    .sort((a, b) => b.key - a.key)
+    .map((x) => x.r);
+  return [winner, ...rest];
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -918,8 +925,7 @@ function buildHorseObjects(positions) {
       duelFloor:     duelFloor,  // how far ahead of the winner he may get
       bobPhase:      Math.random() * Math.PI * 2,
       legPhase:      Math.random() * Math.PI * 2,
-      bobRate:       0.88 + Math.random() * 0.26,
-      bobAmp:        0.75 + Math.random() * 0.50,
+      swayRate:      0.88 + Math.random() * 0.26,
       swayPhase:     Math.random() * Math.PI * 2,
       lastDustCycle: null,
       lbRank:        -1,     // last rank the leaderboard animated to
@@ -1137,7 +1143,7 @@ function placeHorse(h, dt, snap) {
   const cycles = dx / (STRIDE_LOCAL * WORLD.horseScale * h.depth);
   h.legPhase  += cycles * Math.PI * 2;
   h.bobPhase  += cycles * Math.PI * 2 * 0.62;
-  h.swayPhase += dt * 0.0032 * h.bobRate;
+  h.swayPhase += dt * 0.0032 * h.swayRate;
 }
 
 // ── Through the line ────────────────────────────────────────────
@@ -1190,7 +1196,7 @@ function runThroughLine(dt) {
 // both correct and invisible.
 function snapRaceState() {
   lastLeaderTravel = DIRECTOR.progress * WORLD.spanLengths;
-  updateRaceModel(16.667, true);
+  updateRaceModel(FRAME_MS, true);
   // Zoom first: the focus clamp that keeps the leader in frame is
   // computed against the zoom, so a stale one puts the leader outside
   // the very frame it is supposed to guarantee.
@@ -2458,7 +2464,7 @@ function ambientFrame() {
     return;
   }
 
-  ambientX += Math.min(gsap.ticker.deltaRatio() * 16.667, 50) * AMBIENT_DRIFT;
+  ambientX += Math.min(gsap.ticker.deltaRatio() * FRAME_MS, 50) * AMBIENT_DRIFT;
   drawAmbient();
 }
 
@@ -3037,7 +3043,7 @@ function spawnHoofDust(wx, y, h, cyc, artScale) {
 // Dust is drawn inside the world transform, between the far lanes and
 // the near ones, so it sits in the pack rather than on top of it.
 function drawHoofDust(dt) {
-  const step = dt > 0 ? Math.max(0.5, Math.min(2.5, dt / 16.67)) : 0;
+  const step = dt > 0 ? Math.max(0.5, Math.min(2.5, dt / FRAME_MS)) : 0;
   particles = particles.filter((p) => {
     p.vy += p.g * step;
     p.x  += p.vx * step;
@@ -3086,7 +3092,7 @@ function spawnPressFlashes(dt) {
 
 function drawPressFlashes(dt) {
   if (!pressFlashes.length) return 0;
-  const step = dt > 0 ? Math.max(0.5, Math.min(2.5, dt / 16.67)) : 0;
+  const step = dt > 0 ? Math.max(0.5, Math.min(2.5, dt / FRAME_MS)) : 0;
   let energy = 0;
   pressFlashes = pressFlashes.filter((f) => {
     f.life -= 0.115 * step;
@@ -3219,7 +3225,7 @@ function clearBroadcastId() {
 function renderFrame() {
   if (!raceRunning) return;
 
-  const dt = Math.min(gsap.ticker.deltaRatio() * 16.667, 50);
+  const dt = Math.min(gsap.ticker.deltaRatio() * FRAME_MS, 50);
   frameClock += dt;
 
   if (HERO.active) { renderHeroFrame(dt); return; }
@@ -4874,7 +4880,7 @@ function burstHeroConfetti(x, y, n, colour) {
 }
 
 function drawHeroConfetti(dt) {
-  const step = dt > 0 ? Math.max(0.5, Math.min(2.5, dt / 16.67)) : 0;
+  const step = dt > 0 ? Math.max(0.5, Math.min(2.5, dt / FRAME_MS)) : 0;
   HERO.confetti = HERO.confetti.filter((p) => {
     p.vy += p.g * step;
     p.x += p.vx * step;
