@@ -571,6 +571,7 @@ function startRace() {
   const winner = (positions && positions[0]) || fallback;
   STATE.simResult = { winner, positions };
   buildHorseObjects(positions);
+  resetWinningMoment();
 
   frameClock  = 0;
   raceRunning = true;
@@ -2802,6 +2803,8 @@ function renderFrame() {
   const dt = Math.min(gsap.ticker.deltaRatio() * 16.667, 50);
   frameClock += dt;
 
+  if (HERO.active) { renderHeroFrame(dt); return; }
+
   updateRaceModel(dt);
   updateCamera(dt);
 
@@ -3503,12 +3506,21 @@ function drawHorseSilhouette(x, y, h, artScale) {
   const pump = inFinalStretch ? Math.sin(cyc * Math.PI * 2) * 1.6 : 0;
   const handX = 25.4 + pump, handY = -19.8 + Math.abs(pump) * 0.2;
 
+  // The Winning Moment salute (0 → 1). The upper body comes up out of the
+  // crouch, rotating back around the hip; one arm goes up; the other hand
+  // keeps the reins, shortened as he sits up. The pose is the V16.1
+  // delivery's, blended here rather than swapped, so he rises into it.
+  const sal = h.salute || 0;
+  const salA = -0.40 * sal, salLift = 0.5 * sal;
+  const reinX = handX + (20.5 - handX) * sal;
+  const reinY = handY + (-22.4 - handY) * sal;
+
   // Reins, bit to hands.
   ctx.strokeStyle = 'rgba(22,16,12,0.9)';
   ctx.lineWidth = 0.55;
   ctx.beginPath();
   ctx.moveTo(bitX, bitY + bodyLift * 0.55);
-  ctx.quadraticCurveTo((bitX + handX) / 2, (bitY + handY) / 2 + 2.4, handX, handY);
+  ctx.quadraticCurveTo((bitX + reinX) / 2, (bitY + reinY) / 2 + 2.4, reinX, reinY);
   ctx.stroke();
 
   // Stirrup leather and iron
@@ -3533,6 +3545,29 @@ function drawHorseSilhouette(x, y, h, artScale) {
   taper(ctx, 7.2, -10.6, 9.8, -9.8, 1.8, 1.2);
   ctx.fillStyle = '#b8864c';                  // boot top
   taper(ctx, 11.8, -16.8, 11.1, -15.8, 2.6, 2.5);
+
+  // Upper body: rotated about the hip and lifted by the salute. The legs,
+  // irons and reins above stay where they are.
+  ctx.save();
+  if (sal > 0.001) {
+    ctx.translate(2.4, -22.6 - salLift);
+    ctx.rotate(salA);
+    ctx.translate(-2.4, 22.6);
+    // The far hand stays on the reins: work out where the rein end is in
+    // this rotated frame, and reach the far arm to it, behind the torso.
+    const dx = reinX - 2.4, dy = reinY + 22.6 + salLift;
+    const qx = 2.4 + dx * Math.cos(-salA) - dy * Math.sin(-salA);
+    const qy = -22.6 + dx * Math.sin(-salA) + dy * Math.cos(-salA);
+    const ex = (14.2 + qx) / 2 + 1.4, ey = (-27.6 + qy) / 2 + 0.6;
+    ctx.fillStyle = silk2;
+    taper(ctx, 14.2, -27.6, ex, ey, 2.4, 2.0);
+    taper(ctx, ex, ey, qx, qy, 2.0, 1.5);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    taper(ctx, 14.2, -27.6, ex, ey, 2.4, 2.0);
+    taper(ctx, ex, ey, qx, qy, 2.0, 1.5);
+    ctx.fillStyle = '#e3dfd6';
+    dot(ctx, qx, qy, 1.0);
+  }
 
   // Torso in the runner's silks, back flat, backside up
   const torso = new Path2D();
@@ -3572,17 +3607,29 @@ function drawHorseSilhouette(x, y, h, artScale) {
   ctx.fillRect(-1, -31, 20, 10);
   ctx.restore();
 
-  // Arm down the neck to the reins, sleeve in the secondary colour
-  const elbowX = 18.6 + pump * 0.45, elbowY = -23.2;
+  // Arm down the neck to the reins, sleeve in the secondary colour —
+  // or, in the salute, raised with a clenched glove. The raised arm is
+  // posed in the world (straight up, a slight bend forward at the elbow)
+  // and carried back into the tilted upper-body frame, so it stays
+  // vertical however far he has sat up.
+  const cs = Math.cos(-salA), sn = Math.sin(-salA);
+  const up = (wx, wy) => [14.8 + wx * cs - wy * sn, -27.2 + wx * sn + wy * cs];
+  const [sEx, sEy] = up(1.6, -7.4), [sFx, sFy] = up(0.6, -14.6);
+  const elbowX = (18.6 + pump * 0.45) + (sEx - (18.6 + pump * 0.45)) * sal;
+  const elbowY = -23.2 + (sEy + 23.2) * sal;
+  const armX = (handX - 0.6) + (sFx - (handX - 0.6)) * sal;
+  const armY = handY + (sFy - handY) * sal;
+  const gloveX = handX + (sFx - handX) * sal;
+  const gloveY = handY + (sFy - 0.6 - handY) * sal;
   ctx.fillStyle = silk2;
   taper(ctx, 14.8, -27.2, elbowX, elbowY, 2.6, 2.2);
   dot(ctx, elbowX, elbowY, 1.1);
-  taper(ctx, elbowX, elbowY, handX - 0.6, handY, 2.1, 1.6);
+  taper(ctx, elbowX, elbowY, armX, armY, 2.1, 1.6);
   ctx.fillStyle = '#f2efe8';                  // glove
-  dot(ctx, handX, handY, 1.05);
+  dot(ctx, gloveX, gloveY, 1.05 + sal * 0.25);
 
   // Whip, through the final furlong, cocked and coming down with the stride
-  if (inFinalStretch) {
+  if (inFinalStretch && sal < 0.3) {
     const t = Math.min(1, (progressNow - 0.85) / 0.06);
     const swing = Math.max(0, Math.sin(cyc * Math.PI * 2 + 1.2));
     const ang = -Math.PI / 2 - 0.5 + (1 - t) * 0.7 + swing * 0.55;
@@ -3595,7 +3642,14 @@ function drawHorseSilhouette(x, y, h, artScale) {
   }
 
   // Head: helmet under a silk cap, peak forward, goggles, a sliver of
-  // face. Low between the shoulders, eyes up the track.
+  // face. Low between the shoulders, eyes up the track — and still up
+  // the track in the salute: the head takes back most of the lean.
+  ctx.save();
+  if (sal > 0.001) {
+    ctx.translate(17.6, -28.2);
+    ctx.rotate(-salA * 0.7);
+    ctx.translate(-17.6, 28.2);
+  }
   ctx.fillStyle = '#d9b08c';
   dot(ctx, 21.4, -28.4, 1.15);
   ctx.fillStyle = silk2;
@@ -3617,6 +3671,8 @@ function drawHorseSilhouette(x, y, h, artScale) {
     ctx.ellipse(21.9, -29.6, 1.1, 0.7, -0.3, 0, Math.PI * 2);
     ctx.fill();
   }
+  ctx.restore();   // end head
+  ctx.restore();   // end upper body
   ctx.restore();   // end jockey
 
   ctx.restore();
@@ -3934,7 +3990,7 @@ function runOutLengths() {
   return Math.max(4, Math.min(12, frameLengths * 0.55));
 }
 const FINISH_PAUSE_S  = 2.45;  // line → placings settle → held beat → card
-const RESULT_HOLD_S   = 2.30;
+const RESULT_HOLD_S   = 1.70;
 
 function crossTheLine() {
   const margin = _computeWinningMargin();
@@ -3942,7 +3998,7 @@ function crossTheLine() {
   setPhaseTitle('PAST THE POST');
   clearBroadcastId();
 
-  finishTL = gsap.timeline({ onComplete: () => raceFinish(margin) });
+  finishTL = gsap.timeline({ onComplete: () => runWinningMoment(margin) });
 
   // 1 — the flash as the winner hits the line
   finishTL.to(DIRECTOR, { flash: 1, duration: 0.06, ease: 'none' }, 0);
@@ -4050,6 +4106,306 @@ function hideResultCard() {
     opacity: 0, y: -10, duration: 0.4, ease: 'power2.in',
     onComplete: () => { if (_resultEl) _resultEl.style.display = 'none'; },
   });
+}
+
+// ════════════════════════════════════════════════════════════════
+//  THE WINNING MOMENT
+// ════════════════════════════════════════════════════════════════
+// A dedicated hero shot between the finish and the roll call. The
+// choreography is taken from the V16.1 delivery (saturday_cinematic_v2,
+// runWinningMoment): the camera cuts close on the winner, who is still
+// galloping, and pushes in; after 1.25s the jockey comes up out of the
+// crouch into a one-arm salute while keeping the reins; a gold-edged
+// "WINNING MOMENT" card resolves at the top; confetti bursts from both
+// sides; the frame vignettes and the letterbox closes it like a
+// broadcast sting. 5.2 seconds.
+//
+// What is ours rather than theirs is everything in the frame. Their
+// version cut to a painted sky-and-grass backdrop and a sprite horse.
+// Here it is our racecourse — the same sky, clouds, stands, rail crowd,
+// hoardings and turf, magnified and scrolling past as a low tracking
+// shot — and our horse and jockey, drawn by drawHorseSilhouette() at
+// hero scale, with the salute added to the jockey rig.
+//
+// It is still one GSAP timeline (winTL) writing into one state object
+// (HERO), and renderFrame() hands over to renderHeroFrame() while it
+// runs. Skipped entirely under prefers-reduced-motion, as theirs is.
+const WINNING_MOMENT_S = 5.2;
+const HERO_TURF_SPEED  = 1.1;     // screen px of turf per ms at full speed
+let winTL = null;
+
+const HERO = {
+  active: false,
+  horse:  null,
+  push:   0,       // 0 → 1, the camera pushing in
+  speed:  1,       // the winner's gallop, easing but never stopping
+  scroll: 0,       // px of turf travelled since the cut
+  crowd:  null,    // a softer copy of the rail crowd, for the long lens
+  confetti: [],
+};
+
+// A tile laid across the screen at an explicit offset and scale.
+function blitTiled(c, tile, bottomY, offsetPx, alpha, scale) {
+  if (!tile) return;
+  const w = tile.w * scale, h = tile.h * scale;
+  c.save();
+  c.globalAlpha = alpha;
+  let x = -(((offsetPx % w) + w) % w);
+  for (; x < viewW + w; x += w) c.drawImage(tile.canvas, x, bottomY - h, w, h);
+  c.restore();
+}
+
+// Where the rail sits in the hero frame, and how big the winner is.
+function heroLayout() {
+  const narrow = viewW <= 768;
+  const railY = viewH * (narrow ? 0.60 : 0.655);
+  // Horse length on screen at the end of the push. The push itself is
+  // theirs: 1.55× → 2.25×, i.e. the horse grows by 1.45 across it.
+  // On a phone the whole drawing — tail tip (x = -40) to muzzle (x = +55),
+  // a quarter longer than the horse itself — has to fit the width.
+  const endLen = Math.min(viewW * (narrow ? 0.66 : 0.36), viewH * 0.62);
+  const len = endLen / 1.45 * (1 + 0.45 * HERO.push);
+  const scale = len / HORSE_ART_LENGTH;
+  return {
+    railY: railY,
+    scale: scale,
+    x: viewW * 0.5 - 7.5 * scale,               // centre the drawing, not the origin
+    groundY: viewH * (narrow ? 0.82 : 0.9),
+  };
+}
+
+function drawHeroBackdrop() {
+  pCtx.clearRect(0, 0, viewW, viewH);
+  const L = heroLayout();
+  const horizon = L.railY - viewH * 0.085;
+  const S = 1.65;                               // long-lens magnification
+  const standH = TILES.stand ? TILES.stand.h * S : viewH * 0.28;
+  const standTop = horizon + 2 - standH;
+  const sc = HERO.scroll;
+
+  SUN.x = viewW * (viewW <= 768 ? 0.74 : 0.8);
+  SUN.y = Math.max(viewH * 0.06, standTop - viewH * 0.1);
+  SUN.visible = 1;
+
+  paintSky(pCtx, horizon + viewH * 0.08, 0.9);
+  paintSunDisc(pCtx);
+  blitTiled(pCtx, TILES.cloudsHigh, standTop + viewH * 0.05, sc * 0.012 + frameClock * WIND.cloudsHigh, 0.9, 1.25);
+  blitTiled(pCtx, TILES.cloudsLow,  standTop + viewH * 0.10, sc * 0.03  + frameClock * WIND.cloudsLow,  1,   1.35);
+  paintSunGlow(pCtx);
+  blitTiled(pCtx, TILES.hills, horizon + 6, sc * 0.05, 0.9, 1.4);
+  blitTiled(pCtx, TILES.stand, horizon + 2, sc * 0.16, 1, S);
+  blitTiled(pCtx, TILES.trees, horizon + viewH * 0.035, sc * 0.3, 1, 1.9);
+  paintHorizonHaze(pCtx, horizon, standH * 0.6);
+}
+
+function drawHeroTrack() {
+  const L = heroLayout();
+  const sc = HERO.scroll;
+  const bs = Math.max(1.6, viewH / 330);         // hoarding / crowd scale
+
+  // Rail crowd, soft — they are well behind the point of focus.
+  const crowd = HERO.crowd || TILES.railCrowd;
+  if (crowd) blitTiled(ctx, crowd, L.railY - 13 * bs + 5 * bs, sc * 0.6, 0.95, bs * 1.1);
+  if (TILES.boards) blitTiled(ctx, TILES.boards, L.railY, sc * 0.62, 0.95, bs);
+
+  // Running rail
+  ctx.fillStyle = 'rgba(248,248,244,0.9)';
+  ctx.fillRect(0, L.railY - 3 * bs * 0.4, viewW, 2.2 * bs * 0.5);
+
+  // Turf, scrolling at the gallop, with its own depth light
+  if (TILES.turf) {
+    const tw = TILES.turf.w;
+    let x = -(((sc % tw) + tw) % tw);
+    for (; x < viewW; x += tw) ctx.drawImage(TILES.turf.canvas, x, L.railY, tw, viewH - L.railY);
+  }
+  const shade = ctx.createLinearGradient(0, L.railY, 0, viewH);
+  shade.addColorStop(0, 'rgba(160,190,196,0.14)');
+  shade.addColorStop(1, 'rgba(4,10,6,0.42)');
+  ctx.fillStyle = shade;
+  ctx.fillRect(0, L.railY, viewW, viewH - L.railY);
+
+  // Lateral streaks: the turf blurring past the lens. Theirs, adapted.
+  if (!prefersReducedMotion) {
+    ctx.save();
+    ctx.globalAlpha = 0.1;
+    ctx.strokeStyle = '#f5efde';
+    ctx.lineWidth = 2;
+    const drift = (sc * 0.42) % 150;
+    for (let i = -1; i < 9; i++) {
+      const yy = L.railY + (viewH - L.railY) * 0.18 + i * 22;
+      ctx.beginPath();
+      ctx.moveTo(-150 + drift, yy);
+      ctx.lineTo(viewW, yy - 8);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function burstHeroConfetti(x, y, n, colour) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 2 + Math.random() * 6;
+    HERO.confetti.push({
+      x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 4,
+      g: 0.18 + Math.random() * 0.1, life: 1,
+      w: 4 + Math.random() * 4, rot: Math.random() * Math.PI,
+      spin: (Math.random() - 0.5) * 0.4, colour: colour,
+    });
+  }
+}
+
+function drawHeroConfetti(dt) {
+  const step = Math.max(0.5, Math.min(2.5, dt / 16.67));
+  HERO.confetti = HERO.confetti.filter((p) => {
+    p.vy += p.g * step;
+    p.x += p.vx * step;
+    p.y += p.vy * step;
+    p.rot += p.spin * step;
+    p.life -= 0.012 * step;
+    if (p.life <= 0 || p.y > viewH + 30) return false;
+    ctx.save();
+    ctx.globalAlpha = p.life;
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rot);
+    ctx.fillStyle = p.colour;
+    ctx.fillRect(-p.w / 2, -p.w / 4, p.w, p.w / 2);
+    ctx.restore();
+    return true;
+  });
+}
+
+function renderHeroFrame(dt) {
+  const h = HERO.horse;
+  const L = heroLayout();
+  HERO.scroll += dt * HERO_TURF_SPEED * HERO.speed;
+
+  // The winner keeps galloping; the gait eases as the speed does.
+  h.legPhase  += dt * 0.018 * (0.7 + 0.3 * HERO.speed);
+  h.bobPhase  += dt * 0.011;
+  h.swayPhase += dt * 0.0032;
+  h.speed = 0.3;                                 // keeps the hoof dust coming
+
+  drawHeroBackdrop();
+  ctx.clearRect(0, 0, viewW, viewH);
+  drawHeroTrack();
+
+  // Divots are thrown back and left behind as the ground goes past.
+  const drift = dt * HERO_TURF_SPEED * HERO.speed * 0.85;
+  for (const p of particles) p.x -= drift;
+  drawHoofDust(dt);
+
+  // Local y = +28 is the ground line of the horse artwork.
+  drawHorseSilhouette(L.x, L.groundY - 28 * L.scale, h, L.scale);
+
+  // Dark edges, then the celebration.
+  const vg = ctx.createRadialGradient(
+    viewW * 0.5, viewH * 0.52, viewW * 0.18,
+    viewW * 0.5, viewH * 0.52, viewW * 0.72
+  );
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.48)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, viewW, viewH);
+
+  drawHeroConfetti(dt);
+  drawGrain();
+  drawLetterbox();
+}
+
+// ── The card ─────────────────────────────────────────────────────
+let _winEl = null;
+
+function winMomentEl() {
+  if (_winEl && _winEl.isConnected) return _winEl;
+  const screen = document.getElementById('screen-race');
+  if (!screen) return null;
+  const el = document.createElement('div');
+  el.className = 'win-moment';
+  el.id = 'winMoment';
+  screen.appendChild(el);
+  _winEl = el;
+  return el;
+}
+
+function showWinnerMomentCard(winner, margin) {
+  const el = winMomentEl();
+  if (!el) return;
+  const odds = winner.odds || winner.price || winner.sp || '';
+  let marginText = '';
+  if (margin && margin.lengths === -1) marginText = 'DEAD HEAT';
+  else if (margin && margin.lengths != null && margin.lengths >= 0) marginText = _formatBeatenDistance(margin.lengths);
+  const meta = ['WINNER', odds ? String(odds) : '', marginText].filter(Boolean).join('   ·   ');
+  el.innerHTML =
+    '<span class="win-moment__eyebrow">SATURDAY RACING  ·  WINNING MOMENT</span>' +
+    '<span class="win-moment__name">' + String(winner.name || 'WINNER') + '</span>' +
+    '<span class="win-moment__meta">' + meta + '</span>';
+  el.style.display = 'flex';
+  // Theirs resolves over 18% of the moment with a cubic ease-out.
+  gsap.fromTo(el, { opacity: 0, y: -8 },
+              { opacity: 1, y: 0, duration: WINNING_MOMENT_S * 0.18, ease: 'power3.out' });
+}
+
+function hideWinnerMomentCard() {
+  if (!_winEl) return;
+  gsap.killTweensOf(_winEl);
+  _winEl.style.display = 'none';
+  gsap.set(_winEl, { opacity: 0 });
+}
+
+function runWinningMoment(margin) {
+  const winner = STATE.simResult.winner;
+  const h = horses.find((x) => x.runner.id === winner.id);
+  if (!h || prefersReducedMotion) { raceFinish(margin); return; }
+
+  hideResultCard();
+  particles = [];
+  pressFlashes = [];
+  HERO.active = true;
+  HERO.horse  = h;
+  HERO.push   = 0;
+  HERO.speed  = 1;
+  HERO.scroll = 0;
+  HERO.confetti = [];
+  HERO.crowd  = HERO.crowd || softenTile(TILES.railCrowd, 1.4);
+  h.salute = 0;
+
+  const screen = document.getElementById('screen-race');
+  if (screen) screen.classList.add('is-winning-moment');
+  setCommentaryText(`${winner.name} has done it — a winning moment to remember.`);
+  gsap.killTweensOf(DIRECTOR);
+  Object.assign(DIRECTOR, { flash: 0, vignette: 0, letterbox: 0.021 });
+
+  // The last hero frame stays on the canvas while the roll call fades in;
+  // the card and the chrome class are cleared by the next race or replay.
+  winTL = gsap.timeline({ onComplete: () => { HERO.active = false; raceFinish(margin); } });
+  // Camera push, eased out, over the first 48% of the moment.
+  winTL.to(HERO, { push: 1, duration: WINNING_MOMENT_S * 0.48, ease: 'power3.out' }, 0);
+  // Still galloping at the end, just not flat out.
+  winTL.to(HERO, { speed: 0.6, duration: WINNING_MOMENT_S, ease: 'sine.inOut' }, 0);
+  // 1.25s in, up out of the crouch into the salute.
+  winTL.to(h, { salute: 1, duration: 0.45, ease: 'power2.out' }, 1.25);
+  winTL.call(() => showWinnerMomentCard(winner, margin), null, WINNING_MOMENT_S * 0.28);
+  for (let i = 0; i < 4; i++) {
+    winTL.call(() => {
+      burstHeroConfetti(viewW * 0.70, viewH * 0.34, 18, COL.gold || '#D4AF37');
+      burstHeroConfetti(viewW * 0.30, viewH * 0.38, 12, '#ffffff');
+    }, null, 1.55 + i * 0.21);
+  }
+  // The letterbox closes the scene over its last 30%.
+  winTL.to(DIRECTOR, { letterbox: 0.038, duration: WINNING_MOMENT_S * 0.3, ease: 'power2.in' },
+           WINNING_MOMENT_S * 0.7);
+}
+
+function resetWinningMoment() {
+  if (winTL) { winTL.kill(); winTL = null; }
+  HERO.active = false;
+  HERO.horse = null;
+  HERO.confetti = [];
+  gsap.killTweensOf(HERO);
+  hideWinnerMomentCard();
+  const screen = document.getElementById('screen-race');
+  if (screen) screen.classList.remove('is-winning-moment');
 }
 
 // ─── Race finish → roll call ───────────────────────────────────
@@ -4414,6 +4770,7 @@ window.replayExperience = function () {
     delete raceScreen.dataset.racePhase;
   }
   clearBroadcastId();
+  resetWinningMoment();
   const confetti = document.getElementById('revealConfetti');
   if (confetti) { gsap.killTweensOf(confetti.children); confetti.remove(); }
   if (_resultEl) { _resultEl.style.display = 'none'; gsap.set(_resultEl, { opacity: 0 }); }

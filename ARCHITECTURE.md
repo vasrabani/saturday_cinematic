@@ -199,7 +199,7 @@ Transitions happen through `showScreen(name)`, which:
 2. Removes `.active` from every `.screen` element.
 3. Adds `.active` to `#screen-<name>`.
 
-Each phase's entry function does the work: `beginParade()`, `startRace()`, `runRollCall()`, `runReveal()`. There's no formal state machine library — the transitions are hardcoded at the end of each phase (parade ends → `transitionToRace()`; race ends → `runRollCall()`; etc.). Simple and readable; hard to accidentally skip a phase.
+Each phase's entry function does the work: `beginParade()`, `startRace()`, `runRollCall()`, `runReveal()`. There's no formal state machine library — the transitions are hardcoded at the end of each phase (parade ends → `transitionToRace()`; race ends → `runWinningMoment()` → `runRollCall()`; etc.). Simple and readable; hard to accidentally skip a phase.
 
 The `#skip` buttons on each screen fast-forward to the next phase and are also allowed to short-circuit long GSAP timelines.
 
@@ -224,7 +224,7 @@ These are deliberately **separate** from `BAND.phaseTable`, the seven editorial 
 |---|---|---|
 | `intro` | `#screen-intro` | Race title, meta chips (course/time/distance/runners), band pill, hero copy, static preview of the field |
 | `parade` | `#screen-parade` | One horse at a time walks across `#paradeStage`. `#paradeCounter` updates, `#paradeDots` shows progress |
-| `race` | `#screen-race` | Two `<canvas>` elements (backdrop planes on `#particleCanvas`, track + field + foreground on `#raceCanvas`), plus DOM overlays: `#raceLeaderboard` for live positions, `#racingCommentary` for spoken beats, and two elements the engine injects at runtime — `.bcast-id` (broadcast identification) and `.race-result` (the card after the line). The legacy `#flatPhotoFinish` element is left in the markup and never activated |
+| `race` | `#screen-race` | Two `<canvas>` elements (backdrop planes on `#particleCanvas`, track + field + foreground on `#raceCanvas`), plus DOM overlays: `#raceLeaderboard` for live positions, `#racingCommentary` for spoken beats, and two elements the engine injects at runtime — `.bcast-id` (broadcast identification), `.race-result` (the card after the line) and `.win-moment` (the Winning Moment card, § 8.4c). The legacy `#flatPhotoFinish` element is left in the markup and never activated |
 | `rollcall` | `#screen-rollcall` | Last-to-first parade of horses back onto `#rollcallStage`, each with silk + name + finish position |
 | `reveal` | `#screen-reveal` | Trophy SVG, winner name, verdict box, podium chips, three action buttons |
 
@@ -491,6 +491,17 @@ CSS lives in two files that split responsibilities on subject, not scope:
   - `#screen-race { background: transparent }` — the race screen has to be
     see-through so the parallax backdrop drawn on `#particleCanvas` (below it
     in the stacking order) is visible
+- **The Winning Moment** (§ 8.4c): `.win-moment` and its three spans, and
+  `#screen-race.is-winning-moment`, which fades the leaderboard, phase title,
+  phase strip, skip button and lower-third out of the hero shot
+- **Intro typography**, the last block in the file: the first page's type,
+  matched to the V16.1 delivery (`saturday_cinematic_v2`) — a smaller,
+  balanced title, the lighter italic "The Virtual", a coral kicker, the band
+  subtitle in Playfair Display italic, smaller and more tracked meta, chips,
+  button and caption. Type only; the layout is ours. Everything is scoped
+  to `.page-experience--flat #screen-intro`, so no other screen moves. The
+  caption under the button carries an inline style in `index.html`, so its
+  three rules are `!important`
 
 **Rule of thumb**: if a style would apply equally well to a jumps race (Grand National, Cheltenham), it belongs in `experience.css`. If it's specific to the flat-race visual grammar (stalls, band pills, photo-finish flash), it belongs in `flat.css`.
 
@@ -531,7 +542,7 @@ Three things fall out of it for free, and each was a bug or a limitation in V1:
 
 - **Skip-to-finish is one `seek()`.** Because the timeline owns progress *and* the camera *and* the phase, seeking lands all of them in a consistent state. V1 had a second clock (`raceTime`) that had to be nudged by hand, plus an `raceTimeAccel` end-rush hack to stop the cinematic dangling.
 - **Slow motion is `timeScale`, not a special case.** We slow the clock, not the horses, so commentary, leaderboard cadence and gait all stretch together. The ramp is tweened from inside a `.call()` so the tween driving `timeScale` is not itself being scaled by the value it is changing.
-- **Teardown is total.** `replayExperience()` kills `masterTL`, `finishTL` and any tweens on `DIRECTOR` and on the horse objects *first*, then resets state. Reset a director while a timeline is still alive and the next tick simply writes the old values back.
+- **Teardown is total.** `replayExperience()` kills `masterTL`, `finishTL`, `winTL` and any tweens on `DIRECTOR` and on the horse objects *first*, then resets state. Reset a director while a timeline is still alive and the next tick simply writes the old values back.
 
 ### 8.3 The final furlong
 
@@ -548,7 +559,7 @@ Three things fall out of it for free, and each was a bug or a limitation in V1:
 3. **The camera opens up.** Through the final furlong the shot is tight on the leader; at the line it widens to zoom 1.08 and the focus falls back off the winner onto the group (`groupBias` → 0.1). This is the cut a broadcast director makes to show you the placings, and without it the winner runs on alone while everyone else finishes off-frame. `updateCamera()` also clamps the focus so the post stays at least 10% in from the left edge while `runOut` is non-zero — on a blanket finish the group centroid *is* the winner, so an unclamped camera follows them past the post and the line slides out of shot at exactly the moment the viewer wants it.
 4. **A held shot.** Everything has settled; the camera drifts and nothing else happens. This pause is the whole point of the sequence; take it out and the finish reads as an animation ending rather than a race being won.
 5. The result card, sized to the actual margin: PHOTO FINISH under a head, DEAD HEAT when the API says so, otherwise WINNER with the margin spelled out. It sits high in the frame (`top: 27%`) because the finish shot now has most of a field running through the middle of it.
-6. Out to the roll call.
+6. Out to the Winning Moment (§ 8.4c), and from there to the roll call. The result card is held for 1.7s rather than 2.3s now, because the Winning Moment card restates it.
 
 **Press flashguns.** The photographers are banked at the winning post, and the wall of flashguns going off as the field crosses is the single most recognisable image in racing. `DIRECTOR.pressFlash` ramps up through the final furlong on the master timeline and is faded out by `finishTL`; `spawnPressFlashes()` emits from it at a rate proportional to the intensity. Three things make them read as flashguns rather than fairy lights:
 
@@ -568,6 +579,31 @@ Three things a camera does that a canvas does not, drawn last in `drawAtmosphere
 
 Horse shadows are offset away from the sun, so every shadow in the frame agrees about where the light is.
 
+### 8.4c The Winning Moment
+
+A 5.2-second scene between the finish and the roll call, `runWinningMoment()`. The **choreography is the V16.1 delivery's** (`saturday_cinematic_v2`, its `runWinningMoment()`), beat for beat:
+
+| Time | Beat |
+|---|---|
+| 0 | Cut close on the winner, still galloping. Letterbox to 2.1% |
+| 0 → 2.5s | The camera pushes in, `power3.out` — the horse grows by 1.45× |
+| 0 → 5.2s | The gallop eases from full speed to 60%, never stopping |
+| 1.25s | The jockey comes up out of the crouch into a one-arm salute, over 0.45s, keeping the reins in the other hand |
+| 1.46s | The gold-edged card resolves at the top: SATURDAY RACING · WINNING MOMENT, the winner's name, WINNER · odds · margin (DEAD HEAT on a dead heat) |
+| 1.55s | Four confetti bursts, 0.21s apart, gold from the right and white from the left |
+| 3.64 → 5.2s | The letterbox closes to 3.8%, like a broadcast sting |
+| 5.2s | Out to the roll call |
+
+**Everything in the frame is ours.** Their version cut to a painted sky-and-grass backdrop and a sprite. Here it is our racecourse — the same sky, sun, clouds, stands, rail crowd, hoardings and turf tiles as the race, magnified as if through a long lens and scrolling past as a low tracking shot — and our horse and jockey, drawn by `drawHorseSilhouette()` at hero scale with the same coat, markings and silks the viewer has just watched win.
+
+How it is built, in the same shape as the race:
+
+- **One timeline, one state object.** `winTL` writes into `HERO` (`push`, `speed`, `scroll`, `confetti`) and into the winner's `h.salute`; nothing else advances. `renderFrame()` hands the frame to `renderHeroFrame()` while `HERO.active` is set, so there is still one render loop.
+- **The salute is part of the jockey rig**, blended by `h.salute` (0 → 1) rather than swapped in, so he rises into it. The upper body rotates back about the hip; the head takes back most of that lean, so his eyes stay up the track; the far arm is solved to keep hold of the reins; the near arm is posed in *world* space — straight up, a slight bend at the elbow — and carried back into the tilted frame, so it stays vertical however far he has sat up. The whip is put away. `h.salute` is 0 for every other horse, and the race never sets it, so the rig is unchanged in the race.
+- **Framing measures the whole drawing**, tail tip to muzzle — a quarter longer than `HORSE_ART_LENGTH` — and centres that, not the horse's origin. On a phone the horse is sized to two-thirds of the width; sizing it like desktop put its head off the right-hand edge.
+- **Teardown.** `resetWinningMoment()` kills `winTL`, hides the card and drops the class; `replayExperience()` and `startRace()` both call it. At the end of the scene only `HERO.active` is cleared, so the last hero frame stays on the canvas while the roll call fades in.
+- Skipped under `prefers-reduced-motion`, as theirs is: the finish goes straight to the roll call.
+
 ### 8.5 The leaderboard
 
 Live Positions is animated, not rewritten. V1 wrote `row.style.transform` on every row on every frame and left a CSS transition to chase it, which produced a permanently in-flight panel where nothing read as a *change*. V2 samples the ranking a few times a second and only touches a row when its rank actually moves — at which point GSAP slides it, the position number flips, and the row briefly carries `.is-climbing` or `.is-falling` so the eye is drawn to the change rather than to constant motion. The CSS transition on `transform` was removed for the same reason: a transition and a tween on the same property fight, and the tween always lands late.
@@ -578,13 +614,13 @@ Outside the race screen, GSAP is used as it was before:
 
 | Phase | GSAP timelines |
 |---|---|
-| Intro | Kicker fade-in, title reveal, meta chip stagger |
+| Intro | Kicker fade-in, title reveal, meta chip stagger (type matched to V16.1, § 7) |
 | Parade | Per-horse entry (silk scale, name slide), skip button pulse |
-| Race | Stalls BANG, plus everything in § 8.1-8.5 |
+| Race | Stalls BANG, plus everything in § 8.1-8.5, including the Winning Moment |
 | Roll call | Per-row entry from off-screen right, position number count-up |
 | Reveal | Trophy scale + glow, winner name slide-up, verdict box fade, podium row stagger, gold confetti, action bar entry |
 
-**Reveal confetti** is DOM (`spawnRevealConfetti()`), not canvas, because the reveal screen sits above both canvases. Forty-four nodes, GSAP-driven, torn down by the last piece to land and again on `replayExperience()` so nothing accumulates across replays. This is the one place in the experience where confetti belongs — it was removed from the race itself, where it read as an arcade flourish over a sports broadcast.
+**Reveal confetti** is DOM (`spawnRevealConfetti()`), not canvas, because the reveal screen sits above both canvases. Forty-four nodes, GSAP-driven, torn down by the last piece to land and again on `replayExperience()` so nothing accumulates across replays. Confetti stays out of the race itself, where it read as an arcade flourish over a sports broadcast; it appears only after the result is in — in the Winning Moment (canvas, § 8.4c) and here.
 
 **Intro runner chips** carry the runner's actual cap (`renderCapSvg`) rather than being text pills. Twenty-four names in a row is a list; twenty-four sets of colours is a racecard, and it primes the viewer for the silks they are about to follow.
 
@@ -593,7 +629,7 @@ Outside the race screen, GSAP is used as it was before:
 Two layers, and both matter:
 
 - The engine short-circuits. `startExperience()` routes a reduced-motion visitor straight to `runStaticReveal()` — the settled result, no animated race. This is V1 behaviour and is unchanged.
-- The race scene is hardened anyway, so nothing depends on that short-circuit holding. `SHAKE` is a flat `0`, so every camera-rumble tween multiplies out to nothing; the slow-motion ramp is skipped; hoof dust and the foreground plane never spawn; the finish drift is zero. `css/flat.css` carries a matching `@media (prefers-reduced-motion: reduce)` block for the DOM chrome.
+- The race scene is hardened anyway, so nothing depends on that short-circuit holding. `SHAKE` is a flat `0`, so every camera-rumble tween multiplies out to nothing; the slow-motion ramp is skipped; hoof dust and the foreground plane never spawn; the finish drift is zero; the Winning Moment is skipped. `css/flat.css` carries a matching `@media (prefers-reduced-motion: reduce)` block for the DOM chrome.
 
 ---
 

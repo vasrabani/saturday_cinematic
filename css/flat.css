@@ -930,3 +930,134 @@
 @media (prefers-reduced-motion: reduce) {
   .reveal-confetti { display: none; }
 }
+
+/* ── The Winning Moment ──────────────────────────────────────────
+   Card and behaviour follow the V16.1 delivery (saturday_cinematic_v2):
+   a dark, gold-edged card at the top of the hero shot, eyebrow in DM
+   Sans, the winner's name in Playfair Display 900 capitals, then
+   WINNER · odds · margin. Built by showWinnerMomentCard() in flat.js;
+   opacity and position are GSAP's. */
+.win-moment {
+  position: absolute;
+  left: 50%;
+  top: 7%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(520px, 72vw);
+  padding: 16px 22px 18px;
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  background: rgba(7,10,15,.84);
+  border: 1.4px solid var(--gold, #D4AF37);
+  border-radius: 10px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.45);
+}
+.win-moment__eyebrow {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  white-space: pre;
+  color: var(--gold, #D4AF37);
+}
+.win-moment__name {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 40px;
+  font-weight: 900;
+  line-height: 1.05;
+  text-transform: uppercase;
+  color: #F5EFDE;
+  text-shadow: 0 2px 18px rgba(0,0,0,.5);
+}
+.win-moment__meta {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  white-space: pre;
+  color: rgba(245,239,222,.72);
+}
+@media (max-width: 650px) {
+  .win-moment { width: 88vw; padding: 13px 14px 14px; }
+  .win-moment__name { font-size: 30px; }
+  .win-moment__eyebrow, .win-moment__meta { font-size: 10px; white-space: normal; }
+}
+
+/* The race chrome steps out of the hero shot. */
+#screen-race .race-leaderboard,
+#screen-race .race-phase-strip,
+#screen-race .race-phase-title,
+#screen-race .race-skip-wrap { transition: opacity .4s ease; }
+#screen-race.is-winning-moment .race-leaderboard,
+#screen-race.is-winning-moment .race-phase-strip,
+#screen-race.is-winning-moment .race-phase-title,
+#screen-race.is-winning-moment .race-skip-wrap,
+#screen-race.is-winning-moment .bcast-id {
+  opacity: 0 !important;
+  pointer-events: none;
+}
+
+/* ── Intro typography ───────────────────────────────────────────
+   The first page's type, matched to the V16.1 delivery: a smaller,
+   balanced title with the lighter italic "The Virtual", a tighter
+   coral kicker, the band subtitle in Playfair Display italic, and
+   smaller, more tracked meta, chips, button and caption. Type only —
+   the layout is ours. Scoped to #screen-intro so nothing else moves. */
+.page-experience--flat #screen-intro .intro-kicker {
+  font-size: 9px;
+  letter-spacing: .34em;
+  color: #db654f;
+}
+.page-experience--flat #screen-intro .flat-band-pill { font-size: 9px; }
+.page-experience--flat #screen-intro .intro-title {
+  font-size: clamp(42px, 5.75vw, 82px);
+  line-height: .94;
+  max-width: 1160px;
+  text-wrap: balance;
+}
+.page-experience--flat #screen-intro .intro-title__line1 {
+  font-size: .52em;
+  line-height: 1;
+  margin-bottom: 6px;
+  color: rgba(240,235,224,.92);
+}
+.page-experience--flat #screen-intro .intro-title__line2 {
+  filter: drop-shadow(0 0 26px rgba(212,175,55,.22));
+}
+.page-experience--flat #screen-intro .intro-meta {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  color: #F0EBE0;
+}
+.page-experience--flat #screen-intro .intro-meta__sep { color: rgba(240,235,224,.38); }
+.page-experience--flat #screen-intro .flat-band-subtitle {
+  color: rgba(240,235,224,.58) !important;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(12px, 1vw, 15px);
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.page-experience--flat #screen-intro .intro-runner-chip { font-size: 10px; }
+.page-experience--flat #screen-intro .intro-btn {
+  font-size: 12px;
+  letter-spacing: .19em;
+}
+/* The caption under the button carries an inline style in the markup. */
+.page-experience--flat #screen-intro #flatStartBtn + p {
+  font-size: 9px !important;
+  letter-spacing: .1em !important;
+  color: rgba(240,235,224,.26) !important;
+}
+@media (max-height: 820px) and (min-width: 769px) {
+  .page-experience--flat #screen-intro .intro-title { font-size: clamp(38px, 5vw, 70px); }
+}
+@media (max-width: 768px) {
+  .page-experience--flat #screen-intro .intro-title { font-size: clamp(38px, 12vw, 58px); }
+  .page-experience--flat #screen-intro .intro-title__line1 { font-size: .48em; }
+}
