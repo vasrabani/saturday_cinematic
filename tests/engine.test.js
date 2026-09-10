@@ -146,6 +146,70 @@ test('two-bone IK keeps both bones at their length', () => {
   assert.ok(Math.abs(s.fx - 6) < 1e-9 && Math.abs(s.fy - 25) < 1e-9, 'reaches the target');
 });
 
+// Stands in for a canvas context: records each sub-path as a polygon, an
+// arc sampled along its sweep.
+function pathRecorder() {
+  const shapes = [];
+  let current = null;
+  return {
+    shapes,
+    moveTo(x, y) { current = [[x, y]]; shapes.push(current); },
+    lineTo(x, y) { current.push([x, y]); },
+    closePath() {},
+    arc(x, y, r, start, end, anticlockwise) {
+      const sweep = anticlockwise ? -(Math.PI * 2) : Math.PI * 2;   // the engine only draws whole circles
+      for (let i = 1; i <= 64; i++) {
+        const a = start + sweep * i / 64;
+        current.push([x + Math.cos(a) * r, y + Math.sin(a) * r]);
+      }
+    },
+  };
+}
+
+// Twice the signed area: which way round a polygon is traced.
+function winding(points) {
+  let a = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [x1, y1] = points[i], [x2, y2] = points[(i + 1) % points.length];
+    a += x1 * y2 - x2 * y1;
+  }
+  return Math.sign(a);
+}
+
+test('a joint and a limb wind the same way, so one fill of both has no hole', () => {
+  const dot = pathRecorder();
+  E.dotPath(dot, 3, 4, 1.5);
+  for (let k = 0; k < 16; k++) {                 // a limb pointing every way round
+    const limb = pathRecorder();
+    const a = k * Math.PI / 8;
+    E.taperPath(limb, 0, 0, Math.cos(a) * 10, Math.sin(a) * 10, 3, 2);
+    assert.equal(winding(limb.shapes[0]), winding(dot.shapes[0]), 'limb at ' + (k * 22.5) + '°');
+  }
+});
+
+test('the hind and fore legs of a side never touch, so they can share a fill', () => {
+  // How far one leg reaches along the body: its bones at their drawn
+  // widths, the joints, and the hoof however it is turned.
+  const reach = (g) => {
+    const xs = [g.rx - g.wRoot / 2, g.rx + g.wRoot / 2, g.jx - g.wJoint, g.jx + g.wJoint,
+                g.ftx - g.wCannon, g.ftx + g.wCannon, g.hx - g.wCannon * 1.4, g.hx + g.wCannon * 1.4];
+    return [Math.min(...xs), Math.max(...xs)];
+  };
+  // The whole stride, at the extremes of rise and pitch stridePose() gives.
+  for (let cyc = 0; cyc < 1; cyc += 0.005) {
+    for (const bodyLift of [-2.6, 0, 0.9]) {
+      for (const pitch of [-0.04, 0, 0.04]) {
+        const legs = E.solveHorseLegs({ cyc, bodyLift, pitch });
+        for (const [hind, fore] of [['farHind', 'farFore'], ['nearHind', 'nearFore']]) {
+          const back = reach(E.limbShape({ leg: legs[hind], sock: false }));
+          const front = reach(E.limbShape({ leg: legs[fore], sock: false }));
+          assert.ok(back[1] < front[0], hind + ' clear of ' + fore + ' at ' + cyc.toFixed(3));
+        }
+      }
+    }
+  }
+});
+
 test('smoothstep clamps and eases', () => {
   const s = E.smoothstep;
   assert.equal(s(0, 1, -1), 0);

@@ -2564,7 +2564,9 @@ function drawFarRail() {
   ctx.stroke();
 
   ctx.fillStyle = 'rgba(240,244,250,0.38)';
-  for (let x = from; x < to; x += step) ctx.fillRect(x, y - 6, 1.6, 7);
+  ctx.beginPath();
+  for (let x = from; x < to; x += step) ctx.rect(x, y - 6, 1.6, 7);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -2619,12 +2621,15 @@ function drawFurlongMarkers() {
     ctx.strokeStyle = 'rgba(245,239,222,0.35)';
     ctx.lineWidth = 1;
     ctx.stroke();
-    ctx.fillStyle = 'rgba(245,239,222,0.92)';
-    ctx.font = 'bold 11px "DM Sans", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(String(left), x, y - 45);
+    drawTextLive(String(left), MARKER_TYPE, x, y - 45);
   }
 }
+
+// Track lettering stays live text (not textAsImage): it is big enough on
+// screen to read, where a scaled bitmap would come out a shade softer, and
+// there are only two or three pieces of it in a frame.
+const MARKER_TYPE = { weight: 'bold', size: 11, family: '"DM Sans", sans-serif',
+                      fill: 'rgba(245,239,222,0.92)', baseline: 'alphabetic' };
 
 // The winning post. It lives at the far end of the world and is drawn
 // only when it is genuinely in shot, which for a nine-screen race means
@@ -2639,12 +2644,16 @@ function drawWinningPost() {
   const top = WORLD.trackTopY;
   const bot = WORLD.trackBotY;
 
-  // Painted line across the turf
+  // Painted line across the turf: alternate blocks of white and black,
+  // each colour one fill.
   ctx.save();
-  for (let y = top - 6; y < bot + 26; y += 9) {
-    ctx.fillStyle = (Math.floor(y / 9) % 2 === 0) ? 'rgba(255,255,255,0.92)'
-                                                  : 'rgba(14,18,26,0.92)';
-    ctx.fillRect(x - 2, y, 4, 9);
+  for (const white of [true, false]) {
+    ctx.fillStyle = white ? 'rgba(255,255,255,0.92)' : 'rgba(14,18,26,0.92)';
+    ctx.beginPath();
+    for (let y = top - 6; y < bot + 26; y += 9) {
+      if ((Math.floor(y / 9) % 2 === 0) === white) ctx.rect(x - 2, y, 4, 9);
+    }
+    ctx.fill();
   }
 
   // Post + gold finial on the far side
@@ -2668,10 +2677,8 @@ function drawWinningPost() {
   roundRectPath(ctx, x - 58, top - 128, 116, 24, 4);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = COL.gold;
-  ctx.font = 'bold 13px "DM Sans", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('THE LINE', x, top - 111);
+  drawTextLive('THE LINE', { weight: 'bold', size: 13, family: '"DM Sans", sans-serif',
+                             fill: COL.gold, baseline: 'alphabetic' }, x, top - 111);
   ctx.restore();
 }
 
@@ -2689,20 +2696,21 @@ function drawForegroundPlane() {
   ctx.fillStyle = 'rgba(14,32,22,0.9)';
   ctx.fillRect(0, viewH - 10, viewW, 10);
 
+  // The blades never touch, so they are one stroke.
   ctx.strokeStyle = 'rgba(18,44,28,0.85)';
   ctx.lineWidth = 3;
   ctx.lineCap = 'round';
+  ctx.beginPath();
   let x = -(((off % tw) + tw) % tw);
   for (; x < viewW + tw; x += tw) {
     for (let i = 0; i < 5; i++) {
       const gx = x + i * 34;
       const gh = 14 + ((i * 53) % 17);
-      ctx.beginPath();
       ctx.moveTo(gx, viewH);
       ctx.quadraticCurveTo(gx + 5, yTop + gh * 0.4, gx + 12, yTop);
-      ctx.stroke();
     }
   }
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -2985,14 +2993,16 @@ function drawField() {
   const inGroup = new Set();
   for (let i = 0; i < groupSize; i++) inGroup.add(ranked[i].runner.id);
 
+  // Only the opacity changes from horse to horse, so it is put back by
+  // hand rather than by a save and restore per horse.
+  const alpha = ctx.globalAlpha;
   drawList.forEach((h) => {
     const isUser = isUserPick(h.runner);
     const isFox  = isFoxPick(h.runner);
 
-    ctx.save();
-    if (!inGroup.has(h.runner.id) && DIRECTOR.fieldFade > 0) {
-      ctx.globalAlpha = 1 - DIRECTOR.fieldFade * 0.72;
-    }
+    ctx.globalAlpha = (!inGroup.has(h.runner.id) && DIRECTOR.fieldFade > 0)
+      ? 1 - DIRECTOR.fieldFade * 0.72
+      : alpha;
 
     // Restrained identification. A thin arc of the runner's own silk
     // colour on the turf beneath them, and only while the broadcast
@@ -3009,8 +3019,8 @@ function drawField() {
     const scale = WORLD.horseScale * h.depth;
     spawnHoofDust(h.worldX, h.y, h, strideCycle(h), scale);
     drawHorseSilhouette(h.worldX, h.y, h, scale);
-    ctx.restore();
   });
+  ctx.globalAlpha = alpha;
 }
 
 // A short bar on the turf beneath the hooves, in the runner's own silk
@@ -3455,12 +3465,18 @@ const STRIDE_LOCAL = STRIDE_SWEEP / STANCE;
 // ground `front` of the root and leaves it `back` of it — so every hoof
 // sweeps STRIDE_SWEEP while it is down — lifts `lift` through the swing,
 // and has two bones, `upper` and `lower`. Forelegs bend forward at the
-// knee, hind legs backward at the hock.
+// knee, hind legs backward at the hock. `w` is how thick it is drawn at
+// the root, the joint and the cannon; the near legs, nearer the camera,
+// are a little thicker.
 const LEG_RIG = Object.freeze({
-  farFore:  Object.freeze({ rx:  16.5, ry: -0.5, front: 10, back:  -9.5, lift: 15, upper: 14, lower: 16.2, fore: true }),
-  nearFore: Object.freeze({ rx:  18.5, ry:  0.5, front: 10, back:  -9.5, lift: 15, upper: 14, lower: 16.2, fore: true }),
-  farHind:  Object.freeze({ rx: -11.5, ry: -2.5, front:  7, back: -12.5, lift: 12, upper: 15, lower: 17.8, fore: false }),
-  nearHind: Object.freeze({ rx: -13.5, ry: -1.5, front:  7, back: -12.5, lift: 12, upper: 15, lower: 17.8, fore: false }),
+  farFore:  Object.freeze({ rx:  16.5, ry: -0.5, front: 10, back:  -9.5, lift: 15, upper: 14, lower: 16.2, fore: true,
+                            w: Object.freeze([5.2, 3.0, 2.1]) }),
+  nearFore: Object.freeze({ rx:  18.5, ry:  0.5, front: 10, back:  -9.5, lift: 15, upper: 14, lower: 16.2, fore: true,
+                            w: Object.freeze([6.0, 3.2, 2.3]) }),
+  farHind:  Object.freeze({ rx: -11.5, ry: -2.5, front:  7, back: -12.5, lift: 12, upper: 15, lower: 17.8, fore: false,
+                            w: Object.freeze([6.2, 3.2, 2.2]) }),
+  nearHind: Object.freeze({ rx: -13.5, ry: -1.5, front:  7, back: -12.5, lift: 12, upper: 15, lower: 17.8, fore: false,
+                            w: Object.freeze([7.2, 3.4, 2.4]) }),
 });
 
 // Where the hoof is, relative to the leg's root, at cycle position u
@@ -3498,15 +3514,8 @@ function solveLeg(rx, ry, tx, ty, a, b, bend) {
 // A tapered limb segment: a quad whose width runs from w1 at one end to
 // w2 at the other.
 function taper(c, x1, y1, x2, y2, w1, w2) {
-  const dx = x2 - x1, dy = y2 - y1;
-  const L = Math.hypot(dx, dy) || 1;
-  const nx = -dy / L, ny = dx / L;
   c.beginPath();
-  c.moveTo(x1 + nx * w1 / 2, y1 + ny * w1 / 2);
-  c.lineTo(x2 + nx * w2 / 2, y2 + ny * w2 / 2);
-  c.lineTo(x2 - nx * w2 / 2, y2 - ny * w2 / 2);
-  c.lineTo(x1 - nx * w1 / 2, y1 - ny * w1 / 2);
-  c.closePath();
+  taperPath(c, x1, y1, x2, y2, w1, w2);
   c.fill();
 }
 
@@ -3516,55 +3525,129 @@ function dot(c, x, y, r) {
   c.fill();
 }
 
-// One leg, root to hoof. `upperCol` is the coat (forearm and gaskin are
-// muscle, the colour of the body); `lowerCol` is the points colour — the
-// black lower legs of a bay. A white sock replaces the pastern and
-// fetlock.
-function drawLimb(c, L, upperCol, lowerCol, sock, wRoot, wJoint, wCannon, detail) {
-  const { rx, ry, jx, jy, fx, fy } = L;
-  // Fetlock sits most of the way down the lower bone; the pastern then
-  // slopes forward into the hoof, which is flat on the ground when
-  // planted and follows the leg when it is not.
-  const ftx = jx + (fx - jx) * 0.82, fty = jy + (fy - jy) * 0.82;
-  const hx = L.planted ? fx + 1.6 : fx + (fx - jx) * 0.06;
-  const hy = L.planted ? fy : fy + (fy - jy) * 0.06;
+// The same shapes added to the current path instead of filled on their
+// own, so that parts sharing a colour go to the GPU as one fill. A draw
+// call costs much the same however small its shape, and a full field is
+// hundreds of small shapes a frame: on a phone it is the number of draw
+// calls, not the number of pixels, that sets the frame rate.
+//
+// The quad runs anticlockwise on screen, and so does the circle here:
+// under the non-zero rule, overlapping shapes traced in opposite
+// directions cancel, and where a joint overlaps a limb there would be a
+// hole.
+function taperPath(c, x1, y1, x2, y2, w1, w2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const L = Math.hypot(dx, dy) || 1;
+  const nx = -dy / L, ny = dx / L;
+  c.moveTo(x1 + nx * w1 / 2, y1 + ny * w1 / 2);
+  c.lineTo(x2 + nx * w2 / 2, y2 + ny * w2 / 2);
+  c.lineTo(x2 - nx * w2 / 2, y2 - ny * w2 / 2);
+  c.lineTo(x1 - nx * w1 / 2, y1 - ny * w1 / 2);
+  c.closePath();
+}
+
+function dotPath(c, x, y, r) {
+  c.moveTo(x + r, y);
+  c.arc(x, y, r, 0, Math.PI * 2, true);
+}
+
+// One side's pair of legs, the hind and the fore, root to hoof. `upperCol`
+// is the coat (forearm and gaskin are muscle, the colour of the body);
+// `lowerCol` is the points colour — the black lower legs of a bay. A white
+// sock replaces the pastern and fetlock. Each entry of `pair` is a solved
+// leg (solveHorseLegs) and whether it has a sock.
+//
+// The hind and the fore of a side never touch — the hind hoof stays well
+// behind the fore through the whole stride — so each colour is one fill
+// for the pair, laid down in a single leg's order: upper, lower, sock,
+// hoof. The same picture from a third of the draw calls; a full field's
+// legs had been close to half of every frame's.
+function drawLegPair(c, pair, upperCol, lowerCol, detail) {
+  const legs = pair.map(limbShape);
 
   c.fillStyle = upperCol;
-  taper(c, rx, ry, jx, jy, wRoot, wJoint);
-  dot(c, jx, jy, wJoint * 0.52);
+  c.beginPath();
+  for (const g of legs) {
+    taperPath(c, g.rx, g.ry, g.jx, g.jy, g.wRoot, g.wJoint);
+    dotPath(c, g.jx, g.jy, g.wJoint * 0.52);
+  }
+  c.fill();
 
   c.fillStyle = lowerCol;
-  taper(c, jx, jy, ftx, fty, wJoint * 0.78, wCannon);
-  const sockCol = detail ? '#ebe7de' : '#b9b4aa';
-  c.fillStyle = sock ? sockCol : lowerCol;
-  if (sock) taper(c, jx + (ftx - jx) * 0.55, jy + (fty - jy) * 0.55, ftx, fty, wCannon * 1.02, wCannon * 1.02);
-  dot(c, ftx, fty, wCannon * 0.62);
-  taper(c, ftx, fty, hx, hy, wCannon * 0.9, wCannon * 0.72);
-
-  // Hoof
-  c.fillStyle = sock ? '#5d554c' : '#1b1714';
-  const ang = L.planted ? 0 : Math.atan2(hy - fty, hx - ftx) - Math.PI / 2;
-  c.save();
-  c.translate(hx, hy);
-  c.rotate(ang);
   c.beginPath();
-  c.moveTo(-wCannon * 0.55, -wCannon * 0.9);
-  c.lineTo(wCannon * 0.85, -wCannon * 0.9);
-  c.lineTo(wCannon * 1.25, 0.5);
-  c.lineTo(-wCannon * 0.65, 0.5);
-  c.closePath();
+  for (const g of legs) {
+    taperPath(c, g.jx, g.jy, g.ftx, g.fty, g.wJoint * 0.78, g.wCannon);
+    if (!g.sock) pasternPath(c, g);
+  }
   c.fill();
-  c.restore();
+
+  if (legs.some((g) => g.sock)) {
+    c.fillStyle = detail ? '#ebe7de' : '#b9b4aa';
+    c.beginPath();
+    for (const g of legs) {
+      if (!g.sock) continue;
+      taperPath(c, g.jx + (g.ftx - g.jx) * 0.55, g.jy + (g.fty - g.jy) * 0.55, g.ftx, g.fty,
+                g.wCannon * 1.02, g.wCannon * 1.02);
+      pasternPath(c, g);
+    }
+    c.fill();
+  }
+
+  for (const sock of [false, true]) {
+    if (!legs.some((g) => g.sock === sock)) continue;
+    c.fillStyle = sock ? '#5d554c' : '#1b1714';
+    c.beginPath();
+    for (const g of legs) if (g.sock === sock) hoofOutline(c, g);
+    c.fill();
+  }
 
   if (detail) {
     // Tendon line down the back of the cannon, catching no light.
     c.strokeStyle = 'rgba(0,0,0,0.28)';
     c.lineWidth = 0.45;
     c.beginPath();
-    c.moveTo(jx - 0.6, jy + 1);
-    c.lineTo(ftx - 0.8, fty - 0.5);
+    for (const g of legs) {
+      c.moveTo(g.jx - 0.6, g.jy + 1);
+      c.lineTo(g.ftx - 0.8, g.fty - 0.5);
+    }
     c.stroke();
   }
+}
+
+// The points of one leg. The fetlock sits most of the way down the lower
+// bone; the pastern then slopes forward into the hoof, which is flat on
+// the ground when planted and follows the leg when it is not.
+function limbShape({ leg, sock }) {
+  const { rx, ry, jx, jy, fx, fy, planted, w } = leg;
+  return {
+    rx, ry, jx, jy, planted, sock,
+    ftx: jx + (fx - jx) * 0.82, fty: jy + (fy - jy) * 0.82,
+    hx: planted ? fx + 1.6 : fx + (fx - jx) * 0.06,
+    hy: planted ? fy : fy + (fy - jy) * 0.06,
+    wRoot: w[0], wJoint: w[1], wCannon: w[2],
+  };
+}
+
+// Fetlock and pastern, down to the hoof.
+function pasternPath(c, g) {
+  dotPath(c, g.ftx, g.fty, g.wCannon * 0.62);
+  taperPath(c, g.ftx, g.fty, g.hx, g.hy, g.wCannon * 0.9, g.wCannon * 0.72);
+}
+
+// The hoof, turned to follow the leg through the air: the quad a
+// translate() and rotate() to the hoof would draw, worked out here so
+// that hooves can share a fill.
+function hoofOutline(c, g) {
+  const w = g.wCannon;
+  const ang = g.planted ? 0 : Math.atan2(g.hy - g.fty, g.hx - g.ftx) - Math.PI / 2;
+  const cs = Math.cos(ang), sn = Math.sin(ang);
+  const px = (x, y) => g.hx + x * cs - y * sn;
+  const py = (x, y) => g.hy + x * sn + y * cs;
+  c.moveTo(px(-w * 0.55, -w * 0.9), py(-w * 0.55, -w * 0.9));
+  c.lineTo(px(w * 0.85, -w * 0.9), py(w * 0.85, -w * 0.9));
+  c.lineTo(px(w * 1.25, 0.5), py(w * 1.25, 0.5));
+  c.lineTo(px(-w * 0.65, 0.5), py(-w * 0.65, 0.5));
+  c.closePath();
 }
 
 // The fixed outlines — barrel, neck, head, the jockey's torso — in the
@@ -3614,7 +3697,11 @@ function horsePaths() {
   torso.bezierCurveTo(14.6, -23, 9, -22, 4, -21.8);
   torso.bezierCurveTo(2, -21.8, 0.7, -22.4, 0.4, -23.4);
   torso.closePath();
-  horsePathCache = { body, neck, head, torso };
+  // Neck and head in one coat-coloured fill.
+  const neckAndHead = new Path2D();
+  neckAndHead.addPath(neck);
+  neckAndHead.addPath(head);
+  horsePathCache = { body, neck, head, neckAndHead, torso };
   return horsePathCache;
 }
 
@@ -3631,6 +3718,8 @@ function drawHorseSilhouette(x, y, h, artScale) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(look.scale, look.scale);
+  const m = ctx.getTransform();
+  look.px = Math.hypot(m.a, m.b);
   drawHorseShadow(pose);
 
   ctx.translate(0, pose.bodyLift);
@@ -3653,6 +3742,7 @@ function drawHorseSilhouette(x, y, h, artScale) {
 function horseLook(h, scale) {
   return {
     scale:  scale,
+    px:     1,               // screen pixels per horse unit, once the horse is placed
     detail: scale >= 0.72,
     coat:   h.coat  || (h.coat  = coatFor(h.runner)),
     marks:  h.marks || (h.marks = markingsFor(h.runner)),
@@ -3696,12 +3786,17 @@ function stridePose(h) {
 }
 
 // Ground shadow, cast away from the sun and tightening as the horse
-// leaves the ground. Drawn before the body pitches — shadows do not.
+// leaves the ground. Drawn before the body pitches — shadows do not. Its
+// strength goes in as an opacity, not a colour string built per horse
+// per frame.
 function drawHorseShadow(pose) {
-  ctx.fillStyle = 'rgba(0,0,0,' + (0.3 - pose.susp * 0.14).toFixed(3) + ')';
+  const alpha = ctx.globalAlpha;
+  ctx.globalAlpha = alpha * (0.3 - pose.susp * 0.14);
+  ctx.fillStyle = '#000';
   ctx.beginPath();
   ctx.ellipse(-7, 28, 30 - pose.susp * 5, 3.4, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.globalAlpha = alpha;
 }
 
 // The legs: hoof targets from the gait (hoofPath), joints solved (solveLeg).
@@ -3716,7 +3811,7 @@ function solveHorseLegs(pose) {
     const tx = rig.rx + hp.x;
     const ty = (28 - pose.bodyLift) - tx * pose.pitch + hp.y;
     const j = solveLeg(rig.rx, rig.ry, tx, ty, rig.upper, rig.lower, rig.fore ? -1 : 1);
-    legs[key] = { rx: rig.rx, ry: rig.ry, jx: j.jx, jy: j.jy, fx: j.fx, fy: j.fy, planted: hp.planted };
+    legs[key] = { rx: rig.rx, ry: rig.ry, jx: j.jx, jy: j.jy, fx: j.fx, fy: j.fy, planted: hp.planted, w: rig.w };
   }
   return legs;
 }
@@ -3724,21 +3819,27 @@ function solveHorseLegs(pose) {
 // Far-side legs sit in shadow behind the body.
 function drawFarLegs(legs, look) {
   const { coat, marks } = look;
-  drawLimb(ctx, legs.farHind, coat.shade, coat.farLower, marks.socks[2], 6.2, 3.2, 2.2, false);
-  drawLimb(ctx, legs.farFore, coat.shade, coat.farLower, marks.socks[0], 5.2, 3.0, 2.1, false);
+  drawLegPair(ctx, [
+    { leg: legs.farHind, sock: marks.socks[2] },
+    { leg: legs.farFore, sock: marks.socks[0] },
+  ], coat.shade, coat.farLower, false);
 }
 
 // Near-side legs, over the body.
 function drawNearLegs(legs, look) {
   const { coat, marks, detail } = look;
   const { nearHind, nearFore } = legs;
-  drawLimb(ctx, nearHind, coat.body, coat.nearLower, marks.socks[3], 7.2, 3.4, 2.4, detail);
-  drawLimb(ctx, nearFore, coat.body, coat.nearLower, marks.socks[1], 6.0, 3.2, 2.3, detail);
+  drawLegPair(ctx, [
+    { leg: nearHind, sock: marks.socks[3] },
+    { leg: nearFore, sock: marks.socks[1] },
+  ], coat.body, coat.nearLower, detail);
   if (detail) {
     // Gaskin and forearm take the light on their front edges.
     ctx.fillStyle = 'rgba(255,240,214,0.12)';
-    taper(ctx, nearHind.rx + 1.2, nearHind.ry, nearHind.jx + 0.8, nearHind.jy, 2.4, 1);
-    taper(ctx, nearFore.rx + 1.4, nearFore.ry, nearFore.jx + 0.8, nearFore.jy, 2.0, 0.9);
+    ctx.beginPath();
+    taperPath(ctx, nearHind.rx + 1.2, nearHind.ry, nearHind.jx + 0.8, nearHind.jy, 2.4, 1);
+    taperPath(ctx, nearFore.rx + 1.4, nearFore.ry, nearFore.jx + 0.8, nearFore.jy, 2.0, 0.9);
+    ctx.fill();
   }
 }
 
@@ -3776,9 +3877,12 @@ function drawHorseBody(look) {
   ctx.fillStyle = coat.body;
   ctx.fill(body);
 
-  // Light and volume, all clipped to the body outline.
-  ctx.save();
-  ctx.clip(body);
+  // Light and volume, laid over the body outline. Each layer is the
+  // outline filled with a gradient rather than a rectangle clipped to the
+  // outline: a clip costs the GPU a mask of its own, per horse per frame.
+  // The picture is the same because the outline sits wholly inside each
+  // layer's rectangle, and the radial sheens fade to nothing before they
+  // reach its edge.
   ctx.fillStyle = horseGrad('bodyVol', () => {
     const g = ctx.createLinearGradient(0, -17, 0, 5);
     g.addColorStop(0,    'rgba(255,240,214,0.20)');
@@ -3787,7 +3891,7 @@ function drawHorseBody(look) {
     g.addColorStop(1,    'rgba(0,0,0,0.38)');
     return g;
   });
-  ctx.fillRect(-24, -18, 50, 24);
+  ctx.fill(body);
   if (detail) {
     // Sheen over the quarters and the shoulder: a groomed coat shines.
     ctx.fillStyle = horseGrad('quarterSheen', () => {
@@ -3796,24 +3900,26 @@ function drawHorseBody(look) {
       g.addColorStop(1, 'rgba(255,244,222,0)');
       return g;
     });
-    ctx.fillRect(-24, -22, 24, 22);
+    ctx.fill(body);
     ctx.fillStyle = horseGrad('shoulderSheen', () => {
       const g = ctx.createRadialGradient(18, -9, 0, 18, -9, 7.5);
       g.addColorStop(0, 'rgba(255,244,222,0.18)');
       g.addColorStop(1, 'rgba(255,244,222,0)');
       return g;
     });
-    ctx.fillRect(8, -18, 18, 20);
-    // Dapples on a grey
+    ctx.fill(body);
+    // Dapples on a grey, which do run to the edge: clipped.
     if (coat.dapples) {
+      ctx.save();
+      ctx.clip(body);
       ctx.fillStyle = 'rgba(255,255,255,0.14)';
       for (let i = 0; i < 14; i++) {
         const a = i * 2.4, rr = 3 + (i % 4) * 1.6;
         dot(ctx, -12 + Math.cos(a) * rr * 1.3, -9 + Math.sin(a) * rr * 0.7, 0.9 + (i % 3) * 0.3);
       }
+      ctx.restore();
     }
   }
-  ctx.restore();
 
   if (detail) {
     // Muscle creases: the stifle fold in front of the quarters and the
@@ -3857,14 +3963,13 @@ function drawHorseFront(h, look, pose) {
 // The neck and head shapes, their light and volume, and the face marking.
 function drawNeckAndHead(look) {
   const { coat, marks, detail } = look;
-  const { neck, head } = horsePaths();
+  const { neck, head, neckAndHead } = horsePaths();
 
   ctx.fillStyle = coat.body;
-  ctx.fill(neck);
-  ctx.fill(head);
+  ctx.fill(neckAndHead);
 
-  ctx.save();
-  ctx.clip(neck);
+  // Light and volume: outlines filled with gradients, as on the body, and
+  // for the same reason — no clips.
   ctx.fillStyle = horseGrad('neckVol', () => {
     const g = ctx.createLinearGradient(30, -30, 22, -10);
     g.addColorStop(0,   'rgba(255,240,214,0.18)');
@@ -3872,11 +3977,7 @@ function drawNeckAndHead(look) {
     g.addColorStop(1,   'rgba(0,0,0,0.3)');
     return g;
   });
-  ctx.fillRect(10, -34, 34, 30);
-  ctx.restore();
-
-  ctx.save();
-  ctx.clip(head);
+  ctx.fill(neck);
   // The face planes: lit forehead, shaded muzzle and underside.
   ctx.fillStyle = horseGrad('headVol', () => {
     const g = ctx.createLinearGradient(44, -31, 47, -18);
@@ -3885,7 +3986,7 @@ function drawNeckAndHead(look) {
     g.addColorStop(1,   'rgba(0,0,0,0.34)');
     return g;
   });
-  ctx.fillRect(36, -33, 22, 16);
+  ctx.fill(head);
   if (detail) {
     // The round cheek (jowl), catching the light
     ctx.fillStyle = horseGrad('cheek', () => {
@@ -3894,10 +3995,12 @@ function drawNeckAndHead(look) {
       g.addColorStop(1, 'rgba(255,244,222,0)');
       return g;
     });
-    ctx.fillRect(38, -30, 9, 9);
+    ctx.fill(head);
   }
-  // Face marking
+  // Face marking, which comes right up to the edge of the face: clipped.
   if (marks.face !== 'none') {
+    ctx.save();
+    ctx.clip(head);
     ctx.fillStyle = '#f1ede4';
     if (marks.face === 'star') {
       dot(ctx, 46.6, -28.6, 1.1);
@@ -3911,8 +4014,8 @@ function drawNeckAndHead(look) {
       ctx.closePath();
       ctx.fill();
     }
+    ctx.restore();
   }
-  ctx.restore();
 }
 
 // Throatlatch, ears, eye, muzzle — the nostrils flaring and the mouth
@@ -3993,20 +4096,19 @@ function drawMane(h, look) {
   ctx.quadraticCurveTo(34, -32.6, 37, -30.4);
   ctx.closePath();
   ctx.fill();
+  // The strands and the forelock are one stroke: the same pen throughout.
   const maneN = detail ? 9 : 4;
   ctx.strokeStyle = coat.points;
   ctx.lineWidth = 0.9;
   ctx.lineCap = 'round';
+  ctx.beginPath();
   for (let i = 0; i < maneN; i++) {
     const t = i / (maneN - 1);
     const bx = 35 - t * 20, by = -30 + t * 13;
-    ctx.beginPath();
     ctx.moveTo(bx, by);
     ctx.quadraticCurveTo(bx - 3, by - 2.4 + mp * 0.4, bx - 6.5, by - 1.2 + mp * (0.4 + t * 0.4));
-    ctx.stroke();
   }
   // Forelock streaming back over the forehead
-  ctx.beginPath();
   ctx.moveTo(39.6, -31.4);
   ctx.quadraticCurveTo(38, -33.4 + mp * 0.3, 35.6, -33.4 + mp * 0.4);
   ctx.stroke();
@@ -4064,14 +4166,7 @@ function drawHorseTack(h, look) {
     ctx.lineWidth = 0.35;
     ctx.stroke();
   }
-  if (num != null) {
-    ctx.fillStyle = '#171b22';
-    ctx.font = '700 5.2px "DM Sans", Helvetica, Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(String(num), 2.8, -11.4);
-    ctx.textBaseline = 'alphabetic';
-  }
+  if (num != null) drawClothNumber(h, look, num);
   ctx.fillStyle = '#231a14';                  // saddle
   ctx.beginPath();
   ctx.moveTo(-0.8, -15.4);
@@ -4090,6 +4185,87 @@ function drawHorseTack(h, look) {
     ctx.quadraticCurveTo(18, -7, 23.6, -4.2);
     ctx.stroke();
   }
+}
+
+// The number on the saddle cloth — live text only in the Winning Moment's
+// close-up, which is bigger than any of its bitmaps (textAsImage).
+const CLOTH_TYPE = { weight: 700, size: 5.2, family: '"DM Sans", Helvetica, Arial, sans-serif',
+                     fill: '#171b22', baseline: 'middle' };
+function drawClothNumber(h, look, num) {
+  const img = horseTextImage(h, 'clothImages', String(num), CLOTH_TYPE, look);
+  if (img) drawTextImage(img, 2.8, -11.4);
+  else drawTextLive(String(num), CLOTH_TYPE, 2.8, -11.4);
+}
+
+// ── Text as an image ─────────────────────────────────────────────
+// Text is the dearest thing a race frame draws. Every fillText is laid
+// out and its glyphs prepared for the GPU afresh, and under a horse's
+// transform — scaled, pitching with the stride — no two frames can share
+// them: the saddle cloths alone were a third of a slow phone's frame. So a
+// horse's text, its number and a starred silk, is set once into bitmaps
+// and drawn as an image.
+//
+// The image goes through the canvas's ordinary bilinear filtering: asking
+// for mipmaps ('high' smoothing) cost the GPU more than the text had cost
+// the CPU. Bilinear filtering only holds up to halving the size, so each
+// text is set, as it is needed, at 1, 2, 4 and 8 pixels to the unit, and
+// the one drawn is the smallest that is at least as fine as the screen —
+// its own small set of mipmaps, each one set as real text at that size.
+// `type` is the text's weight, size (in the units it is drawn in),
+// family, colour and baseline. Until the typeface has loaded the text is
+// drawn live, so a bitmap is never made in a fallback font.
+const HORSE_TEXT_AS_IMAGE_UP_TO = 2;                  // art scale up to which a horse's text is an image
+const TEXT_IMAGE_PX = Object.freeze([1, 2, 4, 8]);    // bitmap pixels per unit, level by level
+const textImages = new Map();
+
+// A horse's text at the level for its size on screen (look.px), kept on
+// the horse under `slot`. Null means live text: the close-up, or a
+// typeface still loading.
+function horseTextImage(h, slot, text, type, look) {
+  if (look.scale > HORSE_TEXT_AS_IMAGE_UP_TO) return null;
+  let level = 0;
+  while (level < TEXT_IMAGE_PX.length - 1 && TEXT_IMAGE_PX[level] < look.px) level++;
+  const levels = h[slot] || (h[slot] = []);
+  return levels[level] || (levels[level] = textImage(text, type, TEXT_IMAGE_PX[level]));
+}
+
+function drawTextImage(img, x, y) {
+  ctx.drawImage(img.canvas, x - img.ax, y - img.ay, img.w, img.h);
+}
+
+function drawTextLive(text, type, x, y) {
+  ctx.fillStyle = type.fill;
+  ctx.font = type.weight + ' ' + type.size + 'px ' + type.family;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = type.baseline;
+  ctx.fillText(text, x, y);
+  ctx.textBaseline = 'alphabetic';
+}
+
+// The bitmap, at k pixels to the unit: the text centred on an anchor that
+// sits where the live text's (x, y) would, with room round it for any
+// glyph of the face. Shared between horses and races.
+function textImage(text, type, k) {
+  const key = [text, type.weight, type.size, type.family, type.fill, type.baseline, k].join('|');
+  const cached = textImages.get(key);
+  if (cached) return cached;
+  if (document.fonts && !document.fonts.check(type.weight + ' 12px ' + type.family)) return null;
+  const em = type.size * k;
+  const font = type.weight + ' ' + em + 'px ' + type.family;
+  const c = document.createElement('canvas');
+  const g = c.getContext('2d');
+  g.font = font;
+  c.width = Math.ceil(g.measureText(text).width + 2 * k);
+  c.height = Math.ceil(em * 1.6);
+  const anchorY = type.baseline === 'middle' ? c.height / 2 : Math.round(em * 1.15);
+  g.font = font;               // sizing the canvas reset its state
+  g.fillStyle = type.fill;
+  g.textAlign = 'center';
+  g.textBaseline = type.baseline;
+  g.fillText(text, c.width / 2, anchorY);
+  const img = { canvas: c, w: c.width / k, h: c.height / k, ax: c.width / 2 / k, ay: anchorY / k };
+  textImages.set(key, img);
+  return img;
 }
 
 // ── The jockey ───────────────────────────────────────────────────
@@ -4125,20 +4301,22 @@ function drawJockey(h, look, pose, bit) {
   drawJockeyLeg();
 
   // Upper body: rotated about the hip and lifted by the salute. The legs,
-  // irons and reins above stay where they are.
-  ctx.save();
-  if (sal > 0.001) {
+  // irons and reins above stay where they are. Nothing is drawn after the
+  // upper body, so it needs its own save only to undo the salute.
+  const saluting = sal > 0.001;
+  if (saluting) {
+    ctx.save();
     ctx.translate(2.4, -22.6 - rig.salLift);
     ctx.rotate(rig.salA);
     ctx.translate(-2.4, 22.6);
     drawRiddenHand(look, rig);
   }
-  drawJockeyTorso(look);
+  drawJockeyTorso(h, look);
   drawJockeyArm(look, rig);
   if (pose.finalStretch && sal < 0.3) drawWhip(pose, rig);
   drawJockeyHead(look, rig);
-  ctx.restore();   // end upper body
-  ctx.restore();   // end jockey
+  if (saluting) ctx.restore();   // end upper body
+  ctx.restore();                 // end jockey
 }
 
 function drawReins(bit, bodyLift, rig) {
@@ -4169,11 +4347,15 @@ function drawJockeyLeg() {
 
   // Thigh (white breeches) and boot, knee up at the withers
   ctx.fillStyle = '#ece9e2';
-  taper(ctx, 2.4, -22.6, 12.2, -17.4, 3.6, 2.6);
-  dot(ctx, 12.2, -17.4, 1.3);
+  ctx.beginPath();
+  taperPath(ctx, 2.4, -22.6, 12.2, -17.4, 3.6, 2.6);
+  dotPath(ctx, 12.2, -17.4, 1.3);
+  ctx.fill();
   ctx.fillStyle = '#16120f';
-  taper(ctx, 12.2, -17.4, 7.2, -10.6, 2.4, 1.8);
-  taper(ctx, 7.2, -10.6, 9.8, -9.8, 1.8, 1.2);
+  ctx.beginPath();
+  taperPath(ctx, 12.2, -17.4, 7.2, -10.6, 2.4, 1.8);
+  taperPath(ctx, 7.2, -10.6, 9.8, -9.8, 1.8, 1.2);
+  ctx.fill();
   ctx.fillStyle = '#b8864c';                  // boot top
   taper(ctx, 11.8, -16.8, 11.1, -15.8, 2.6, 2.5);
 }
@@ -4198,40 +4380,58 @@ function drawRiddenHand(look, rig) {
   dot(ctx, qx, qy, 1.0);
 }
 
-function drawJockeyTorso(look) {
+function drawJockeyTorso(h, look) {
   const { silk, silk2, pat } = look;
   // Torso in the runner's silks, back flat, backside up
   const torso = horsePaths().torso;
   ctx.fillStyle = silk;
   ctx.fill(torso);
-  ctx.save();
-  ctx.clip(torso);
-  ctx.fillStyle = silk2;
-  if (pat === 'hooped') {
-    for (let i = -31; i < -20; i += 2.6) ctx.fillRect(-2, i, 22, 1.25);
-  } else if (pat === 'striped') {
-    for (let i = 1; i < 18; i += 3.2) ctx.fillRect(i, -32, 1.2, 12);
-  } else if (pat === 'halved') {
-    ctx.fillRect(8.5, -32, 12, 12);
-  } else if (pat === 'quartered') {
-    ctx.fillRect(8.5, -32, 12, 5.6);
-    ctx.fillRect(-2, -26.4, 10.5, 6);
-  } else if (pat === 'starred') {
-    ctx.font = '700 6px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('★', 8.5, -23.8);
-  }
   // Silk sheen on top, shadow underneath
-  ctx.fillStyle = horseGrad('silkVol', () => {
+  const silkVol = horseGrad('silkVol', () => {
     const g = ctx.createLinearGradient(0, -30.5, 0, -21.6);
     g.addColorStop(0,   'rgba(255,255,255,0.28)');
     g.addColorStop(0.4, 'rgba(255,255,255,0)');
     g.addColorStop(1,   'rgba(0,0,0,0.3)');
     return g;
   });
+  // A plain silk has nothing that crosses the outline, so its sheen is
+  // the outline filled with the gradient — no clip, as on the horse. A
+  // pattern runs off the edge of the torso and is clipped to it; its
+  // hoops or stripes never overlap, so they are one fill.
+  if (!SILK_PATTERNS.has(pat)) {
+    ctx.fillStyle = silkVol;
+    ctx.fill(torso);
+    return;
+  }
+  ctx.save();
+  ctx.clip(torso);
+  ctx.fillStyle = silk2;
+  if (pat === 'starred') {
+    const type = { weight: 700, size: 6, family: 'Georgia, serif', fill: silk2, baseline: 'alphabetic' };
+    const img = horseTextImage(h, 'starImages', '★', type, look);
+    if (img) drawTextImage(img, 8.5, -23.8);
+    else drawTextLive('★', type, 8.5, -23.8);
+  } else {
+    ctx.beginPath();
+    if (pat === 'hooped') {
+      for (let i = -31; i < -20; i += 2.6) ctx.rect(-2, i, 22, 1.25);
+    } else if (pat === 'striped') {
+      for (let i = 1; i < 18; i += 3.2) ctx.rect(i, -32, 1.2, 12);
+    } else if (pat === 'halved') {
+      ctx.rect(8.5, -32, 12, 12);
+    } else {
+      ctx.rect(8.5, -32, 12, 5.6);
+      ctx.rect(-2, -26.4, 10.5, 6);
+    }
+    ctx.fill();
+  }
+  ctx.fillStyle = silkVol;
   ctx.fillRect(-1, -31, 20, 10);
   ctx.restore();
 }
+
+// The silk patterns drawn over the body colour; anything else is plain.
+const SILK_PATTERNS = new Set(['hooped', 'striped', 'halved', 'quartered', 'starred']);
 
 function drawJockeyArm(look, rig) {
   const { silk2 } = look;
@@ -4251,9 +4451,11 @@ function drawJockeyArm(look, rig) {
   const gloveX = handX + (sFx - handX) * sal;
   const gloveY = handY + (sFy - 0.6 - handY) * sal;
   ctx.fillStyle = silk2;
-  taper(ctx, 14.8, -27.2, elbowX, elbowY, 2.6, 2.2);
-  dot(ctx, elbowX, elbowY, 1.1);
-  taper(ctx, elbowX, elbowY, armX, armY, 2.1, 1.6);
+  ctx.beginPath();
+  taperPath(ctx, 14.8, -27.2, elbowX, elbowY, 2.6, 2.2);
+  dotPath(ctx, elbowX, elbowY, 1.1);
+  taperPath(ctx, elbowX, elbowY, armX, armY, 2.1, 1.6);
+  ctx.fill();
   ctx.fillStyle = '#f2efe8';                  // glove
   dot(ctx, gloveX, gloveY, 1.05 + sal * 0.25);
 }
@@ -4278,9 +4480,12 @@ function drawJockeyHead(look, rig) {
   const { sal, salA } = rig;
   // Head: helmet under a silk cap, peak forward, goggles, a sliver of
   // face. Low between the shoulders, eyes up the track — and still up
-  // the track in the salute: the head takes back most of the lean.
-  ctx.save();
-  if (sal > 0.001) {
+  // the track in the salute: the head takes back most of the lean. The
+  // head is the last thing drawn on the horse, so it saves the canvas
+  // only to undo that turn.
+  const saluting = sal > 0.001;
+  if (saluting) {
+    ctx.save();
     ctx.translate(17.6, -28.2);
     ctx.rotate(-salA * 0.7);
     ctx.translate(-17.6, 28.2);
@@ -4306,7 +4511,7 @@ function drawJockeyHead(look, rig) {
     ctx.ellipse(21.9, -29.6, 1.1, 0.7, -0.3, 0, Math.PI * 2);
     ctx.fill();
   }
-  ctx.restore();   // end head
+  if (saluting) ctx.restore();   // end head
 }
 
 // ─── Commentary ─────────────────────────────────────────────────
@@ -5528,9 +5733,9 @@ const PUBLIC_API = { init, startExperience, skipParade, skipToFinish, skipRollCa
 Object.assign(window, PUBLIC_API);
 
 window.FlatEngine = Object.freeze(Object.assign({
-  version: '2.5.0',
+  version: '2.6.0',
   features: Object.freeze(['world-camera', 'coat-palette', 'rail-crowd',
-                           'run-through', 'distance-gait', 'encapsulated']),
+                           'run-through', 'distance-gait', 'encapsulated', 'batched-draw']),
 }, PUBLIC_API, {
   debug: Object.freeze({
     // Replace the engine's load-time randomness, for a repeatable run.
@@ -5543,7 +5748,7 @@ window.FlatEngine = Object.freeze(Object.assign({
   internals: Object.freeze({
     parseBeatenDistance, formatBeatenDistance, formatBeatenDistanceCompact, ordinal,
     inventFinishGaps, raceProgressEase, runOnPast, finishPauseS, smoothstep,
-    hoofPath, solveLeg, coatFor, markingsFor,
+    hoofPath, solveLeg, solveHorseLegs, limbShape, taperPath, dotPath, coatFor, markingsFor,
     LEG_RIG, STRIDE_SWEEP, STANCE, STRIDE_LOCAL, START_EASE, EASE_TO,
     FINISH_PAUSE_S, FINISH_PAUSE_MAX_S, MAX_VISIBLE_LENGTHS,
     esc, mergeConfig, buildRacePositions, renderCommentary,
