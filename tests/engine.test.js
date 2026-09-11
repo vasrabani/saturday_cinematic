@@ -127,16 +127,86 @@ test('the result card waits for seven finishers, within its bounds', () => {
   assert.ok(b > a && b <= E.FINISH_PAUSE_MAX_S, 'a runaway waits longer, but not forever: ' + b);
 });
 
+// Every horse now has its own stance, so the invariant has to hold across
+// the whole band and not just at the reference horse. If it ever fails,
+// hooves skate over the turf again — the fault the distance-driven gait
+// exists to prevent, and the one the small far-lane horses showed worst.
+const STANCES = () => {
+  const lo = E.STANCE * (1 - E.STANCE_SPREAD), hi = E.STANCE * (1 + E.STANCE_SPREAD);
+  return [lo, E.STANCE, hi, (lo + E.STANCE) / 2, (hi + E.STANCE) / 2];
+};
+
 test('a planted hoof sweeps exactly one stride sweep, so it cannot skate', () => {
-  for (const [name, leg] of Object.entries(E.LEG_RIG)) {
-    assert.equal(leg.front - leg.back, E.STRIDE_SWEEP, name);
-    const strike = E.hoofPath(0, leg.front, leg.back, leg.lift, leg.fore);
-    const lift = E.hoofPath(E.STANCE - 1e-9, leg.front, leg.back, leg.lift, leg.fore);
-    assert.ok(strike.planted && lift.planted, name + ' planted through the stance');
-    assert.ok(Math.abs(strike.x - lift.x - E.STRIDE_SWEEP) < 1e-6, name + ' sweep');
-    assert.ok(!E.hoofPath(E.STANCE + 0.2, leg.front, leg.back, leg.lift, leg.fore).planted, name + ' swings');
+  for (const stance of STANCES()) {
+    for (const [name, leg] of Object.entries(E.LEG_RIG)) {
+      const where = name + ' at stance ' + stance.toFixed(4);
+      assert.equal(leg.front - leg.back, E.STRIDE_SWEEP, name);
+      const strike = E.hoofPath(0, leg.front, leg.back, leg.lift, leg.fore, stance);
+      const lift = E.hoofPath(stance - 1e-9, leg.front, leg.back, leg.lift, leg.fore, stance);
+      assert.ok(strike.planted && lift.planted, where + ' planted through the stance');
+      assert.ok(Math.abs(strike.x - lift.x - E.STRIDE_SWEEP) < 1e-6, where + ' sweep');
+      assert.ok(!E.hoofPath(stance + 1e-9, leg.front, leg.back, leg.lift, leg.fore, stance).planted,
+                where + ' swings the instant the stance ends');
+    }
+    // The whole point: one cycle carries the horse sweep/stance, so a
+    // shorter stance is a longer stride. placeHorse divides by exactly
+    // this, which is what keeps the hoof on the ground.
+    assert.ok(Math.abs(E.strideLocalFor(stance) - E.STRIDE_SWEEP / stance) < 1e-12);
   }
   assert.ok(Math.abs(E.STRIDE_LOCAL - E.STRIDE_SWEEP / E.STANCE) < 1e-12);
+  assert.equal(E.strideLocalFor(0), E.STRIDE_LOCAL, 'a horse with no stance falls back to the reference');
+  assert.equal(E.suspensionFrom(0), E.suspensionFrom(E.STANCE));
+});
+
+// The rig is tuned close to full extension at the moment of strike, which
+// is why stance is the dial rather than the drawn sweep. If a planted hoof
+// ever stopped reaching the ground, solveLeg would silently clamp it and
+// the horse would run on tiptoe.
+//
+// Poses come from stridePose rather than a sweep of cyc x bodyLift x
+// pitch. The cross-product contains poses the horse cannot be in — full
+// suspension lift at the moment a foreleg strikes, for one — and the rig
+// misses the ground by three units in those, which means nothing. Body
+// lift is a function of where in the cycle the horse is, so the only
+// honest test is to ask the gait for the pose and check that one.
+test('a planted hoof actually reaches the ground at every stance', () => {
+  for (const stance of STANCES()) {
+    for (let i = 0; i < 400; i++) {
+      const pose = E.stridePose({ legPhase: (i / 400) * Math.PI * 2, stance, swayPhase: i * 0.017 });
+      const legs = E.solveHorseLegs(pose);
+      for (const [key, leg] of Object.entries(legs)) {
+        if (!leg.planted) continue;
+        const want = (28 - pose.bodyLift) - leg.fx * pose.pitch;
+        // Measured worst across the band is 0.48, on a horse drawn 74
+        // units long — under 0.7% of its length, and invisible. A real
+        // IK clamp misses by several units, so this catches that without
+        // pinning the rig's existing slack.
+        assert.ok(Math.abs(leg.fy - want) < 0.6,
+                  key + ' is off the ground by ' + (leg.fy - want).toFixed(3) +
+                  ' at cyc ' + pose.cyc.toFixed(3) + ', stance ' + stance.toFixed(4));
+      }
+    }
+  }
+});
+
+// Two horses at the same speed must NOT turn their legs over at the same
+// rate. That identity is what made the field gallop as one animal.
+test('stride length varies between horses, within a believable band', () => {
+  let lo = Infinity, hi = -Infinity;
+  let seq = 0;
+  const rand = () => ((seq = (seq + 0.137) % 1), seq);
+  for (let i = 0; i < 500; i++) {
+    const st = E.drawStance(rand);
+    lo = Math.min(lo, st); hi = Math.max(hi, st);
+  }
+  assert.ok(lo >= E.STANCE * (1 - E.STANCE_SPREAD) - 1e-12, 'stance under the band: ' + lo);
+  assert.ok(hi <= E.STANCE * (1 + E.STANCE_SPREAD) + 1e-12, 'stance over the band: ' + hi);
+
+  // The cadence spread that produces, at one speed. Enough to read as
+  // individual horses; not so much that one looks broken.
+  const ratio = E.strideLocalFor(lo) / E.strideLocalFor(hi);
+  assert.ok(ratio > 1.15, 'cadence spread too small to see: ' + ratio.toFixed(3));
+  assert.ok(ratio < 1.45, 'cadence spread implausibly wide: ' + ratio.toFixed(3));
 });
 
 test('two-bone IK keeps both bones at their length', () => {
@@ -195,15 +265,20 @@ test('the hind and fore legs of a side never touch, so they can share a fill', (
                 g.ftx - g.wCannon, g.ftx + g.wCannon, g.hx - g.wCannon * 1.4, g.hx + g.wCannon * 1.4];
     return [Math.min(...xs), Math.max(...xs)];
   };
-  // The whole stride, at the extremes of rise and pitch stridePose() gives.
-  for (let cyc = 0; cyc < 1; cyc += 0.005) {
-    for (const bodyLift of [-2.6, 0, 0.9]) {
-      for (const pitch of [-0.04, 0, 0.04]) {
-        const legs = E.solveHorseLegs({ cyc, bodyLift, pitch });
-        for (const [hind, fore] of [['farHind', 'farFore'], ['nearHind', 'nearFore']]) {
-          const back = reach(E.limbShape({ leg: legs[hind], sock: false }));
-          const front = reach(E.limbShape({ leg: legs[fore], sock: false }));
-          assert.ok(back[1] < front[0], hind + ' clear of ' + fore + ' at ' + cyc.toFixed(3));
+  // The whole stride, at the extremes of rise and pitch stridePose() gives,
+  // and at every stance a horse can be dealt — a shorter stance moves the
+  // hoof through its sweep faster, so the legs meet at different moments.
+  for (const stance of STANCES()) {
+    for (let cyc = 0; cyc < 1; cyc += 0.005) {
+      for (const bodyLift of [-2.6, 0, 0.9]) {
+        for (const pitch of [-0.04, 0, 0.04]) {
+          const legs = E.solveHorseLegs({ cyc, bodyLift, pitch, stance });
+          for (const [hind, fore] of [['farHind', 'farFore'], ['nearHind', 'nearFore']]) {
+            const back = reach(E.limbShape({ leg: legs[hind], sock: false }));
+            const front = reach(E.limbShape({ leg: legs[fore], sock: false }));
+            assert.ok(back[1] < front[0], hind + ' clear of ' + fore + ' at ' + cyc.toFixed(3) +
+                                          ', stance ' + stance.toFixed(4));
+          }
         }
       }
     }

@@ -1113,6 +1113,7 @@ function buildHorseObjects(positions) {
       duelFloor:     duelFloor,  // how far ahead of the winner he may get
       bobPhase:      Math.random() * Math.PI * 2,
       legPhase:      Math.random() * Math.PI * 2,
+      stance:        drawStance(),
       swayRate:      0.88 + Math.random() * 0.26,
       swayPhase:     Math.random() * Math.PI * 2,
       lastDustCycle: null,
@@ -1328,7 +1329,7 @@ function placeHorse(h, dt, snap) {
   // same rate whatever the horse was doing: in slow motion, pulling up or
   // standing still the hooves slid over the turf, and the small horses in
   // the far lanes skated worst of all.
-  const cycles = dx / (STRIDE_LOCAL * WORLD.horseScale * h.depth);
+  const cycles = dx / (strideLocalFor(h.stance) * WORLD.horseScale * h.depth);
   h.legPhase  += cycles * Math.PI * 2;
   h.bobPhase  += cycles * Math.PI * 2 * 0.62;
   h.swayPhase += dt * 0.0032 * h.swayRate;
@@ -3641,7 +3642,6 @@ function horseGrad(key, make) {
 const GAIT = { farHind: 0.00, nearHind: 0.10, farFore: 0.29, nearFore: 0.40 };
 const STANCE = 0.19;
 const GAIT_STRIKES = Object.freeze([GAIT.farHind, GAIT.nearHind, GAIT.farFore, GAIT.nearFore]);
-const SUSPENSION = GAIT.nearFore + STANCE;     // all four off the ground from here
 
 // How far a planted hoof sweeps back under the body, in the horse's own
 // units, and so how far one gait cycle has to carry the horse for the
@@ -3649,6 +3649,49 @@ const SUSPENSION = GAIT.nearFore + STANCE;     // all four off the ground from h
 // advances the gait by distance against this.
 const STRIDE_SWEEP = 19.5;
 const STRIDE_LOCAL = STRIDE_SWEEP / STANCE;
+
+// ── Every horse strides differently ──────────────────────────────
+// STANCE above is the reference horse. Each runner gets its own, drawn
+// once at the gate and carried for the race.
+//
+// This is the fix for a field that galloped as one animal. The gait is
+// driven by distance — legPhase advances by ground covered, not by the
+// clock — so two horses at the same speed with one shared STANCE had
+// *identical* stride frequency, to the last decimal. Their phases could
+// only drift apart through differences in speed, which meant the field
+// locked into a single cadence exactly when the speeds converged: the
+// bunched run-in, where a viewer is most likely to be looking closely.
+//
+// Stance is the right dial to vary rather than the drawn sweep. The
+// no-skate invariant is that the body advances STRIDE_SWEEP while a hoof
+// is down, so one cycle carries STRIDE_SWEEP / stance — meaning a horse
+// that keeps its feet down for less of the cycle takes a longer stride
+// and spends more of it in the air. That is a real difference between
+// racehorses, and it falls straight out of the existing geometry: the
+// drawn leg sweep is untouched, so the rig's reach is untouched. Scaling
+// the sweep instead would have needed longer bones, because the foreleg
+// is already within a fraction of full extension at the moment of
+// strike.
+//
+// ±12% is about the spread of real thoroughbred stride lengths. At the
+// same ground speed the shortest strider in a field turns its legs over
+// roughly a quarter faster than the longest, which is plainly visible
+// as the pack refusing to beat in time.
+const STANCE_SPREAD = 0.12;
+
+function drawStance(rand) {
+  return STANCE * (1 + (((rand || Math.random)() * 2) - 1) * STANCE_SPREAD);
+}
+
+// One gait cycle carries the horse this far, in its own units.
+function strideLocalFor(stance) {
+  return STRIDE_SWEEP / (stance || STANCE);
+}
+
+// All four feet are off the ground from here until the far hind lands.
+function suspensionFrom(stance) {
+  return GAIT.nearFore + (stance || STANCE);
+}
 
 // The leg rig, in the horse's own units. Each leg hangs from its root
 // (rx, ry: the elbow for a foreleg, the stifle for a hind), strikes the
@@ -3672,11 +3715,12 @@ const LEG_RIG = Object.freeze({
 // Where the hoof is, relative to the leg's root, at cycle position u
 // (u = 0 at the moment it strikes). Planted and sweeping back through
 // the stance; then lifted, folded and carried forward through the swing.
-function hoofPath(u, front, back, lift, fore) {
-  if (u < STANCE) {
-    return { x: front + (back - front) * (u / STANCE), y: 0, planted: true };
+function hoofPath(u, front, back, lift, fore, stance) {
+  const st = stance || STANCE;
+  if (u < st) {
+    return { x: front + (back - front) * (u / st), y: 0, planted: true };
   }
-  const t = (u - STANCE) / (1 - STANCE);
+  const t = (u - st) / (1 - st);
   // A foreleg folds hard at the knee early in the swing: the hoof comes
   // UP and BACK before it reaches forward. A hind leg tucks under.
   const along = fore ? smoothstep(0.3, 1, t) : smoothstep(0.08, 0.95, t);
@@ -3959,12 +4003,15 @@ function strideCycle(h) {
 
 function stridePose(h) {
   const cyc = strideCycle(h);
+  const stance = h.stance || STANCE;
+  const SUSPENSION = suspensionFrom(stance);
   const susp = cyc > SUSPENSION ? Math.sin((cyc - SUSPENSION) / (1 - SUSPENSION) * Math.PI) : 0;
   const foreLoad = (cyc > GAIT.farFore && cyc < SUSPENSION)
     ? Math.sin((cyc - GAIT.farFore) / (SUSPENSION - GAIT.farFore) * Math.PI) : 0;
   const progress = DIRECTOR.progress;
   return {
     cyc:      cyc,
+    stance:   stance,
     susp:     susp,
     bodyLift: -susp * 2.6 + foreLoad * 0.9,
     pitch:    Math.sin((cyc - 0.16) * Math.PI * 2) * 0.03 + Math.sin(h.swayPhase) * 0.006,
@@ -3997,7 +4044,7 @@ function solveHorseLegs(pose) {
   for (const key of ['farFore', 'nearFore', 'farHind', 'nearHind']) {
     const rig = LEG_RIG[key];
     const u = ((pose.cyc - GAIT[key]) % 1 + 1) % 1;
-    const hp = hoofPath(u, rig.front, rig.back, rig.lift, rig.fore);
+    const hp = hoofPath(u, rig.front, rig.back, rig.lift, rig.fore, pose.stance);
     const tx = rig.rx + hp.x;
     const ty = (28 - pose.bodyLift) - tx * pose.pitch + hp.y;
     const j = solveLeg(rig.rx, rig.ry, tx, ty, rig.upper, rig.lower, rig.fore ? -1 : 1);
@@ -6290,6 +6337,7 @@ window.FlatEngine = Object.freeze(Object.assign({
     inventFinishGaps, raceProgressEase, runOnPast, finishPauseS, smoothstep,
     hoofPath, solveLeg, solveHorseLegs, limbShape, taperPath, dotPath, coatFor, markingsFor,
     LEG_RIG, STRIDE_SWEEP, STANCE, STRIDE_LOCAL, START_EASE, EASE_TO,
+    STANCE_SPREAD, drawStance, strideLocalFor, suspensionFrom, stridePose,
     FINISH_PAUSE_S, FINISH_PAUSE_MAX_S, MAX_VISIBLE_LENGTHS,
     esc, mergeConfig, buildRacePositions, renderCommentary, labelSlots,
     // The live layout object, so a test can resize the window and check

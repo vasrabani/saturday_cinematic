@@ -247,6 +247,7 @@ function buildHorseObjects(positions) {
       duelFloor:     duelFloor,  // how far ahead of the winner he may get
       bobPhase:      Math.random() * Math.PI * 2,
       legPhase:      Math.random() * Math.PI * 2,
+      stance:        drawStance(),
       swayRate:      0.88 + Math.random() * 0.26,
       swayPhase:     Math.random() * Math.PI * 2,
       lastDustCycle: null,
@@ -462,7 +463,7 @@ function placeHorse(h, dt, snap) {
   // same rate whatever the horse was doing: in slow motion, pulling up or
   // standing still the hooves slid over the turf, and the small horses in
   // the far lanes skated worst of all.
-  const cycles = dx / (STRIDE_LOCAL * WORLD.horseScale * h.depth);
+  const cycles = dx / (strideLocalFor(h.stance) * WORLD.horseScale * h.depth);
   h.legPhase  += cycles * Math.PI * 2;
   h.bobPhase  += cycles * Math.PI * 2 * 0.62;
   h.swayPhase += dt * 0.0032 * h.swayRate;

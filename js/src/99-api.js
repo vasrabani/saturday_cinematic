@@ -27,6 +27,7 @@ window.FlatEngine = Object.freeze(Object.assign({
     inventFinishGaps, raceProgressEase, runOnPast, finishPauseS, smoothstep,
     hoofPath, solveLeg, solveHorseLegs, limbShape, taperPath, dotPath, coatFor, markingsFor,
     LEG_RIG, STRIDE_SWEEP, STANCE, STRIDE_LOCAL, START_EASE, EASE_TO,
+    STANCE_SPREAD, drawStance, strideLocalFor, suspensionFrom, stridePose,
     FINISH_PAUSE_S, FINISH_PAUSE_MAX_S, MAX_VISIBLE_LENGTHS,
     esc, mergeConfig, buildRacePositions, renderCommentary, labelSlots,
     // The live layout object, so a test can resize the window and check
