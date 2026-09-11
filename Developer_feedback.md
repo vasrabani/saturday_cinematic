@@ -244,6 +244,27 @@ hoped for:
 
 Verified by hand-editing `js/flat.js` and confirming `npm test` refuses to run.
 
+#### A footnote: `.gitattributes`
+
+The repo had none, so every file git touched printed *"LF will be replaced by
+CRLF"* — `core.autocrlf` is on for most Windows checkouts, and a Windows
+working tree differed from a Mac one byte for byte.
+
+That is untidy on its own, and it actively breaks the build: `tools/build.js`
+writes LF, so on a Windows checkout the generated `js/flat.js` would flip line
+endings every time someone ran `npm run build`, and the `pretest` staleness
+check would fail for no real reason. `* text=auto eol=lf` pins the working
+tree as well as the repository.
+
+Also in there: `*.woff2 binary`, because a line-ending "fix" applied to a font
+corrupts it; the SVG silks deliberately left as text so their diffs stay
+readable; and `js/flat.js` marked `linguist-generated=true`, which collapses
+it by default in pull requests. Reviewing the generated file's diff is reading
+the same change twice — the fragments are the change. It stays ordinary text
+locally, so `git diff` still shows it when you do want to check the output.
+
+Verified with `git add --renormalize .`: no stored content changed.
+
 #### What is NOT fixed, and needs a decision
 
 **`js/experience.js` still has its own copies.** The shared module is shared by

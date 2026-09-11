@@ -1,0 +1,32 @@
+# Line endings are LF everywhere, in the repository AND in the working tree.
+#
+# `text=auto` alone normalises what is stored but leaves the checkout to the
+# machine's core.autocrlf, which on Windows is usually true — so every file
+# git touched printed "LF will be replaced by CRLF", and a Windows checkout
+# would have differed from a Mac one byte for byte. `eol=lf` pins the working
+# tree too, which matters here because js/flat.js is generated: the build
+# writes LF, so without this the file would flip line endings every time
+# someone on Windows ran `npm run build`, and the pretest staleness check
+# would fail for no real reason.
+* text=auto eol=lf
+
+# Fonts. Never touch these — a "line ending" fix to a woff2 corrupts it.
+# The three files are variable fonts; see fonts/saturday-fonts.css.
+*.woff2 binary
+
+# Raster assets, if any are ever added. The silks in img/ are SVG, which is
+# text and is deliberately left as such so their diffs stay readable.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.gif  binary
+*.ico  binary
+
+# js/flat.js is built from js/shared/ and js/src/ by tools/build.js. It is
+# committed because production copies it directly, but reviewing its diff is
+# reading the same change twice — the fragments are the change. This collapses
+# it by default in GitHub pull requests and keeps it out of language stats.
+# It stays a normal text file locally, so `git diff` still shows it when you
+# actually want to check what the build produced.
+js/flat.js linguist-generated=true
