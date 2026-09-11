@@ -16,13 +16,21 @@
 // they survive only by being disciplined about it:
 //
 //   • Never more than a few, and fewer on a phone.
-//   • Never during the final furlong. That sequence is composed — the
-//     camera drops to the rail, the post comes into shot — and plates
-//     across it would spoil the best moment in the race. Visibility is
-//     a DIRECTOR value tweened by the master timeline, not a branch on
-//     progress inside a draw call.
-//   • Never while the lower-third is naming someone. Two devices naming
-//     horses at once is clutter, and the super wins.
+//   • Fewest of all in the run-in, but never none. This rule started
+//     life as "never during the final furlong" — that sequence is
+//     composed, the camera drops to the rail, the post comes into
+//     shot, and plates across it looked like clutter over the best
+//     moment in the race. It was backwards. The run-in is where the
+//     field compresses into one bunch of bodies and the picture stops
+//     answering "which one is that?" on its own; taking the names away
+//     there removed them at the only moment they were indispensable.
+//     So the count narrows to the leaders and the plates stay, clearing
+//     at the post where the winning moment takes the frame. Both the
+//     strength and the count are DIRECTOR values tweened by the master
+//     timeline, not a branch on progress inside a draw call.
+//   • Never brighter than the lower-third while it is naming someone.
+//     Two devices naming horses at once is clutter, and the super wins
+//     — by the plates stepping back, not by leaving.
 //   • Dropped rather than overlapped when the pack compresses.
 //
 // Cost. ARCHITECTURE.md § 6.6: text is the dearest thing a race frame
@@ -168,9 +176,16 @@ function drawRunnerLabels() {
   const ranked = rankedHorses();
   if (!ranked.length) return;
 
-  const maxVisible = viewW < (cfg.narrowWidth || 700)
+  // Wide screens plate the leading group, phones plate fewer, and the
+  // run-in narrows whatever that was towards the leaders — plateFocus is
+  // tweened by the master timeline, so this is a read rather than a
+  // decision about where in the race we are.
+  const base = viewW < (cfg.narrowWidth || 700)
     ? (cfg.maxVisibleNarrow || 2)
     : cfg.maxVisible;
+  const focused = Math.min(base, cfg.maxVisibleLine || base);
+  const maxVisible = Math.max(1, Math.round(
+    base + (focused - base) * Math.min(1, Math.max(0, DIRECTOR.plateFocus))));
 
   const byId = new Map(ranked.map((h, i) => [h.runner.id, { h, rank: i }]));
   const pinned = ranked

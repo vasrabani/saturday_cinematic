@@ -50,7 +50,8 @@ const FLAT_DEFAULTS = {
     horse: { minSurges: 2, maxExtraSurges: 2, surgeStartRange: [0.10, 0.75], surgeDurationRange: [0.14, 0.24], surgeBoostRange: [0.5, 1.5], winnerFinalSurge: { start: 0.78, duration: 0.18, boost: 2.4 } },
     // Nameplates naming the leading runners. maxVisible 0 turns them off
     // entirely, which is the honest way to A/B whether they help.
-    labels: { maxVisible: 4, maxVisibleNarrow: 2, narrowWidth: 700, holdFrames: 12 },
+    labels: { maxVisible: 4, maxVisibleNarrow: 2, maxVisibleLine: 3,
+              narrowWidth: 700, holdFrames: 12 },
     colours: { gold: '#D4AF37', rankSilver: '#C0C0C0', rankBronze: '#CD7F32', userPick: 'rgba(212,175,55,0.28)', foxPick: 'rgba(200,120,20,0.22)', neutralGlow: 'rgba(120,150,200,0.10)', userLabel: '#D4AF37', foxLabel: '#E8A050', silkDefault: '#C8A951', silk2Default: '#1A2540', trackTurf: '#2d5e3a' },
   },
   band: {
@@ -492,6 +493,7 @@ const DIRECTOR_START = Object.freeze({
   pressFlash: 0,     // press flashguns firing at the post, 0 → 1
   letterbox: 0,      // cinema bars, as a fraction of viewport height each
   nameplates: 0,     // runner nameplates, 0 → 1
+  plateFocus: 0,     // 0 = plate the leading group, 1 = the leaders only
   phase:     'cruise',
 });
 const DIRECTOR = Object.assign({}, DIRECTOR_START);
@@ -1459,14 +1461,31 @@ function buildMasterTimeline() {
   // ── LINE ── the dedicated final-furlong sequence.
   addFinalFurlongSequence(tl, durationS);
 
-  // Nameplates. Up once the field has settled into a shape worth reading
-  // and gone before the final furlong — that sequence is composed, and
-  // plates across it would spoil the best moment in the race. Held on
-  // DIRECTOR so a draw call never has to ask what the progress is.
+  // Nameplates. Up once the field has settled into a shape worth reading,
+  // and they stay up through the run-in to the line.
+  //
+  // They used to be gone by the final furlong, on the theory that the
+  // closing sequence is composed and plates across it would spoil the
+  // best moment in the race. That was exactly backwards. The run-in is
+  // where the field compresses into a single bunch of bodies, and it is
+  // the one stretch where a viewer cannot answer "which one is that?"
+  // from the picture alone — Live Positions can say Galiyan leads, but
+  // only a plate on the horse can say which of the eight is Galiyan.
+  // Taking the names away at the climax removed them at the only moment
+  // they were indispensable.
+  //
+  // What survives of the original instinct is the count: plateFocus
+  // narrows the set to the leaders through the closing stages, so the
+  // finish is named without being papered over. They clear at the post
+  // itself, where the winning-moment scene takes the frame.
+  //
+  // Held on DIRECTOR so a draw call never has to ask what the progress is.
   tl.to(DIRECTOR, { nameplates: 1, duration: durationS * 0.04, ease: 'sine.out' },
         durationS * 0.07);
-  tl.to(DIRECTOR, { nameplates: 0, duration: durationS * 0.04, ease: 'sine.in' },
-        durationS * (phaseFrom('line') - 0.05));
+  tl.to(DIRECTOR, { plateFocus: 1, duration: durationS * 0.06, ease: 'sine.inOut' },
+        durationS * (phaseFrom('line') - 0.04));
+  tl.to(DIRECTOR, { nameplates: 0, duration: durationS * 0.015, ease: 'sine.in' },
+        durationS * 0.985);
 
   // Broadcast identifications — four in a whole race, each resolved
   // against the live order at the moment it fires.
@@ -4703,13 +4722,21 @@ function drawJockeyHead(look, rig) {
 // they survive only by being disciplined about it:
 //
 //   • Never more than a few, and fewer on a phone.
-//   • Never during the final furlong. That sequence is composed — the
-//     camera drops to the rail, the post comes into shot — and plates
-//     across it would spoil the best moment in the race. Visibility is
-//     a DIRECTOR value tweened by the master timeline, not a branch on
-//     progress inside a draw call.
-//   • Never while the lower-third is naming someone. Two devices naming
-//     horses at once is clutter, and the super wins.
+//   • Fewest of all in the run-in, but never none. This rule started
+//     life as "never during the final furlong" — that sequence is
+//     composed, the camera drops to the rail, the post comes into
+//     shot, and plates across it looked like clutter over the best
+//     moment in the race. It was backwards. The run-in is where the
+//     field compresses into one bunch of bodies and the picture stops
+//     answering "which one is that?" on its own; taking the names away
+//     there removed them at the only moment they were indispensable.
+//     So the count narrows to the leaders and the plates stay, clearing
+//     at the post where the winning moment takes the frame. Both the
+//     strength and the count are DIRECTOR values tweened by the master
+//     timeline, not a branch on progress inside a draw call.
+//   • Never brighter than the lower-third while it is naming someone.
+//     Two devices naming horses at once is clutter, and the super wins
+//     — by the plates stepping back, not by leaving.
 //   • Dropped rather than overlapped when the pack compresses.
 //
 // Cost. ARCHITECTURE.md § 6.6: text is the dearest thing a race frame
@@ -4855,9 +4882,16 @@ function drawRunnerLabels() {
   const ranked = rankedHorses();
   if (!ranked.length) return;
 
-  const maxVisible = viewW < (cfg.narrowWidth || 700)
+  // Wide screens plate the leading group, phones plate fewer, and the
+  // run-in narrows whatever that was towards the leaders — plateFocus is
+  // tweened by the master timeline, so this is a read rather than a
+  // decision about where in the race we are.
+  const base = viewW < (cfg.narrowWidth || 700)
     ? (cfg.maxVisibleNarrow || 2)
     : cfg.maxVisible;
+  const focused = Math.min(base, cfg.maxVisibleLine || base);
+  const maxVisible = Math.max(1, Math.round(
+    base + (focused - base) * Math.min(1, Math.max(0, DIRECTOR.plateFocus))));
 
   const byId = new Map(ranked.map((h, i) => [h.runner.id, { h, rank: i }]));
   const pinned = ranked
