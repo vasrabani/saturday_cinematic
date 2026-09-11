@@ -1398,8 +1398,8 @@ function buildMasterTimeline() {
   // and gone before the final furlong — that sequence is composed, and
   // plates across it would spoil the best moment in the race. Held on
   // DIRECTOR so a draw call never has to ask what the progress is.
-  tl.to(DIRECTOR, { nameplates: 1, duration: durationS * 0.05, ease: 'sine.out' },
-        durationS * 0.20);
+  tl.to(DIRECTOR, { nameplates: 1, duration: durationS * 0.04, ease: 'sine.out' },
+        durationS * 0.07);
   tl.to(DIRECTOR, { nameplates: 0, duration: durationS * 0.04, ease: 'sine.in' },
         durationS * (phaseFrom('line') - 0.05));
 
@@ -4759,10 +4759,13 @@ function drawRunnerLabels() {
   const cfg = SHARED.labels;
   const strength = DIRECTOR.nameplates;
   if (!cfg || !cfg.maxVisible || strength <= 0.01) return;
-  // The lower-third owns naming while it is on screen. idGlow is set on
-  // the runner it names for exactly that long, so it says so without a
-  // DOM read per frame.
-  if (horses.some((h) => h.idGlow > 0.02)) return;
+  // The lower-third owns naming while it is on screen — but it takes the
+  // eye by being brighter, not by clearing the track. Hiding the plates
+  // outright removed them for four stretches of a race that is not long
+  // to begin with, and the viewer loses the thread each time. idGlow is
+  // set on the runner it names for exactly as long as it is up, so it
+  // says so without a DOM read per frame.
+  const superUp = horses.some((h) => h.idGlow > 0.02);
 
   const ranked = rankedHorses();
   if (!ranked.length) return;
@@ -4783,8 +4786,9 @@ function drawRunnerLabels() {
   const k = labelPixelRatio();
   const placed = [];
 
+  const alpha = strength * (superUp ? 0.3 : 1);
   ctx.save();
-  ctx.globalAlpha = strength;
+  ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
 
   for (const id of ids) {
@@ -4816,13 +4820,13 @@ function drawRunnerLabels() {
 
     // Tether first, so the plate sits over its own line.
     ctx.strokeStyle = accent;
-    ctx.globalAlpha = strength * 0.4;
+    ctx.globalAlpha = alpha * 0.4;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(box.left + width / 2, box.bottom);
     ctx.lineTo(anchor.x, anchor.y + 4);
     ctx.stroke();
-    ctx.globalAlpha = strength;
+    ctx.globalAlpha = alpha;
 
     ctx.fillStyle = 'rgba(7,10,16,0.82)';
     ctx.beginPath();

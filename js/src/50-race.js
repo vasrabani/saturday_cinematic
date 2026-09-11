@@ -572,8 +572,8 @@ function buildMasterTimeline() {
   // and gone before the final furlong — that sequence is composed, and
   // plates across it would spoil the best moment in the race. Held on
   // DIRECTOR so a draw call never has to ask what the progress is.
-  tl.to(DIRECTOR, { nameplates: 1, duration: durationS * 0.05, ease: 'sine.out' },
-        durationS * 0.20);
+  tl.to(DIRECTOR, { nameplates: 1, duration: durationS * 0.04, ease: 'sine.out' },
+        durationS * 0.07);
   tl.to(DIRECTOR, { nameplates: 0, duration: durationS * 0.04, ease: 'sine.in' },
         durationS * (phaseFrom('line') - 0.05));
 
