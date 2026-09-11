@@ -1007,8 +1007,27 @@ body.page-experience {
   box-shadow: 0 0 8px rgba(var(--gold-rgb),0.8);
 }
 
-/* ── CINEMATIC SUBTITLE ─────────────────────────── */
-/* ── CINEMATIC SUBTITLE — BOTTOM, BOLD YELLOW ── */
+/* ── CINEMATIC SUBTITLE ─────────────────────────────────────────
+   The director's caption: phase calls and the odd line of colour,
+   one at a time, over the race.
+
+   It reads as a broadcast caption rather than a title card, which is
+   a deliberate correction. It used to be #FFD700 — a pure saturated
+   yellow that is not in the palette — at Playfair 900 and up to 52px,
+   inside two 5px bars, under an 80px glow. That is poster type, and
+   at that size and weight it competed with the finish rail, the nav
+   and the leaderboard, all of which are already gold.
+
+   So: --paper for the words and gold kept for a single rule down the
+   left edge, which is the convention every racing broadcast uses and
+   also what .race-leaderboard already does (hairline gold at .18 on a
+   dark blurred panel). Playfair italic stays — it is the site's
+   display face and the right voice for a racecard — but at 600 and
+   two-thirds the size, so it carries the line without shouting it.
+
+   The glow is gone entirely. Legibility over a moving canvas is the
+   panel's job, not the type's; a glow on text this size just smears
+   the serifs. ── */
 #subtitle {
   position: fixed;
   top: calc(var(--nav-h, 60px) + var(--banner-h, 0px) + 10px);
@@ -1024,36 +1043,32 @@ body.page-experience {
 
 .subtitle__text {
   font-family: 'Playfair Display', Georgia, serif;
-  font-size: clamp(26px, 3.8vw, 52px);
+  font-size: clamp(19px, 2.05vw, 30px);
   font-style: italic;
-  font-weight: 900;
-  color: #FFD700;                       /* vivid yellow */
-  background: rgba(4, 5, 12, 0.90);    /* near-black */
-  border-left: 5px solid #FFD700;
-  border-right: 5px solid #FFD700;
-  padding: 14px 40px;
+  font-weight: 600;
+  color: var(--paper);
+  background: rgba(var(--ink-rgb), 0.82);
+  border: 1px solid rgba(var(--gold-rgb), 0.18);
+  border-left: 2px solid rgba(var(--gold-rgb), 0.85);
+  border-radius: 4px;
+  padding: 11px 26px 11px 22px;
   display: inline-block;
-  backdrop-filter: blur(16px);
-  text-shadow:
-    0 0 40px rgba(255,215,0,0.6),
-    0 0 80px rgba(255,215,0,0.25),
-    0 3px 16px rgba(0,0,0,0.95);
-  letter-spacing: 0.03em;
+  backdrop-filter: blur(10px);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+  letter-spacing: 0.005em;
   opacity: 0;
   white-space: nowrap;
-  box-shadow:
-    0 0 0 1px rgba(255,215,0,0.2),
-    0 8px 40px rgba(0,0,0,0.7);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
 
 @media (max-width: 700px) {
   #subtitle { top: calc(var(--nav-h, 60px) + var(--banner-h, 0px) + 8px); bottom: auto; width: 96%; }
   .subtitle__text {
-    font-size: clamp(18px, 6vw, 30px);
-    padding: 10px 20px;
+    font-size: clamp(15px, 4.4vw, 21px);
+    padding: 9px 16px 9px 13px;
     white-space: normal;
-    border-left-width: 3px;
-    border-right-width: 3px;
+    text-wrap: balance;
+    line-height: 1.3;
   }
 }
 
