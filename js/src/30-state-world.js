@@ -48,14 +48,21 @@ let viewW = 0, viewH = 0;
 const NARROW_VIEWPORT_PX = 768;
 function isNarrowViewport() { return viewW <= NARROW_VIEWPORT_PX; }
 
+// How much fixed chrome sits above the cinematic: the nav, plus the demo
+// banner when one is showing. The canvas is sized from this and the
+// screens are positioned by the matching calc() in experience.css — if
+// the two disagree, the top of every screen slides under the banner.
 function getNavH() {
   // `parseInt(...) || 60` was wrong: a legitimate --nav-h of 0 is falsy,
   // so a page with no nav bar (this sandbox) still had 60px carved off
   // the bottom of the canvas. Only fall back when the value is genuinely
   // absent or unparseable.
-  const raw = getComputedStyle(document.documentElement).getPropertyValue('--nav-h');
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) ? n : 60;
+  const nav = parseInt(
+    getComputedStyle(document.documentElement).getPropertyValue('--nav-h'), 10);
+  // --banner-h is set on <body>, so it has to be read there.
+  const banner = parseInt(
+    getComputedStyle(document.body).getPropertyValue('--banner-h'), 10);
+  return (Number.isFinite(nav) ? nav : 60) + (Number.isFinite(banner) ? banner : 0);
 }
 
 // How many viewport-widths of ground the camera covers between the

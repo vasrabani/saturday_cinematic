@@ -955,7 +955,7 @@
    the markup — see ensurePosterCanvas(). */
 #posterCanvas {
   position: fixed;
-  top: var(--nav-h, 60px);
+  top: calc(var(--nav-h, 60px) + var(--banner-h, 0px));
   left: 0; right: 0; bottom: 0;
   z-index: 6;
   pointer-events: none;

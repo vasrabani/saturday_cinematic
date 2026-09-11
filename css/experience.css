@@ -56,9 +56,14 @@ body.page-experience {
    flex column pushes the first child off the TOP of the scroll box,
    where no scrollbar can reach it either. `safe` falls back to `center`
    on browsers that don't know it, which is the behaviour we had. */
+/* Anything pinned to the top of the viewport has to clear the nav AND
+   the demo banner, which is fixed directly beneath it. --banner-h is that
+   banner's height, 0 when none is showing (set on <body> in chrome.css).
+   Resolved per element rather than folded into a token on :root, where
+   --banner-h would always read as its :root value of 0. */
 .screen {
   position: fixed;
-  top: var(--nav-h, 60px);
+  top: calc(var(--nav-h, 60px) + var(--banner-h, 0px));
   left: 0;
   right: 0;
   bottom: 0;
@@ -983,7 +988,7 @@ body.page-experience {
 /* ── PARTICLE CANVAS ────────────────────────────── */
 #particleCanvas {
   position: fixed;
-  top: var(--nav-h, 60px);
+  top: calc(var(--nav-h, 60px) + var(--banner-h, 0px));
   left: 0;
   right: 0;
   bottom: 0;
@@ -1006,7 +1011,7 @@ body.page-experience {
 /* ── CINEMATIC SUBTITLE — BOTTOM, BOLD YELLOW ── */
 #subtitle {
   position: fixed;
-  top: calc(var(--nav-h, 60px) + 10px);
+  top: calc(var(--nav-h, 60px) + var(--banner-h, 0px) + 10px);
   bottom: auto;
   left: 50%;
   transform: translateX(-50%);
@@ -1042,7 +1047,7 @@ body.page-experience {
 }
 
 @media (max-width: 700px) {
-  #subtitle { top: calc(var(--nav-h, 60px) + 8px); bottom: auto; width: 96%; }
+  #subtitle { top: calc(var(--nav-h, 60px) + var(--banner-h, 0px) + 8px); bottom: auto; width: 96%; }
   .subtitle__text {
     font-size: clamp(18px, 6vw, 30px);
     padding: 10px 20px;
