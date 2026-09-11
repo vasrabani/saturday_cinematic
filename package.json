@@ -4,7 +4,7 @@
   "description": "Development tooling for the Saturday Racing cinematic replay sandbox. Nothing here ships: production loads js/flat.js directly.",
   "scripts": {
     "lint": "eslint --max-warnings 0 js/flat.js tests tools",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

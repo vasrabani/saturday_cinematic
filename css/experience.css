@@ -12,7 +12,28 @@
   --dark:    #06080F;
   --navy:    #0A0C16;
   --text:    #F0EBE0;
-  --text-dim: rgba(240,235,224,0.55);
+  --text-dim: rgba(var(--text-rgb), 0.55);
+
+  /* Warm off-white for headline type, the arena ink behind overlay plates,
+     Mr Fox's amber, and the two podium metals that sit beside --gold. All
+     were repeated as raw literals before they had names. */
+  --paper: #F5EFDE;
+  --ink:   #0B0E15;
+  --fox:   #E8A050;
+  --rank-silver: #C0C0C0;
+  --rank-bronze: #CD7F32;
+
+  /* Channel triplets for the same colours. A hex token cannot have its
+     alpha varied and most uses here are translucent, so every rgba() needs
+     raw channels: rgba(var(--gold-rgb), .28). Each triplet is the same
+     colour as the hex token above it — change both together. */
+  --gold-rgb:    212, 175, 55;
+  --gold-lt-rgb: 245, 228, 154;
+  --red-rgb:     192, 57, 43;
+  --text-rgb:    240, 235, 224;
+  --paper-rgb:   245, 239, 222;
+  --ink-rgb:     11, 14, 21;
+  --dark-rgb:    6, 8, 15;
 }
 
 /* body already has styles from base.css — just add experience overrides */
@@ -76,7 +97,7 @@ body.page-experience {
      racecourse on #particleCanvas behind every screen, and an opaque
      background would hide it. See AMBIENT BACKDROP in flat.js. */
   background: radial-gradient(ellipse 100% 100% at 50% 50%,
-    rgba(200,169,81,0.10) 0%, transparent 60%), rgba(6,8,15,0.34);
+    rgba(200,169,81,0.10) 0%, transparent 60%), rgba(var(--dark-rgb),0.34);
   text-align: center;
   gap: 32px;
   padding: 40px 24px;
@@ -88,10 +109,10 @@ body.page-experience {
   letter-spacing: 0.4em;
   color: var(--red);
   text-transform: uppercase;
-  border: 1px solid rgba(192,57,43,0.4);
+  border: 1px solid rgba(var(--red-rgb),0.4);
   padding: 5px 16px;
   border-radius: 20px;
-  background: rgba(192,57,43,0.08);
+  background: rgba(var(--red-rgb),0.08);
 }
 
 .intro-title {
@@ -112,7 +133,7 @@ body.page-experience {
 .intro-title__line2 {
   color: var(--gold);
   display: block;
-  filter: drop-shadow(0 0 30px rgba(212,175,55,0.4));
+  filter: drop-shadow(0 0 30px rgba(var(--gold-rgb),0.4));
 }
 
 .intro-meta {
@@ -148,8 +169,8 @@ body.page-experience {
 }
 
 .intro-runner-chip--user {
-  background: rgba(212,175,55,0.12);
-  border-color: rgba(212,175,55,0.4);
+  background: rgba(var(--gold-rgb),0.12);
+  border-color: rgba(var(--gold-rgb),0.4);
   color: var(--gold);
   font-weight: 700;
 }
@@ -157,7 +178,7 @@ body.page-experience {
 .intro-runner-chip--fox {
   background: rgba(200,100,20,0.12);
   border-color: rgba(200,120,20,0.35);
-  color: #E8A050;
+  color: var(--fox);
 }
 
 .intro-btn {
@@ -172,18 +193,18 @@ body.page-experience {
   padding: 18px 52px;
   border-radius: 6px;
   cursor: pointer;
-  box-shadow: 0 6px 32px rgba(192,57,43,0.45);
+  box-shadow: 0 6px 32px rgba(var(--red-rgb),0.45);
   transition: transform 0.15s, box-shadow 0.2s, background 0.15s;
 }
 .intro-btn:hover {
   background: #D9534F;
   transform: translateY(-2px);
-  box-shadow: 0 10px 40px rgba(192,57,43,0.6);
+  box-shadow: 0 10px 40px rgba(var(--red-rgb),0.6);
 }
 
 /* ── SCREEN 1: PARADE ───────────────────────────── */
 #screen-parade {
-  background: rgba(6,8,15,0.40);
+  background: rgba(var(--dark-rgb),0.40);
   gap: 0;
   padding: 0;
   justify-content: flex-start;
@@ -196,10 +217,10 @@ body.page-experience {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid rgba(212,175,55,0.1);
+  border-bottom: 1px solid rgba(var(--gold-rgb),0.1);
   flex-shrink: 0;
   z-index: 2;
-  background: rgba(6,8,15,0.8);
+  background: rgba(var(--dark-rgb),0.8);
   backdrop-filter: blur(10px);
 }
 
@@ -280,7 +301,7 @@ body.page-experience {
   height: auto;
   display: block;
   filter: drop-shadow(0 8px 24px rgba(0,0,0,0.55))
-          drop-shadow(0 0 40px rgba(212,175,55,0.22));
+          drop-shadow(0 0 40px rgba(var(--gold-rgb),0.22));
 }
 .parade-silk .silk-img {
   /* Real Racing API images need a transparent BG and a subtle
@@ -307,7 +328,7 @@ body.page-experience {
   width: 70px;
   height: auto;
   filter: drop-shadow(0 6px 18px rgba(0,0,0,0.6))
-          drop-shadow(0 0 28px rgba(212,175,55,0.45));
+          drop-shadow(0 0 28px rgba(var(--gold-rgb),0.45));
 }
 .reveal-silk--jersey .silk-img {
   border-radius: 5px;
@@ -340,8 +361,8 @@ body.page-experience {
 
 .parade-odds-badge {
   display: inline-block;
-  background: rgba(212,175,55,0.12);
-  border: 1px solid rgba(212,175,55,0.35);
+  background: rgba(var(--gold-rgb),0.12);
+  border: 1px solid rgba(var(--gold-rgb),0.35);
   color: var(--gold);
   font-size: 18px;
   font-weight: 900;
@@ -367,15 +388,15 @@ body.page-experience {
 }
 
 .parade-tag--user {
-  background: rgba(212,175,55,0.2);
+  background: rgba(var(--gold-rgb),0.2);
   border: 1px solid var(--gold);
   color: var(--gold);
 }
 
 .parade-tag--fox {
   background: rgba(200,120,20,0.2);
-  border: 1px solid #E8A050;
-  color: #E8A050;
+  border: 1px solid var(--fox);
+  color: var(--fox);
 }
 
 .parade-tag--fav {
@@ -416,7 +437,7 @@ body.page-experience {
 }
 
 .parade-dot.done {
-  background: rgba(212,175,55,0.4);
+  background: rgba(var(--gold-rgb),0.4);
 }
 
 /* ── SCREEN 2: RACE CANVAS ──────────────────────── */
@@ -441,7 +462,7 @@ body.page-experience {
   left: 0;
   right: 0;
   padding: 48px 32px 28px;   /* more top padding lifts text away from bottom edge */
-  background: linear-gradient(to top, rgba(6,8,15,0.98) 0%, rgba(6,8,15,0.7) 60%, transparent 100%);
+  background: linear-gradient(to top, rgba(var(--dark-rgb),0.98) 0%, rgba(var(--dark-rgb),0.7) 60%, transparent 100%);
   z-index: 10;
   pointer-events: none;
 }
@@ -454,7 +475,7 @@ body.page-experience {
   color: #fff;
   text-align: center;
   text-shadow:
-    0 0 30px rgba(212,175,55,0.35),
+    0 0 30px rgba(var(--gold-rgb),0.35),
     0 2px 16px rgba(0,0,0,0.95);
   min-height: 1.5em;
   line-height: 1.5;
@@ -478,7 +499,7 @@ body.page-experience {
   letter-spacing: 0.3em;
   color: var(--text-dim);
   text-transform: uppercase;
-  background: rgba(6,8,15,0.7);
+  background: rgba(var(--dark-rgb),0.7);
   padding: 4px 16px;
   border-radius: 20px;
   border: 1px solid rgba(255,255,255,0.08);
@@ -490,8 +511,8 @@ body.page-experience {
   top: 24px;
   right: 24px;
   z-index: 10;
-  background: rgba(6,8,15,0.85);
-  border: 1px solid rgba(212,175,55,0.18);
+  background: rgba(var(--dark-rgb),0.85);
+  border: 1px solid rgba(var(--gold-rgb),0.18);
   border-radius: 8px;
   padding: 12px 16px;
   min-width: 200px;
@@ -557,8 +578,8 @@ body.page-experience {
   font-size: 10px;
 }
 .race-lb-pos.p1 { color: var(--gold); }
-.race-lb-pos.p2 { color: #C0C0C0; }
-.race-lb-pos.p3 { color: #CD7F32; }
+.race-lb-pos.p2 { color: var(--rank-silver); }
+.race-lb-pos.p3 { color: var(--rank-bronze); }
 
 /* Mini jockey cap on each leaderboard row — SVG, two silk colours,
    uses the same pattern (halved / hooped / striped / quartered /
@@ -599,7 +620,7 @@ body.page-experience {
 }
 
 .race-lb-name.user-horse { color: var(--gold); font-weight: 700; }
-.race-lb-name.fox-horse  { color: #E8A050; }
+.race-lb-name.fox-horse  { color: var(--fox); }
 
 /* AI win-probability bar — honest static pre-race signal.
    Width relative to the field leader (not 0-100), so the favourite
@@ -622,10 +643,10 @@ body.page-experience {
   display: block;
   height: 100%;
   background: linear-gradient(90deg,
-    rgba(212, 175, 55, 0.85) 0%,
+    rgba(var(--gold-rgb), 0.85) 0%,
     rgba(232, 197, 88, 1) 100%);
   border-radius: 2px;
-  box-shadow: 0 0 4px rgba(212, 175, 55, 0.35);
+  box-shadow: 0 0 4px rgba(var(--gold-rgb), 0.35);
 }
 .race-lb-prob__pct {
   font-family: "DM Sans", "Inter", sans-serif;
@@ -656,16 +677,41 @@ body.page-experience {
   pointer-events: none;
   z-index: 20;
   opacity: 0;
-  text-shadow: 0 0 30px rgba(212,175,55,0.6);
+  text-shadow: 0 0 30px rgba(var(--gold-rgb),0.6);
 }
 
 /* ── SCREEN 3: REVEAL ───────────────────────────── */
 #screen-reveal {
-  background: rgba(6,8,15,0.36);
+  background: rgba(var(--dark-rgb),0.36);
   text-align: center;
   gap: 28px;
   padding: 40px 24px;
   overflow-y: auto;
+}
+
+/* Visible to a screen reader, to nothing else. Used by #raceNarration,
+   which narrates a canvas race that has no accessible content of its own.
+   Not display:none and not visibility:hidden — either would stop it being
+   announced at all. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Focusing a screen on a transition must not draw a ring around the whole
+   viewport — the caret has moved, which is the point, but there is nothing
+   to outline. Controls inside keep their own focus styles. */
+.screen:focus,
+.screen:focus-visible {
+  outline: none;
 }
 
 .reveal-bg {
@@ -673,6 +719,21 @@ body.page-experience {
   inset: 0;
   pointer-events: none;
   z-index: 0;
+}
+
+/* The Winner's Circle wash. Two tints: gold when the viewer's pick won,
+   turf green otherwise. These were built as gradient strings in
+   buildRevealHeader() and set via style.background, which put brand gold
+   somewhere no palette change would ever reach. The engine now toggles a
+   class and the colour comes from the tokens like everything else. */
+.reveal-bg--win {
+  background: radial-gradient(ellipse 100% 100% at 50% 50%,
+                              rgba(var(--gold-rgb), 0.12), transparent 65%);
+}
+
+.reveal-bg--turf {
+  background: radial-gradient(ellipse 100% 100% at 50% 50%,
+                              rgba(45, 94, 58, 0.10), transparent 65%);
 }
 
 .reveal-content {
@@ -718,8 +779,8 @@ body.page-experience {
   text-shadow: 0 3px 12px rgba(0,0,0,0.6);
   opacity: 0;
   box-shadow:
-    0 0 0 4px rgba(212,175,55,0.3),
-    0 0 80px rgba(212,175,55,0.4),
+    0 0 0 4px rgba(var(--gold-rgb),0.3),
+    0 0 80px rgba(var(--gold-rgb),0.4),
     0 16px 48px rgba(0,0,0,0.6);
 }
 
@@ -731,7 +792,7 @@ body.page-experience {
   line-height: 0.95;
   letter-spacing: -0.02em;
   opacity: 0;
-  filter: drop-shadow(0 0 30px rgba(212,175,55,0.25));
+  filter: drop-shadow(0 0 30px rgba(var(--gold-rgb),0.25));
 }
 
 .reveal-horse-odds {
@@ -743,8 +804,8 @@ body.page-experience {
 }
 
 .reveal-verdict-box {
-  background: rgba(212,175,55,0.06);
-  border: 1px solid rgba(212,175,55,0.2);
+  background: rgba(var(--gold-rgb),0.06);
+  border: 1px solid rgba(var(--gold-rgb),0.2);
   border-radius: 10px;
   padding: 24px 28px;
   max-width: 560px;
@@ -752,14 +813,14 @@ body.page-experience {
 }
 
 .reveal-verdict-box--win {
-  background: rgba(212,175,55,0.1);
-  border-color: rgba(212,175,55,0.4);
-  box-shadow: 0 0 40px rgba(212,175,55,0.1);
+  background: rgba(var(--gold-rgb),0.1);
+  border-color: rgba(var(--gold-rgb),0.4);
+  box-shadow: 0 0 40px rgba(var(--gold-rgb),0.1);
 }
 
 .reveal-verdict-box--lose {
-  background: rgba(192,57,43,0.07);
-  border-color: rgba(192,57,43,0.25);
+  background: rgba(var(--red-rgb),0.07);
+  border-color: rgba(var(--red-rgb),0.25);
 }
 
 .reveal-verdict-title {
@@ -824,11 +885,11 @@ body.page-experience {
 .podium-slot--1st .podium-slot__silk {
   width: 60px; height: 60px; font-size: 22px;
   border-color: var(--gold);
-  box-shadow: 0 0 24px rgba(212,175,55,0.5);
+  box-shadow: 0 0 24px rgba(var(--gold-rgb),0.5);
 }
 .podium-slot--1st .podium-slot__pos { color: var(--gold); }
-.podium-slot--2nd .podium-slot__pos { color: #C0C0C0; }
-.podium-slot--3rd .podium-slot__pos { color: #CD7F32; }
+.podium-slot--2nd .podium-slot__pos { color: var(--rank-silver); }
+.podium-slot--3rd .podium-slot__pos { color: var(--rank-bronze); }
 
 /* Score comparison */
 .reveal-scores {
@@ -854,8 +915,8 @@ body.page-experience {
 }
 
 .reveal-score-card--lose {
-  background: rgba(192,57,43,0.06);
-  border-color: rgba(192,57,43,0.18);
+  background: rgba(var(--red-rgb),0.06);
+  border-color: rgba(var(--red-rgb),0.18);
 }
 
 .reveal-score-card__who {
@@ -908,7 +969,7 @@ body.page-experience {
 .reveal-btn--primary {
   background: var(--gold);
   color: #060810;
-  box-shadow: 0 4px 20px rgba(212,175,55,0.35);
+  box-shadow: 0 4px 20px rgba(var(--gold-rgb),0.35);
 }
 .reveal-btn--primary:hover { background: var(--gold-lt); transform: translateY(-1px); }
 
@@ -938,7 +999,7 @@ body.page-experience {
   background: var(--gold);
   transition: width 0.4s;
   z-index: 1000;
-  box-shadow: 0 0 8px rgba(212,175,55,0.8);
+  box-shadow: 0 0 8px rgba(var(--gold-rgb),0.8);
 }
 
 /* ── CINEMATIC SUBTITLE ─────────────────────────── */
@@ -1043,14 +1104,14 @@ body.page-experience {
   width: clamp(120px, 18vw, 200px);
   height: auto;
   filter:
-    drop-shadow(0 0 30px rgba(212,175,55,0.7))
-    drop-shadow(0 0 60px rgba(212,175,55,0.4));
+    drop-shadow(0 0 30px rgba(var(--gold-rgb),0.7))
+    drop-shadow(0 0 60px rgba(var(--gold-rgb),0.4));
   animation: trophyGlow 2.5s ease-in-out infinite;
 }
 
 @keyframes trophyGlow {
-  0%, 100% { filter: drop-shadow(0 0 30px rgba(212,175,55,0.7)) drop-shadow(0 0 60px rgba(212,175,55,0.4)); }
-  50%       { filter: drop-shadow(0 0 55px rgba(212,175,55,1.0)) drop-shadow(0 0 100px rgba(212,175,55,0.6)); }
+  0%, 100% { filter: drop-shadow(0 0 30px rgba(var(--gold-rgb),0.7)) drop-shadow(0 0 60px rgba(var(--gold-rgb),0.4)); }
+  50%       { filter: drop-shadow(0 0 55px rgba(var(--gold-rgb),1.0)) drop-shadow(0 0 100px rgba(var(--gold-rgb),0.6)); }
 }
 
 /* ── PARADE SKIP — prominent bottom CTA ── */
@@ -1068,8 +1129,8 @@ body.page-experience {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(192,57,43,0.18);
-  border: 1px solid rgba(192,57,43,0.6);
+  background: rgba(var(--red-rgb),0.18);
+  border: 1px solid rgba(var(--red-rgb),0.6);
   color: rgba(255,200,200,0.95);
   font-family: 'DM Sans', sans-serif;
   font-size: 14px;
@@ -1081,18 +1142,18 @@ body.page-experience {
   cursor: pointer;
   backdrop-filter: blur(12px);
   box-shadow:
-    0 0 0 1px rgba(192,57,43,0.2) inset,
+    0 0 0 1px rgba(var(--red-rgb),0.2) inset,
     0 4px 24px rgba(0,0,0,0.5);
   transition: all 0.2s ease;
 }
 
 .parade-skip-cta:hover,
 .parade-skip-cta:active {
-  background: rgba(192,57,43,0.4);
-  border-color: rgba(192,57,43,0.9);
+  background: rgba(var(--red-rgb),0.4);
+  border-color: rgba(var(--red-rgb),0.9);
   color: white;
   transform: translateY(-2px);
-  box-shadow: 0 8px 32px rgba(192,57,43,0.4);
+  box-shadow: 0 8px 32px rgba(var(--red-rgb),0.4);
 }
 
 .parade-skip-cta__label {
@@ -1138,20 +1199,20 @@ body.page-experience {
   gap: 10px;
   padding: 8px 14px;
   background: rgba(20, 18, 14, 0.78);
-  border: 1px solid rgba(212, 175, 55, 0.32);
+  border: 1px solid rgba(var(--gold-rgb), 0.32);
   border-radius: 999px;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
   font-family: inherit;
-  color: rgba(240, 235, 224, 0.92);
+  color: rgba(var(--text-rgb), 0.92);
 }
 
 .cinematic-archive-picker__label {
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgba(212, 175, 55, 0.85);
+  color: rgba(var(--gold-rgb), 0.85);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1162,7 +1223,7 @@ body.page-experience {
   -moz-appearance: none;
   background: transparent;
   border: 0;
-  color: rgba(240, 235, 224, 0.96);
+  color: rgba(var(--text-rgb), 0.96);
   font-family: inherit;
   font-size: 13px;
   font-weight: 500;
@@ -1171,8 +1232,8 @@ body.page-experience {
   max-width: 280px;
   text-overflow: ellipsis;
   background-image:
-    linear-gradient(45deg, transparent 50%, rgba(212, 175, 55, 0.75) 50%),
-    linear-gradient(135deg, rgba(212, 175, 55, 0.75) 50%, transparent 50%);
+    linear-gradient(45deg, transparent 50%, rgba(var(--gold-rgb), 0.75) 50%),
+    linear-gradient(135deg, rgba(var(--gold-rgb), 0.75) 50%, transparent 50%);
   background-position:
     right 10px center,
     right 6px center;
@@ -1181,7 +1242,7 @@ body.page-experience {
 }
 
 .cinematic-archive-picker__select:focus {
-  outline: 2px solid rgba(212, 175, 55, 0.55);
+  outline: 2px solid rgba(var(--gold-rgb), 0.55);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -1190,7 +1251,7 @@ body.page-experience {
    background for browsers that respect it (mostly Firefox). */
 .cinematic-archive-picker__select option {
   background: #1a1612;
-  color: #f0ebe0;
+  color: var(--text);
 }
 
 @media (max-width: 600px) {
@@ -1216,7 +1277,7 @@ body.page-experience {
   margin-top: 4px;
   font-size: 11px;
   letter-spacing: 0.06em;
-  color: rgba(245, 228, 154, 0.78);
+  color: rgba(var(--gold-lt-rgb), 0.78);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -1255,8 +1316,8 @@ body.cinematic-experience-running .cinematic-archive-picker {
   gap: 10px;
   padding: 10px 22px;
   background: rgba(20, 18, 14, 0.78);
-  color: rgba(245, 228, 154, 0.92);
-  border: 1px solid rgba(212, 175, 55, 0.40);
+  color: rgba(var(--gold-lt-rgb), 0.92);
+  border: 1px solid rgba(var(--gold-rgb), 0.40);
   border-radius: 999px;
   font-family: 'DM Sans', sans-serif;
   font-size: 11px;
@@ -1271,13 +1332,13 @@ body.cinematic-experience-running .cinematic-archive-picker {
               transform 0.15s, color 0.2s;
 }
 .race-skip-cta:hover {
-  background: rgba(192, 57, 43, 0.85);
-  border-color: rgba(245, 228, 154, 0.7);
+  background: rgba(var(--red-rgb), 0.85);
+  border-color: rgba(var(--gold-lt-rgb), 0.7);
   color: #ffffff;
   transform: translateY(-1px);
 }
 .race-skip-cta:focus-visible {
-  outline: 2px solid rgba(212, 175, 55, 0.7);
+  outline: 2px solid rgba(var(--gold-rgb), 0.7);
   outline-offset: 2px;
 }
 .race-skip-cta__arrow {
@@ -1307,7 +1368,7 @@ body.cinematic-experience-running .cinematic-archive-picker {
    reveal trophy via a screen-level fade. */
 #screen-rollcall {
   background: radial-gradient(ellipse 100% 100% at 50% 50%,
-    rgba(212,175,55,0.08) 0%, transparent 65%), rgba(6,8,15,0.40);
+    rgba(var(--gold-rgb),0.08) 0%, transparent 65%), rgba(var(--dark-rgb),0.40);
   text-align: center;
   gap: 0;
   padding: 0;
@@ -1361,12 +1422,12 @@ body.cinematic-experience-running .cinematic-archive-picker {
 }
 .rollcall-medallion--3rd {
   background: radial-gradient(circle at 30% 30%, #E0A878, #8B5A2B);
-  border-color: #CD7F32;
+  border-color: var(--rank-bronze);
   color: #FFF1DA;
 }
 .rollcall-medallion--2nd {
   background: radial-gradient(circle at 30% 30%, #F0F0F0, #999);
-  border-color: #C0C0C0;
+  border-color: var(--rank-silver);
   color: #0a0c16;
 }
 .rollcall-medallion--1st {
@@ -1376,7 +1437,7 @@ body.cinematic-experience-running .cinematic-archive-picker {
   box-shadow:
     0 0 0 1px rgba(0,0,0,0.4),
     0 8px 32px rgba(0,0,0,0.5),
-    0 0 50px rgba(212,175,55,0.55);
+    0 0 50px rgba(var(--gold-rgb),0.55);
 }
 
 .rollcall-position-label {
@@ -1401,7 +1462,7 @@ body.cinematic-experience-running .cinematic-archive-picker {
 }
 .rollcall-card--winner .rollcall-name {
   color: var(--gold);
-  filter: drop-shadow(0 0 24px rgba(212,175,55,0.5));
+  filter: drop-shadow(0 0 24px rgba(var(--gold-rgb),0.5));
 }
 
 .rollcall-connections {
@@ -1413,8 +1474,8 @@ body.cinematic-experience-running .cinematic-archive-picker {
 
 .rollcall-distance {
   display: inline-block;
-  background: rgba(212,175,55,0.12);
-  border: 1px solid rgba(212,175,55,0.4);
+  background: rgba(var(--gold-rgb),0.12);
+  border: 1px solid rgba(var(--gold-rgb),0.4);
   color: var(--gold);
   font-size: 14px;
   font-weight: 800;
@@ -1444,7 +1505,7 @@ body.cinematic-experience-running .cinematic-archive-picker {
 .rollcall-progress__dot--done { background: var(--gold); opacity: 0.85; }
 .rollcall-progress__dot--current {
   background: var(--gold);
-  box-shadow: 0 0 8px rgba(212,175,55,0.7);
+  box-shadow: 0 0 8px rgba(var(--gold-rgb),0.7);
 }
 
 /* Skip pill — bottom-centre, same visual language as the in-race
@@ -1462,8 +1523,8 @@ body.cinematic-experience-running .cinematic-archive-picker {
   gap: 10px;
   padding: 10px 22px;
   background: rgba(20, 18, 14, 0.78);
-  color: rgba(245, 228, 154, 0.92);
-  border: 1px solid rgba(212, 175, 55, 0.40);
+  color: rgba(var(--gold-lt-rgb), 0.92);
+  border: 1px solid rgba(var(--gold-rgb), 0.40);
   border-radius: 999px;
   font-family: 'DM Sans', sans-serif;
   font-size: 11px;
@@ -1477,8 +1538,8 @@ body.cinematic-experience-running .cinematic-archive-picker {
   transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.15s;
 }
 .rollcall-skip-cta:hover {
-  background: rgba(192, 57, 43, 0.85);
-  border-color: rgba(245, 228, 154, 0.7);
+  background: rgba(var(--red-rgb), 0.85);
+  border-color: rgba(var(--gold-lt-rgb), 0.7);
   color: #ffffff;
   transform: translateY(-1px);
 }
@@ -1514,14 +1575,14 @@ body.cinematic-experience-running .cinematic-archive-picker {
   min-width: 280px;
   max-width: 380px;
   background:
-    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(212, 175, 55, 0.12) 0%, transparent 70%),
-    linear-gradient(180deg, rgba(14, 19, 32, 0.92) 0%, rgba(11, 14, 21, 0.92) 100%);
-  border: 1px solid rgba(212, 175, 55, 0.32);
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(var(--gold-rgb), 0.12) 0%, transparent 70%),
+    linear-gradient(180deg, rgba(14, 19, 32, 0.92) 0%, rgba(var(--ink-rgb), 0.92) 100%);
+  border: 1px solid rgba(var(--gold-rgb), 0.32);
   border-radius: 10px;
   box-shadow:
-    0 1px 0 rgba(212, 175, 55, 0.08) inset,
-    0 8px 26px rgba(11, 14, 21, 0.32);
-  color: #f5efde;
+    0 1px 0 rgba(var(--gold-rgb), 0.08) inset,
+    0 8px 26px rgba(var(--ink-rgb), 0.32);
+  color: var(--paper);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
@@ -1529,25 +1590,25 @@ body.cinematic-experience-running .cinematic-archive-picker {
   display: inline-flex; align-items: center; gap: 6px;
   font-family: "DM Sans", "Inter", sans-serif;
   font-size: 10px; font-weight: 800; letter-spacing: 0.26em;
-  text-transform: uppercase; color: #d4af37;
+  text-transform: uppercase; color: var(--gold);
 }
 .ai-confidence-badge__sparkle {
   display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px;
-  background: #d4af37; color: #0b0e15;
+  background: var(--gold); color: var(--ink);
   border-radius: 3px; font-size: 10px; font-weight: 900;
 }
 .ai-confidence-badge__bar {
   position: relative; height: 8px;
-  background: rgba(245, 239, 222, 0.10);
+  background: rgba(var(--paper-rgb), 0.10);
   border-radius: 999px; overflow: hidden;
 }
 .ai-confidence-badge__fill {
   position: absolute; top: 0; bottom: 0; left: 0;
   background: linear-gradient(90deg,
-    rgba(212, 175, 55, 0.95) 0%, rgba(232, 197, 88, 1) 100%);
+    rgba(var(--gold-rgb), 0.95) 0%, rgba(232, 197, 88, 1) 100%);
   border-radius: 999px;
-  box-shadow: 0 0 8px rgba(212, 175, 55, 0.45);
+  box-shadow: 0 0 8px rgba(var(--gold-rgb), 0.45);
   transition: width 0.4s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .ai-confidence-badge__row {
@@ -1556,27 +1617,27 @@ body.cinematic-experience-running .cinematic-archive-picker {
 .ai-confidence-badge__pct {
   font-family: "Playfair Display", Georgia, serif;
   font-size: 22px; font-weight: 900; letter-spacing: -0.01em;
-  color: #f5efde; font-variant-numeric: tabular-nums;
+  color: var(--paper); font-variant-numeric: tabular-nums;
 }
 .ai-confidence-badge__label {
   font-family: "DM Sans", "Inter", sans-serif;
   font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em;
-  text-transform: uppercase; color: rgba(245, 239, 222, 0.55);
+  text-transform: uppercase; color: rgba(var(--paper-rgb), 0.55);
 }
 .ai-confidence-badge__pick {
   display: flex; align-items: center; justify-content: space-between;
   gap: 10px; padding: 8px 12px;
-  background: rgba(245, 239, 222, 0.04); border-radius: 6px;
+  background: rgba(var(--paper-rgb), 0.04); border-radius: 6px;
 }
 .ai-confidence-badge__pick-label {
   font-family: "DM Sans", "Inter", sans-serif;
   font-size: 10px; font-weight: 800; letter-spacing: 0.22em;
-  text-transform: uppercase; color: rgba(245, 239, 222, 0.45);
+  text-transform: uppercase; color: rgba(var(--paper-rgb), 0.45);
 }
 .ai-confidence-badge__pick-name {
   font-family: "Playfair Display", Georgia, serif;
   font-size: 16px; font-weight: 700; letter-spacing: -0.005em;
-  color: #d4af37;
+  color: var(--gold);
 }
 @media (max-width: 640px) {
   .ai-confidence-badge {
@@ -1603,10 +1664,10 @@ body.cinematic-experience-running .cinematic-archive-picker {
   align-items: center;
   gap: 4px;
   padding: 8px 14px;
-  background: rgba(6, 8, 15, 0.42);
+  background: rgba(var(--dark-rgb), 0.42);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(212, 175, 55, 0.18);
+  border: 1px solid rgba(var(--gold-rgb), 0.18);
   border-radius: 999px;
   z-index: 12;
   pointer-events: none;
@@ -1615,16 +1676,16 @@ body.cinematic-experience-running .cinematic-archive-picker {
   display: inline-block;
   width: 7px; height: 7px;
   border-radius: 50%;
-  background: rgba(245, 239, 222, 0.18);
+  background: rgba(var(--paper-rgb), 0.18);
   transition: background 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
 }
 .race-phase-strip__dot.is-past {
-  background: var(--gold, #D4AF37);
+  background: var(--gold, var(--gold));
 }
 .race-phase-strip__dot.is-current {
-  background: var(--gold, #D4AF37);
+  background: var(--gold, var(--gold));
   transform: scale(1.6);
-  box-shadow: 0 0 12px rgba(212, 175, 55, 0.7);
+  box-shadow: 0 0 12px rgba(var(--gold-rgb), 0.7);
   animation: race-phase-strip-pulse 1.4s ease-in-out infinite;
 }
 .race-phase-strip__rail {
@@ -1632,7 +1693,7 @@ body.cinematic-experience-running .cinematic-archive-picker {
   display: inline-block;
   width: 32px;
   height: 2px;
-  background: rgba(245, 239, 222, 0.12);
+  background: rgba(var(--paper-rgb), 0.12);
   border-radius: 1px;
   overflow: hidden;
 }
@@ -1642,14 +1703,14 @@ body.cinematic-experience-running .cinematic-archive-picker {
   top: 0; bottom: 0; left: 0;
   width: var(--fill, 0%);
   background: linear-gradient(90deg,
-    rgba(212, 175, 55, 0.85),
+    rgba(var(--gold-rgb), 0.85),
     rgba(232, 197, 88, 1));
   border-radius: 1px;
   transition: width 0.15s linear;
 }
 @keyframes race-phase-strip-pulse {
-  0%, 100% { box-shadow: 0 0 12px rgba(212, 175, 55, 0.55); }
-  50%      { box-shadow: 0 0 18px rgba(212, 175, 55, 0.95); }
+  0%, 100% { box-shadow: 0 0 12px rgba(var(--gold-rgb), 0.55); }
+  50%      { box-shadow: 0 0 18px rgba(var(--gold-rgb), 0.95); }
 }
 @media (prefers-reduced-motion: reduce) {
   .race-phase-strip__dot.is-current { animation: none; }
@@ -1672,10 +1733,10 @@ body.cinematic-experience-running .cinematic-archive-picker {
   gap: 10px;
   max-width: 580px;
   padding: 10px 16px 10px 14px;
-  background: linear-gradient(180deg, rgba(14, 19, 32, 0.92), rgba(11, 14, 21, 0.92));
-  border: 1px solid rgba(212, 175, 55, 0.28);
+  background: linear-gradient(180deg, rgba(14, 19, 32, 0.92), rgba(var(--ink-rgb), 0.92));
+  border: 1px solid rgba(var(--gold-rgb), 0.28);
   border-radius: 12px;
-  box-shadow: 0 8px 22px rgba(11, 14, 21, 0.32);
+  box-shadow: 0 8px 22px rgba(var(--ink-rgb), 0.32);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
@@ -1684,7 +1745,7 @@ body.cinematic-experience-running .cinematic-archive-picker {
   flex: 0 0 auto;
   font-size: 22px;
   line-height: 1.1;
-  filter: drop-shadow(0 1px 0 rgba(212, 175, 55, 0.4));
+  filter: drop-shadow(0 1px 0 rgba(var(--gold-rgb), 0.4));
 }
 .race-commentary__text {
   flex: 1 1 auto;
@@ -1693,7 +1754,7 @@ body.cinematic-experience-running .cinematic-archive-picker {
   font-style: italic;
   font-weight: 500;
   line-height: 1.4;
-  color: #f5efde;
+  color: var(--paper);
   position: relative;
   padding-top: 14px;
 }
@@ -1708,7 +1769,7 @@ body.cinematic-experience-running .cinematic-archive-picker {
   font-style: normal;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: #d4af37;
+  color: var(--gold);
 }
 @media (max-width: 640px) {
   .race-commentary { max-width: 88vw; padding: 8px 12px 8px 10px; }
@@ -1725,28 +1786,28 @@ body.cinematic-experience-running .cinematic-archive-picker {
   gap: 10px;
   margin-top: 18px;
   padding: 11px 18px;
-  background: linear-gradient(180deg, rgba(212, 175, 55, 0.18), rgba(212, 175, 55, 0.04));
-  border: 1px solid rgba(212, 175, 55, 0.5);
+  background: linear-gradient(180deg, rgba(var(--gold-rgb), 0.18), rgba(var(--gold-rgb), 0.04));
+  border: 1px solid rgba(var(--gold-rgb), 0.5);
   border-radius: 999px;
-  color: #f5efde;
+  color: var(--paper);
   font-family: "DM Sans", "Inter", sans-serif;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-decoration: none;
-  box-shadow: 0 6px 18px rgba(11, 14, 21, 0.28);
+  box-shadow: 0 6px 18px rgba(var(--ink-rgb), 0.28);
   transition: transform 0.18s, box-shadow 0.18s, background 0.15s;
 }
 .reveal-deep-dive:hover {
-  background: linear-gradient(180deg, rgba(212, 175, 55, 0.26), rgba(212, 175, 55, 0.08));
+  background: linear-gradient(180deg, rgba(var(--gold-rgb), 0.26), rgba(var(--gold-rgb), 0.08));
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(212, 175, 55, 0.28);
+  box-shadow: 0 10px 24px rgba(var(--gold-rgb), 0.28);
 }
 .reveal-deep-dive__fox {
   font-size: 16px;
   line-height: 1;
 }
 .reveal-deep-dive__arrow {
-  color: #d4af37;
+  color: var(--gold);
   font-weight: 900;
 }

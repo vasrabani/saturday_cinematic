@@ -80,9 +80,14 @@
 </head>
 <body class="page-experience page-experience--flat">
 
-<canvas id="particleCanvas" width="0" height="150"></canvas>
+<canvas id="particleCanvas" width="0" height="150" aria-hidden="true"></canvas>
 <div id="subtitle"><span class="subtitle__text"></span></div>
 <div id="loadingBar"></div>
+
+<!-- Screen-reader narration. The race is a canvas, so the commentary,
+     phase calls and result are announced here instead. Body level, not
+     inside a .screen: inert screens do not announce. -->
+<div id="raceNarration" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 <div id="dataError">Data load failed. This sandbox must be served over http:// — run <code>python serve.py</code> from this folder and open http://localhost:8080/, not the file directly.</div>
 
 <div class="sandbox-picker">
@@ -95,7 +100,7 @@
   <div class="sandbox-build" id="sandboxBuild">engine: loading…</div>
 </div>
 
-<div class="screen flat-screen" id="screen-intro">
+<div class="screen flat-screen" id="screen-intro" tabindex="-1">
   <div class="intro-kicker flat-intro-kicker">
     Saturday Racing · The Experience
     <span class="flat-band-pill flat-band-pill--stayer">Stayer</span>
@@ -123,7 +128,7 @@
   </p>
 </div>
 
-<div class="screen flat-screen" id="screen-parade">
+<div class="screen flat-screen" id="screen-parade" tabindex="-1">
   <div class="parade-header">
     <div>
       <div class="parade-header__title"></div>
@@ -145,14 +150,14 @@
   </div>
 </div>
 
-<div class="screen flat-screen" id="screen-race">
+<div class="screen flat-screen" id="screen-race" tabindex="-1">
   <div class="flat-stalls" id="flatStalls" aria-hidden="true">
     <div class="flat-stalls__top"></div>
     <div class="flat-stalls__bottom"></div>
     <div class="flat-stalls__bang">BANG</div>
   </div>
 
-  <canvas id="raceCanvas" width="0" height="150"></canvas>
+  <canvas id="raceCanvas" width="0" height="150" aria-hidden="true"></canvas>
 
   <div class="race-phase-title">
     <span class="race-phase-title__text" id="phaseTitle">PATIENT EARLY GALLOP</span>
@@ -178,7 +183,7 @@
   </div>
 </div>
 
-<div class="screen flat-screen" id="screen-rollcall">
+<div class="screen flat-screen" id="screen-rollcall" tabindex="-1">
   <div class="rollcall-eyebrow">The Roll Call · Last to First</div>
   <div class="rollcall-stage" id="rollcallStage"></div>
   <div class="rollcall-progress" id="rollcallProgress"></div>
@@ -190,7 +195,7 @@
   </div>
 </div>
 
-<div class="screen flat-screen" id="screen-reveal">
+<div class="screen flat-screen" id="screen-reveal" tabindex="-1">
   <div class="reveal-bg" id="revealBg"></div>
   <div class="reveal-content">
     <div class="reveal-kicker" style="opacity:0">The Race is Over</div>

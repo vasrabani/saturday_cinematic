@@ -508,6 +508,35 @@ function cancelFlowTimers() {
 }
 
 // ─── Screen management ──────────────────────────────────────────
+// ─── Screen-reader narration ────────────────────────────────────
+// The race is a canvas: to a screen reader it is a blank box. Everything
+// the picture says — which screen we are on, the phase calls, Mr Fox's
+// commentary and the result — is mirrored into #raceNarration, a polite
+// live region that lives at body level because a region inside an inert
+// screen is not announced.
+//
+// One region, replaced rather than appended: a race is a running
+// narration, and a reader that has fallen behind should hear where the
+// race is NOW, not work through a backlog.
+let lastAnnounced = '';
+function announce(text) {
+  const message = String(text || '').trim();
+  if (!message || message === lastAnnounced) return;
+  lastAnnounced = message;
+  const el = document.getElementById('raceNarration');
+  if (el) el.textContent = message;
+}
+
+// Screens that speak for themselves are not announced generically: the
+// reveal announces the actual result instead (buildRevealHeader).
+const SCREEN_LABELS = {
+  intro:    'Race preview. Choose Run the Race to begin.',
+  parade:   'The parade ring.',
+  race:     'The race is under way.',
+  rollcall: 'The roll call, last to first.',
+};
+
+let screenShown = false;
 function showScreen(name) {
   STATE.phase = name;
   document.querySelectorAll('.screen').forEach((el) => {
@@ -518,6 +547,20 @@ function showScreen(name) {
     // or a Tab onto an invisible Run Again, would restart the flow.
     el.inert = !active;
   });
+
+  // Move the caret into the screen that just appeared. Without this, focus
+  // is left on a control that has just been made inert, the browser drops
+  // it to <body>, and a keyboard or screen-reader user is silently sent
+  // back to the top of the document at every transition. Not on the first
+  // call: that one is the page arriving, and stealing focus on load is its
+  // own bug.
+  const shown = document.getElementById('screen-' + name);
+  if (shown && screenShown) {
+    try { shown.focus({ preventScroll: true }); } catch { /* jsdom, older browsers */ }
+  }
+  screenShown = true;
+
+  announce(SCREEN_LABELS[name]);
 }
 
 // The viewer's own pick is identified by id; the Fox pick by name — it
@@ -4602,6 +4645,7 @@ function buildPhaseStrip(phaseTable) {
 
 function setCommentaryText(text) {
   commentaryTimer = BAND.timings.commentaryHoldMs;
+  announce(text);
   const el = document.getElementById('racingCommentary');
   if (!el) return;
   gsap.fromTo(el, { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out' });
@@ -4811,6 +4855,7 @@ let lastPhaseTitle = '';
 function setPhaseTitle(text) {
   if (text === lastPhaseTitle) return;
   lastPhaseTitle = text;
+  announce(text);
   const el = document.getElementById('phaseTitle');
   if (!el) return;
   gsap.fromTo(el, { opacity: 0, y: -10 }, { opacity: 1, y: 0, duration: 0.4 });
@@ -5457,9 +5502,10 @@ function buildRevealScreen(winner, positions) {
 function buildRevealHeader(winner, isUserWin) {
   const revBg = document.getElementById('revealBg');
   if (revBg) {
-    revBg.style.background = isUserWin
-      ? 'radial-gradient(ellipse 100% 100% at 50% 50%, rgba(212,175,55,0.12), transparent 65%)'
-      : 'radial-gradient(ellipse 100% 100% at 50% 50%, rgba(45,94,58,0.10), transparent 65%)';
+    // Tint comes from .reveal-bg--win / --turf in experience.css, so brand
+    // gold stays in the palette rather than in a gradient string here.
+    revBg.classList.toggle('reveal-bg--win', !!isUserWin);
+    revBg.classList.toggle('reveal-bg--turf', !isUserWin);
   }
 
   const horseEl = document.getElementById('revealHorseName');
@@ -5474,6 +5520,16 @@ function buildRevealHeader(winner, isUserWin) {
     silkEl.classList.add('reveal-silk--jersey');
     silkEl.innerHTML = renderSilkSvg(winner);
   }
+
+  // The result, spoken. This replaces the generic screen announcement for
+  // the reveal — "the Winner's Circle" tells a screen-reader user nothing;
+  // who won, at what price, and whether their pick came in tells them
+  // everything. It is the one announcement that must land, so it is made
+  // here rather than left to the reveal's GSAP timeline, which a
+  // reduced-motion run skips.
+  const price = winner.odds ? ' at ' + winner.odds : '';
+  announce('Result: ' + winner.name + ' wins' + price + '. ' +
+           (isUserWin ? 'Your pick won.' : 'Your pick did not win.'));
 }
 
 // The first three, with their silks, margins and prices.

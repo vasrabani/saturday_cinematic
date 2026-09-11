@@ -196,3 +196,42 @@ test('with reduced motion the result is shown straight away, and shown', () => {
   }
   assert.equal(page.document.getElementById('revealHorseName').textContent, 'Daiquiri Bay');
 });
+
+test('the canvas race is narrated, and a transition moves the caret', () => {
+  const page = boot();
+  const { document, click } = page;
+  const narration = document.getElementById('raceNarration');
+
+  // The region has to sit outside every .screen: showScreen() marks the
+  // screens it is not showing inert, and an inert subtree is not announced.
+  assert.ok(narration, 'no #raceNarration region');
+  assert.equal(narration.getAttribute('role'), 'status');
+  assert.equal(narration.getAttribute('aria-live'), 'polite');
+  assert.equal(narration.closest('.screen'), null, 'narration must not live inside a screen');
+
+  // The canvases carry no accessible content; the narration speaks for them.
+  for (const canvas of document.querySelectorAll('canvas')) {
+    assert.equal(canvas.getAttribute('aria-hidden'), 'true', canvas.id + ' is not hidden');
+  }
+
+  assert.match(narration.textContent, /Run the Race/i);
+
+  click('flatStartBtn');
+  assert.equal(page.until('parade', 120), 'parade');
+  assert.match(narration.textContent, /parade/i);
+  // Focus follows the screen, rather than being dropped on the floor when
+  // the control the user just pressed is made inert.
+  assert.equal(document.activeElement.id, 'screen-parade');
+});
+
+test('the result is spoken, even on the reduced-motion path', () => {
+  const page = boot({ reducedMotion: true });
+  const winner = page.payload.runners.find((r) => r.id === page.payload.replay_data.result_order[0]);
+
+  page.click('flatStartBtn');
+  page.step(60);
+
+  const said = page.document.getElementById('raceNarration').textContent;
+  assert.match(said, /^Result:/);
+  assert.ok(said.includes(winner.name), 'the winner is not named in: ' + said);
+});

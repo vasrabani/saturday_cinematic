@@ -7,6 +7,24 @@
  *
  * Two families, self-hosted. Paths are relative to the sandbox
  * root (index.html) — production uses /static/fonts/ Django URLs.
+ *
+ * BOTH FAMILIES ARE VARIABLE FONTS. Every file carries fvar/gvar, so one
+ * file covers a whole weight axis and the browser interpolates across it.
+ * This was previously declared as nine faces pointing at nine files — but
+ * the five DM Sans files were byte-identical to each other, as were
+ * Playfair 700 and 900. It was one variable font downloaded five times and
+ * pinned to a different single weight each time. Three files, declared
+ * with a weight RANGE, render identically and cost 120KB instead of 360KB.
+ *
+ * Measured axis ranges (glyph advance stops changing outside these):
+ *   DM Sans           100–1000
+ *   Playfair Display  400–900, upright and italic
+ *
+ * Declaring the true range also fixes something that was quietly broken:
+ * with 700 as the heaviest declared face, every `font-weight: 800` and
+ * `900` in the stylesheets clamped back to 700. Those now render as
+ * themselves. Keep the range honest — a face claiming weights the axis
+ * does not have will clamp silently rather than fail.
  * ──────────────────────────────────────────────────────────────
  */
 
@@ -15,21 +33,9 @@
 @font-face {
   font-family: 'Playfair Display';
   font-style: normal;
-  font-weight: 700;
+  font-weight: 400 900;
   font-display: swap;
-  src: url('playfair-display-700.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
-                 U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
-                 U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-                 U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'Playfair Display';
-  font-style: normal;
-  font-weight: 900;
-  font-display: swap;
-  src: url('playfair-display-900.woff2') format('woff2');
+  src: url('playfair-display.woff2') format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
                  U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
                  U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
@@ -39,21 +45,9 @@
 @font-face {
   font-family: 'Playfair Display';
   font-style: italic;
-  font-weight: 700;
+  font-weight: 400 900;
   font-display: swap;
-  src: url('playfair-display-700italic.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
-                 U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
-                 U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-                 U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'Playfair Display';
-  font-style: italic;
-  font-weight: 900;
-  font-display: swap;
-  src: url('playfair-display-900italic.woff2') format('woff2');
+  src: url('playfair-display-italic.woff2') format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
                  U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
                  U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
@@ -65,57 +59,9 @@
 @font-face {
   font-family: 'DM Sans';
   font-style: normal;
-  font-weight: 300;
+  font-weight: 100 1000;
   font-display: swap;
-  src: url('dm-sans-300.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
-                 U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
-                 U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-                 U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'DM Sans';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('dm-sans-400.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
-                 U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
-                 U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-                 U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'DM Sans';
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url('dm-sans-500.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
-                 U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
-                 U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-                 U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'DM Sans';
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url('dm-sans-600.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
-                 U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
-                 U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-                 U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'DM Sans';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url('dm-sans-700.woff2') format('woff2');
+  src: url('dm-sans.woff2') format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
                  U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
                  U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
