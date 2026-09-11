@@ -32,8 +32,9 @@ module.exports = [
     },
   },
   {
-    // The build is a Node script, unlike the rest of tools/.
-    files: ['tools/build.js'],
+    // Node scripts, unlike the rest of tools/ (which is browser-console
+    // tooling pasted into the sandbox page).
+    files: ['tools/build.js', 'tools/check-integration.js'],
     languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs', globals: { ...globals.node } },
   },
   {
