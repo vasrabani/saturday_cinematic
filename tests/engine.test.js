@@ -245,6 +245,59 @@ test('a replay runs in the real finishing order, non-finishers appended', () => 
   assert.deepEqual(order, [3, 1, 4, 2]);
 });
 
+// The placings behind the winner are a repeated weighted draw without
+// replacement, not a sort. A sort on weight + jitter made the field line
+// up in ability order nearly every time, so the race had a near-random
+// winner and near-deterministic placings — the wrong way round twice.
+// What a draw has to give is a strong horse that usually finishes near
+// the front and occasionally does not.
+test('the field is drawn, so strength shapes the placings without fixing them', () => {
+  const api = loadEngine({ random: seeded(11) });
+  const heavy = [
+    { id: 1, name: 'Short Price', weight: 400 },
+    { id: 2, name: 'Mid Price', weight: 100 },
+    { id: 3, name: 'Long Shot', weight: 25 },
+  ];
+  api.init({ runners: heavy, userPick: null, foxPick: null,
+             raceName: 'T', raceDistance: '1m', raceBand: 'mile' });
+
+  const RUNS = 4000;
+  const sum = new Map(), best = new Map(), worst = new Map();
+  for (let i = 0; i < RUNS; i++) {
+    // Winner held fixed so this measures the ORDERING of the rest.
+    const order = api.internals.buildRacePositions(heavy[1]);
+    order.forEach((r, k) => {
+      sum.set(r.id, (sum.get(r.id) || 0) + k);
+      if (r.id !== 2) {
+        if (k === 1) best.set(r.id, (best.get(r.id) || 0) + 1);
+        if (k === 2) worst.set(r.id, (worst.get(r.id) || 0) + 1);
+      }
+    });
+  }
+  assert.ok(sum.get(1) / RUNS < sum.get(3) / RUNS,
+            'the heavier runner must average a better finish than the long shot');
+  // ...but neither outcome is fixed. Both finish second sometimes and
+  // last sometimes, which is the whole point of drawing rather than
+  // sorting.
+  for (const id of [1, 3]) {
+    assert.ok(best.get(id) > 0 && worst.get(id) > 0,
+              'runner ' + id + ' never varied its placing — that is a sort, not a draw');
+  }
+});
+
+// Weights arrive from the server as forecast win probabilities, so a
+// zero-weight runner is a data fault, not a horse with no chance. It has
+// to come out of the draw rather than fall out of the race.
+test('a field with no weights at all still returns every runner once', () => {
+  const api = loadEngine({ random: seeded(5) });
+  const flat = [{ id: 1, name: 'A' }, { id: 2, name: 'B' }, { id: 3, name: 'C' }];
+  api.init({ runners: flat, userPick: null, foxPick: null,
+             raceName: 'T', raceDistance: '1m', raceBand: 'mile' });
+  const order = plain(api.internals.buildRacePositions(flat[0]).map((r) => r.id));
+  assert.equal(order[0], 1);
+  assert.deepEqual(order.slice().sort(), [1, 2, 3]);
+});
+
 test('a forecast puts the drawn winner first and every runner in once', () => {
   const api = loadEngine({ random: seeded(7) });
   api.init(raceData());

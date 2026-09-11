@@ -24,13 +24,19 @@ function buildLeaderboard() {
   c.innerHTML = '';
   lbRows = new Map();
 
-  // Win-probability bars — derived from the same runner weights the
-  // forecast draws its winner from (weightedRandom). Normalised across the
-  // field so they sum to 100%. Honest pre-race signal: these are what
-  // the model thinks NOW, not animated "fake convergence" during the
-  // race. The position number flips live during play; the bar stays
-  // fixed — that's the contract with the viewer.
+  // Win-probability bars — the same weights the forecast draws its winner
+  // from, normalised across the field so they sum to 100%. Honest pre-race
+  // signal: these are what the model thinks NOW, not animated "fake
+  // convergence" during the race. The position number flips live during
+  // play; the bar stays fixed — that's the contract with the viewer.
   //
+  // Which is why an unpriced race shows no bars at all. The weights are
+  // led by the market, so with no market every runner weighs the same and
+  // the panel would print an identical percentage against all of them —
+  // a number derived from nothing, under a label reading "win
+  // probability". On an ante-post or pre-declaration card the honest
+  // answer is to say nothing, so the name simply takes the whole row.
+  const priced = horses.some((h) => h.runner.priced);
   const horseWeight = (h) => h.runner.weight;
   const totalWeight = horses.reduce((s, h) => s + horseWeight(h), 0) || 1;
   // Find the field maximum so the bar fill is normalised to the front
@@ -58,12 +64,14 @@ function buildLeaderboard() {
       '<span class="race-lb-silk">' + renderCapSvg(r) + '</span>' +
       '<span class="race-lb-name-prob">' +
         '<span class="race-lb-name' + (isUser ? ' user-horse' : isFox ? ' fox-horse' : '') + '">' + esc(r.name) + '</span>' +
-        '<span class="race-lb-prob" title="AI win probability">' +
-          '<span class="race-lb-prob__bar">' +
-            '<span class="race-lb-prob__fill" style="width:' + barWidth + '%"></span>' +
-          '</span>' +
-          '<span class="race-lb-prob__pct">' + probPct + '%</span>' +
-        '</span>' +
+        (priced
+          ? '<span class="race-lb-prob" title="Forecast win chance">' +
+              '<span class="race-lb-prob__bar">' +
+                '<span class="race-lb-prob__fill" style="width:' + barWidth + '%"></span>' +
+              '</span>' +
+              '<span class="race-lb-prob__pct">' + probPct + '%</span>' +
+            '</span>'
+          : '') +
       '</span>';
     c.appendChild(row);
     lbRows.set(r.id, row);

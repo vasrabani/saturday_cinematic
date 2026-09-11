@@ -88,14 +88,41 @@ function buildRacePositions(winner) {
     // map to any known runner — defensive.
   }
 
-  // The rest in order of strength, with some luck in it: each runner's
-  // weight plus a random draw, drawn once per runner and then sorted.
-  const rest = STATE.runners
-    .filter((r) => r.id !== winner.id)
-    .map((r) => ({ r, key: r.weight + Math.random() * 20 }))
-    .sort((a, b) => b.key - a.key)
-    .map((x) => x.r);
-  return [winner, ...rest];
+  // The rest of the field, drawn the way the winner was: take a runner
+  // at random with probability proportional to its weight, remove it,
+  // draw again. Repeated weighted sampling without replacement, which is
+  // what "the order they finished in" means when the weights are win
+  // probabilities.
+  //
+  // It used to sort on weight + Math.random() * 20. With the old additive
+  // model that jitter was small against the spread, so the field lined up
+  // in ability order almost every time — the race had a near-random
+  // winner and near-deterministic placings behind it, which is the wrong
+  // way round on both counts. A draw gives an outsider a real chance of
+  // running second without ever making the favourite likely to finish
+  // last.
+  return [winner, ...weightedOrder(STATE.runners.filter((r) => r.id !== winner.id))];
+}
+
+// Repeated weighted draw without replacement. Runners with no weight at
+// all still come out, in input order, once everything weighted has gone.
+function weightedOrder(runners) {
+  const pool = runners.slice();
+  const out = [];
+  while (pool.length) {
+    let total = 0;
+    for (const r of pool) total += Math.max(0, r.weight) || 0;
+    let i = 0;
+    if (total > 0) {
+      let roll = Math.random() * total;
+      for (; i < pool.length - 1; i++) {
+        roll -= Math.max(0, pool[i].weight) || 0;
+        if (roll <= 0) break;
+      }
+    }
+    out.push(pool.splice(i, 1)[0]);
+  }
+  return out;
 }
 
 // ════════════════════════════════════════════════════════════════
