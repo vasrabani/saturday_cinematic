@@ -28,6 +28,14 @@ window.FlatEngine = Object.freeze(Object.assign({
     hoofPath, solveLeg, solveHorseLegs, limbShape, taperPath, dotPath, coatFor, markingsFor,
     LEG_RIG, STRIDE_SWEEP, STANCE, STRIDE_LOCAL, START_EASE, EASE_TO,
     STANCE_SPREAD, drawStance, strideLocalFor, suspensionFrom, stridePose,
+    // The shot table and the projection that frames it, so a test can
+    // check no shot crops the field. Tuning these is a visual judgement
+    // made by eye; whether the near horse still has feet is not.
+    SHOTS, DIRECTOR, CAM, worldToScreenY,
+    // A function, not the array: `horses` is a let that is REASSIGNED
+    // when the field is built, and this object is frozen at load, so
+    // exporting the binding would hand out the empty array it held then.
+    field: () => horses,
     FINISH_PAUSE_S, FINISH_PAUSE_MAX_S, MAX_VISIBLE_LENGTHS,
     esc, mergeConfig, buildRacePositions, renderCommentary, labelSlots,
     // The live layout object, so a test can resize the window and check

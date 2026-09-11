@@ -277,3 +277,95 @@ test('the field gallops at the same lengths per second on every screen', () => {
   window.dispatchEvent(new window.Event('resize'));
   assert.ok(WORLD.lengthPx > phone, 'a desktop horse should still be drawn bigger than a phone one');
 });
+
+// No shot in the table may cut the feet off the nearest horse.
+//
+// This is not obvious from the numbers, which is why it is a test. Zoom
+// scales the lane band about its middle and camY shifts it down, so
+// tightening the shot walks the near lane towards the bottom letterbox
+// bar — and the letterbox is painted over the horses, not behind them.
+// The three move together, so raising any one of them alone eats the
+// margin the other two left.
+//
+// Only the near rail is checked. The far rail is the same geometry in
+// reverse, but the frame holds sky and grandstand above the track and
+// that margin never drops below about 120px, where the near side gets
+// down to 21. It is the one that binds.
+//
+// The projection comes from the engine rather than being re-derived
+// here: a copy of worldToScreenY in a test would stop being a test of
+// worldToScreenY the first time somebody changed it.
+test('no shot crops the nearest horse, on any viewport', () => {
+  const page = boot();
+  const { window } = page;
+  // The field only exists once the race is under way.
+  page.click('flatStartBtn');
+  page.until('parade', 240);
+  window.skipParade();
+  assert.equal(page.until('race', 600), 'race', 'never reached the race');
+  const E = window.FlatEngine.internals;
+  // The screen turns over a beat before buildHorseObjects runs.
+  for (let i = 0; i < 240 && E.field().length < 2; i++) page.step(1);
+  const { SHOTS, DIRECTOR, CAM, worldToScreenY, field } = E;
+
+  // Landscape phone and short laptop windows are the binding cases —
+  // a tall viewport has margin to spare at every shot.
+  const VIEWPORTS = [[1920, 1080], [1500, 900], [1280, 720], [1440, 620], [390, 780]];
+  const MIN_MARGIN = 12;
+
+  const saved = Object.assign({}, DIRECTOR);
+  const savedZoom = CAM.zoom;
+
+  for (const [w, h] of VIEWPORTS) {
+    Object.defineProperty(window, 'innerWidth', { value: w, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: h, configurable: true });
+    window.dispatchEvent(new window.Event('resize'));
+
+    const runners = field();
+    assert.ok(runners.length > 1, 'no field to frame');
+    // The nearest horse is the one furthest down the lane band.
+    const near = runners.reduce((a, b) => (a.laneT > b.laneT ? a : b));
+
+    for (const [name, shot] of Object.entries(SHOTS)) {
+      Object.assign(DIRECTOR, shot);
+      CAM.zoom = shot.zoom;
+      CAM.shakeY = shot.shake * 0.7;          // worst of the hoof rumble
+      const hoof = worldToScreenY(near.y);
+      const bottomBar = window.innerHeight * (1 - (shot.letterbox || 0));
+      const margin = bottomBar - hoof;
+      assert.ok(margin > MIN_MARGIN,
+                'shot "' + name + '" at ' + w + 'x' + h + ' leaves ' + margin.toFixed(0) +
+                'px under the near horse — raise the letterbox, the zoom or camY and ' +
+                'it loses its feet (need >' + MIN_MARGIN + ')');
+    }
+  }
+
+  Object.assign(DIRECTOR, saved);
+  CAM.zoom = savedZoom;
+  CAM.shakeY = 0;
+});
+
+// The closing sequence has to actually close. The camera used to finish
+// its work in the drive and add 1.5% of zoom across the final furlong,
+// which is why the finish felt flat however well the rest was directed.
+test('the camera keeps tightening into the line, then releases', () => {
+  const { window } = boot();
+  const { SHOTS } = window.FlatEngine.internals;
+  const order = ['cruise', 'build', 'drive', 'line', 'post'];
+
+  for (let i = 1; i < order.length; i++) {
+    assert.ok(SHOTS[order[i]].zoom > SHOTS[order[i - 1]].zoom,
+              order[i] + ' must be tighter than ' + order[i - 1]);
+  }
+  // The last two beats are where it was flat. Each has to be a move the
+  // eye can read, not a rounding difference.
+  for (const [from, to] of [['drive', 'line'], ['line', 'post']]) {
+    const step = SHOTS[to].zoom / SHOTS[from].zoom - 1;
+    assert.ok(step > 0.08, from + ' to ' + to + ' is only ' + (step * 100).toFixed(1) +
+                           '% of zoom — not a move, a rounding error');
+  }
+  // And the shake and vignette build with it, so the push is felt and
+  // not merely measured.
+  assert.ok(SHOTS.post.shake > SHOTS.line.shake);
+  assert.ok(SHOTS.post.vignette > SHOTS.line.vignette);
+});

@@ -555,8 +555,34 @@ const SHOTS = Object.freeze({
   cruise: Object.freeze({ zoom: 1.05, anchorX: 0.50, groupBias: 0.12, vignette: 0.12, letterbox: 0,     shake: 0.2, camY: 0,               fieldFade: 0 }),
   build:  Object.freeze({ zoom: 1.20, anchorX: 0.46, groupBias: 0.45, vignette: 0.18, letterbox: 0.03,  shake: 0.6, camY: 4,               fieldFade: 0.10 }),
   drive:  Object.freeze({ zoom: 1.34, anchorX: 0.50, groupBias: 0.62, vignette: 0.26, letterbox: 0.058, shake: 1.3, camY: 9,  tilt: 0.004, fieldFade: 0.34 }),
-  line:   Object.freeze({ zoom: 1.36, anchorX: 0.62, groupBias: 1,    vignette: 0.34, letterbox: 0.072, shake: 2.4, camY: 12, tilt: 0.009, fieldFade: 0.40 }),
+  line:   Object.freeze({ zoom: 1.50, anchorX: 0.62, groupBias: 1,    vignette: 0.40, letterbox: 0.070, shake: 2.6, camY: 12, tilt: 0.010, fieldFade: 0.46 }),
+  post:   Object.freeze({ zoom: 1.70, anchorX: 0.60, groupBias: 1,    vignette: 0.50, letterbox: 0.066, shake: 3.1, camY: 12, tilt: 0.013, fieldFade: 0.54 }),
 });
+
+// WHY THE LAST TWO ARE SEPARATE SHOTS. The camera used to finish its work
+// in the drive: cruise 1.05 → build 1.20 → drive 1.34 → line 1.36. The
+// closing sequence, the part the whole race is built towards, added one
+// and a half percent of zoom and then held. Everything else about the
+// finish was directed — slow motion, flashguns, the rail — while the
+// camera, which is the instrument that says "look at this", stopped
+// moving exactly when it should have been working hardest.
+//
+// So `line` is a real push now, and `post` is a second one on top of it
+// that arrives with the winner. 1.34 → 1.50 → 1.70, and then the finish
+// timeline releases to 1.08 to show the post and the rest of the field
+// coming through. That release already existed; it simply had almost
+// nothing to release FROM.
+//
+// The near rail is what limits this, and it is not obvious. Zoom scales
+// the lane band about its middle and camY shifts it down, so tightening
+// the shot walks the nearest horse's hooves towards the bottom letterbox
+// bar — which is drawn over the horses. A short viewport is the binding
+// case: at 1440x620 the post shot leaves 21px under the near horse's
+// feet, and lifting either the zoom or the letterbox much further starts
+// cutting them off. camY is a trap here, because it spends that scarce
+// margin to buy headroom at the far rail, where there is already more
+// than a hundred pixels of it. Hence the same camY in both, and a
+// letterbox that stops deepening. See the frame-safety test.
 
 // A tween's worth of DIRECTOR values for a shot.
 function shot(key, tween) {
@@ -652,7 +678,13 @@ function raceProgressEase(x) {
 function addFinalFurlongSequence(tl, durationS) {
   const seg = durationS * (1 - phaseFrom('line'));
 
-  tl.to(DIRECTOR, shot('line', { duration: seg * 0.75, ease: 'sine.inOut' }), 'line');
+  // The run to the post, then the post itself. sine.inOut eases into the
+  // first; power2.in gives the second no let-up, so it is still
+  // accelerating as the winner reaches the line rather than settling
+  // before it.
+  tl.to(DIRECTOR, shot('line', { duration: seg * 0.52, ease: 'sine.inOut' }), 'line');
+  tl.to(DIRECTOR, shot('post', { duration: seg * 0.46, ease: 'power2.in' }),
+        'line+=' + (seg * 0.52));
 
   tl.call(() => {
     setPhaseTitle('THE FINAL FURLONG');
