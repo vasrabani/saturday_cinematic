@@ -9,7 +9,10 @@ const FLAT_DEFAULTS = {
     subtitleDefaultMs: 2400,
     track: { furlongPoleEvery: 0.125 },
     horse: { minSurges: 2, maxExtraSurges: 2, surgeStartRange: [0.10, 0.75], surgeDurationRange: [0.14, 0.24], surgeBoostRange: [0.5, 1.5], winnerFinalSurge: { start: 0.78, duration: 0.18, boost: 2.4 } },
-    colours: { gold: '#D4AF37', userPick: 'rgba(212,175,55,0.28)', foxPick: 'rgba(200,120,20,0.22)', neutralGlow: 'rgba(120,150,200,0.10)', userLabel: '#D4AF37', foxLabel: '#E8A050', silkDefault: '#C8A951', silk2Default: '#1A2540', trackTurf: '#2d5e3a' },
+    // Nameplates naming the leading runners. maxVisible 0 turns them off
+    // entirely, which is the honest way to A/B whether they help.
+    labels: { maxVisible: 4, maxVisibleNarrow: 2, narrowWidth: 700, holdFrames: 12 },
+    colours: { gold: '#D4AF37', rankSilver: '#C0C0C0', rankBronze: '#CD7F32', userPick: 'rgba(212,175,55,0.28)', foxPick: 'rgba(200,120,20,0.22)', neutralGlow: 'rgba(120,150,200,0.10)', userLabel: '#D4AF37', foxLabel: '#E8A050', silkDefault: '#C8A951', silk2Default: '#1A2540', trackTurf: '#2d5e3a' },
   },
   band: {
     timings: { raceDurationMs: 46000, paradeDelayMsFast: 900, paradeDelayMsSlow: 1300, paradeLargeFieldThreshold: 16, commentaryHoldMs: 3000, slowMoFactor: 0.55 },

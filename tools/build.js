@@ -49,6 +49,7 @@ const MANIFEST = [
   'js/src/60-scenery.js',
   'js/src/65-world-paint.js',
   'js/src/70-horse.js',
+  'js/src/75-labels.js',
   'js/src/80-commentary.js',
   'js/src/85-leaderboard.js',
   'js/src/86-leaderboard-rows.js',

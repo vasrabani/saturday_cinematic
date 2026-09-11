@@ -175,6 +175,7 @@ const DIRECTOR_START = Object.freeze({
   postFrame: 0.40,   // where across the frame the post is held
   pressFlash: 0,     // press flashguns firing at the post, 0 → 1
   letterbox: 0,      // cinema bars, as a fraction of viewport height each
+  nameplates: 0,     // runner nameplates, 0 → 1
   phase:     'cruise',
 });
 const DIRECTOR = Object.assign({}, DIRECTOR_START);

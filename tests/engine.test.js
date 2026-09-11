@@ -293,3 +293,57 @@ test('payload text is escaped on its way into markup, and ordinary names are not
   assert.equal(E.esc('Daiquiri Bay (GB)'), 'Daiquiri Bay (GB)');
   assert.equal(E.esc(8), '8');
 });
+
+// ── Nameplates ──────────────────────────────────────────────────
+// The plates name the leading runners. What makes them read as a race
+// rather than as a fault is that they do not follow every swap.
+
+const OPTS = { maxVisible: 4, holdFrames: 3 };
+const order = (...ids) => ids;
+
+test('a plate waits for a runner to hold the place', () => {
+  const streaks = new Map();
+  // Two frames in the top four is not yet enough.
+  assert.deepEqual(plain(E.labelSlots(order(1, 2, 3, 4, 5), [], streaks, OPTS)), []);
+  assert.deepEqual(plain(E.labelSlots(order(1, 2, 3, 4, 5), [], streaks, OPTS)), []);
+  assert.deepEqual(plain(E.labelSlots(order(1, 2, 3, 4, 5), [], streaks, OPTS)), [1, 2, 3, 4]);
+});
+
+test('a plate does not follow a momentary swap', () => {
+  const streaks = new Map();
+  for (let i = 0; i < 3; i++) E.labelSlots(order(1, 2, 3, 4, 5), [], streaks, OPTS);
+
+  // 4 and 5 trade places for a single frame. 4 keeps its plate — losing
+  // one the instant a horse is headed is the flicker this exists to stop.
+  const swapped = plain(E.labelSlots(order(1, 2, 3, 5, 4), [], streaks, OPTS));
+  assert.ok(swapped.includes(4), 'a plate was dropped on one frame out of the four');
+  assert.ok(!swapped.includes(5), '5 took a plate the moment it came up');
+
+  // Held for long enough, the change does carry.
+  for (let i = 0; i < 3; i++) E.labelSlots(order(1, 2, 3, 5, 4), [], streaks, OPTS);
+  const settled = plain(E.labelSlots(order(1, 2, 3, 5, 4), [], streaks, OPTS));
+  assert.ok(settled.includes(5) && !settled.includes(4), 'the swap never carried');
+});
+
+test('the picks keep a plate from anywhere in the field', () => {
+  const streaks = new Map();
+  for (let i = 0; i < 4; i++) E.labelSlots(order(1, 2, 3, 4, 5, 6, 7), [7], streaks, OPTS);
+  const slots = plain(E.labelSlots(order(1, 2, 3, 4, 5, 6, 7), [7], streaks, OPTS));
+  assert.equal(slots[0], 7, 'a pinned runner is named first');
+  assert.ok(slots.includes(1), 'pinning cost the leader its plate');
+});
+
+test('a runner who leaves the race stops being tracked', () => {
+  const streaks = new Map();
+  for (let i = 0; i < 4; i++) E.labelSlots(order(1, 2, 3, 4), [], streaks, OPTS);
+  assert.ok(streaks.has(4));
+  E.labelSlots(order(1, 2, 3), [], streaks, OPTS);
+  assert.ok(!streaks.has(4), 'a departed runner was left in the tracking map');
+});
+
+test('maxVisible 0 turns the plates off', () => {
+  const streaks = new Map();
+  for (let i = 0; i < 5; i++) {
+    assert.deepEqual(plain(E.labelSlots(order(1, 2, 3), [1], streaks, { maxVisible: 0, holdFrames: 3 })), []);
+  }
+});

@@ -965,6 +965,7 @@ function drawRaceScene(dt) {
   ctx.restore();
 
   drawForegroundPlane();
+  drawRunnerLabels();
   drawAtmosphere(flashEnergy);
 }
 
