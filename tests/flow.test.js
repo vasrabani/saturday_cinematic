@@ -368,4 +368,35 @@ test('the camera keeps tightening into the line, then releases', () => {
   // not merely measured.
   assert.ok(SHOTS.post.shake > SHOTS.line.shake);
   assert.ok(SHOTS.post.vignette > SHOTS.line.vignette);
+
+  // The speed cue rides the same curve. It cannot fall back at any point:
+  // the final furlong plays at 0.55 of real time, so the frame is the
+  // only thing left saying the horses are flat out, and a cue that
+  // eased off there would take the last of it away.
+  for (let i = 1; i < order.length; i++) {
+    assert.ok(SHOTS[order[i]].speedCue >= SHOTS[order[i - 1]].speedCue,
+              order[i] + ' feels slower than ' + order[i - 1]);
+  }
+  assert.equal(SHOTS.cruise.speedCue, 0, 'the opening shot is unhurried');
+  assert.equal(SHOTS.post.speedCue, 1, 'the line is as fast as it gets');
+});
+
+// The ground streaks are placed off a hash of their world tile, not off
+// Math.random, because they are redrawn every frame: a streak that moved
+// between frames would strobe rather than scroll.
+test('ground streaks sit still between frames', () => {
+  const { streakHash } = boot().window.FlatEngine.internals;
+
+  for (const i of [-4000, -7, 0, 1, 2, 993, 250000]) {
+    const a = streakHash(i);
+    assert.equal(streakHash(i), a, 'streak ' + i + ' moved between calls');
+    assert.ok(a >= 0 && a < 1, 'streak ' + i + ' out of range: ' + a);
+  }
+  // Neighbours must not clump, or the turf grows stripes instead of grain.
+  const runs = [];
+  for (let i = 0; i < 400; i++) runs.push(streakHash(i));
+  const buckets = [0, 0, 0, 0];
+  runs.forEach((v) => buckets[Math.min(3, Math.floor(v * 4))]++);
+  buckets.forEach((n, k) => assert.ok(n > 400 / 4 * 0.5,
+    'quarter ' + k + ' holds only ' + n + ' of 400 streaks — the hash clumps'));
 });

@@ -552,11 +552,11 @@ function rankedHorses() {
 // the master timeline tweens DIRECTOR to. `shake` is a multiple of SHAKE,
 // which is zero under prefers-reduced-motion.
 const SHOTS = Object.freeze({
-  cruise: Object.freeze({ zoom: 1.05, anchorX: 0.50, groupBias: 0.12, vignette: 0.12, letterbox: 0,     shake: 0.2, camY: 0,               fieldFade: 0 }),
-  build:  Object.freeze({ zoom: 1.20, anchorX: 0.46, groupBias: 0.45, vignette: 0.18, letterbox: 0.03,  shake: 0.6, camY: 4,               fieldFade: 0.10 }),
-  drive:  Object.freeze({ zoom: 1.34, anchorX: 0.50, groupBias: 0.62, vignette: 0.26, letterbox: 0.058, shake: 1.3, camY: 9,  tilt: 0.004, fieldFade: 0.34 }),
-  line:   Object.freeze({ zoom: 1.50, anchorX: 0.62, groupBias: 1,    vignette: 0.40, letterbox: 0.070, shake: 2.6, camY: 12, tilt: 0.010, fieldFade: 0.46 }),
-  post:   Object.freeze({ zoom: 1.70, anchorX: 0.60, groupBias: 1,    vignette: 0.50, letterbox: 0.066, shake: 3.1, camY: 12, tilt: 0.013, fieldFade: 0.54 }),
+  cruise: Object.freeze({ zoom: 1.05, anchorX: 0.50, groupBias: 0.12, vignette: 0.12, letterbox: 0,     shake: 0.2, camY: 0,               fieldFade: 0,    speedCue: 0 }),
+  build:  Object.freeze({ zoom: 1.20, anchorX: 0.46, groupBias: 0.45, vignette: 0.18, letterbox: 0.03,  shake: 0.6, camY: 4,               fieldFade: 0.10, speedCue: 0.10 }),
+  drive:  Object.freeze({ zoom: 1.34, anchorX: 0.50, groupBias: 0.62, vignette: 0.26, letterbox: 0.058, shake: 1.3, camY: 9,  tilt: 0.004, fieldFade: 0.34, speedCue: 0.42 }),
+  line:   Object.freeze({ zoom: 1.50, anchorX: 0.62, groupBias: 1,    vignette: 0.40, letterbox: 0.070, shake: 2.6, camY: 12, tilt: 0.010, fieldFade: 0.46, speedCue: 0.78 }),
+  post:   Object.freeze({ zoom: 1.70, anchorX: 0.60, groupBias: 1,    vignette: 0.50, letterbox: 0.066, shake: 3.1, camY: 12, tilt: 0.013, fieldFade: 0.54, speedCue: 1 }),
 });
 
 // WHY THE LAST TWO ARE SEPARATE SHOTS. The camera used to finish its work

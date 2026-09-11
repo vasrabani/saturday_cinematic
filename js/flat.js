@@ -494,6 +494,7 @@ const DIRECTOR_START = Object.freeze({
   letterbox: 0,      // cinema bars, as a fraction of viewport height each
   nameplates: 0,     // runner nameplates, 0 → 1
   plateFocus: 0,     // 0 = plate the leading group, 1 = the leaders only
+  speedCue: 0,       // ground streaking and grass lying over, 0 → 1
   phase:     'cruise',
 });
 const DIRECTOR = Object.assign({}, DIRECTOR_START);
@@ -1418,11 +1419,11 @@ function rankedHorses() {
 // the master timeline tweens DIRECTOR to. `shake` is a multiple of SHAKE,
 // which is zero under prefers-reduced-motion.
 const SHOTS = Object.freeze({
-  cruise: Object.freeze({ zoom: 1.05, anchorX: 0.50, groupBias: 0.12, vignette: 0.12, letterbox: 0,     shake: 0.2, camY: 0,               fieldFade: 0 }),
-  build:  Object.freeze({ zoom: 1.20, anchorX: 0.46, groupBias: 0.45, vignette: 0.18, letterbox: 0.03,  shake: 0.6, camY: 4,               fieldFade: 0.10 }),
-  drive:  Object.freeze({ zoom: 1.34, anchorX: 0.50, groupBias: 0.62, vignette: 0.26, letterbox: 0.058, shake: 1.3, camY: 9,  tilt: 0.004, fieldFade: 0.34 }),
-  line:   Object.freeze({ zoom: 1.50, anchorX: 0.62, groupBias: 1,    vignette: 0.40, letterbox: 0.070, shake: 2.6, camY: 12, tilt: 0.010, fieldFade: 0.46 }),
-  post:   Object.freeze({ zoom: 1.70, anchorX: 0.60, groupBias: 1,    vignette: 0.50, letterbox: 0.066, shake: 3.1, camY: 12, tilt: 0.013, fieldFade: 0.54 }),
+  cruise: Object.freeze({ zoom: 1.05, anchorX: 0.50, groupBias: 0.12, vignette: 0.12, letterbox: 0,     shake: 0.2, camY: 0,               fieldFade: 0,    speedCue: 0 }),
+  build:  Object.freeze({ zoom: 1.20, anchorX: 0.46, groupBias: 0.45, vignette: 0.18, letterbox: 0.03,  shake: 0.6, camY: 4,               fieldFade: 0.10, speedCue: 0.10 }),
+  drive:  Object.freeze({ zoom: 1.34, anchorX: 0.50, groupBias: 0.62, vignette: 0.26, letterbox: 0.058, shake: 1.3, camY: 9,  tilt: 0.004, fieldFade: 0.34, speedCue: 0.42 }),
+  line:   Object.freeze({ zoom: 1.50, anchorX: 0.62, groupBias: 1,    vignette: 0.40, letterbox: 0.070, shake: 2.6, camY: 12, tilt: 0.010, fieldFade: 0.46, speedCue: 0.78 }),
+  post:   Object.freeze({ zoom: 1.70, anchorX: 0.60, groupBias: 1,    vignette: 0.50, letterbox: 0.066, shake: 3.1, camY: 12, tilt: 0.013, fieldFade: 0.54, speedCue: 1 }),
 });
 
 // WHY THE LAST TWO ARE SEPARATE SHOTS. The camera used to finish its work
@@ -2906,9 +2907,11 @@ function drawForegroundPlane() {
   const off  = CAM.x * PARALLAX.fore * CAM.zoom;
   const tw   = 190;
   const yTop = viewH - Math.max(28, viewH * 0.07);
+  // Nearest thing to the lens, so it smears first and hardest.
+  const cue  = Math.min(1, Math.max(0, DIRECTOR.speedCue));
 
   ctx.save();
-  ctx.globalAlpha = 0.5;
+  ctx.globalAlpha = 0.5 * (1 - 0.3 * cue);
   ctx.fillStyle = 'rgba(14,32,22,0.9)';
   ctx.fillRect(0, viewH - 10, viewW, 10);
 
@@ -2917,14 +2920,78 @@ function drawForegroundPlane() {
   ctx.lineWidth = 3;
   ctx.lineCap = 'round';
   ctx.beginPath();
+  // At speed a blade this close to the camera is not a blade any more:
+  // it lies over and draws out into a streak. The tip falls towards the
+  // bottom of frame and runs back the way the ground is going, and the
+  // whole plane thins as it does — ink spread over a longer mark.
+  const tipY = yTop + (viewH - yTop) * 0.72 * cue;
+  const tipX = 12 + 78 * cue;
   let x = -(((off % tw) + tw) % tw);
   for (; x < viewW + tw; x += tw) {
     for (let i = 0; i < 5; i++) {
       const gx = x + i * 34;
       const gh = 14 + ((i * 53) % 17);
       ctx.moveTo(gx, viewH);
-      ctx.quadraticCurveTo(gx + 5, yTop + gh * 0.4, gx + 12, yTop);
+      ctx.quadraticCurveTo(gx + 5 + 20 * cue, tipY + gh * 0.4 * (1 - cue), gx + tipX, tipY);
     }
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ── Ground streaking ─────────────────────────────────────────────
+// The final furlong runs at 0.55 of real time, which is the right call
+// dramatically and exactly wrong for the sense of speed: the one stretch
+// that should feel fastest is the one the clock is slowing. So the speed
+// cannot come from the clock, and it cannot come from honest motion blur
+// either — blur is a function of playback rate, so it would fade out at
+// precisely the wrong moment.
+//
+// It comes from detail instead. The eye reads speed from how much
+// texture crosses the frame, so the turf grows extra grain as the race
+// closes, drawn out along the direction of travel and weighted towards
+// the near rail where ground moves fastest past the lens. Same ground,
+// same pan, more to see going past.
+//
+// World space, so they scroll with the turf rather than swimming over
+// it, and positioned off a hash of the tile index rather than
+// Math.random — a streak that moved between frames would strobe.
+//
+// One stroke for the lot. ARCHITECTURE.md § 6.6: a change that adds to
+// the race frame is a performance change, and this adds a single draw
+// call whatever the zoom.
+const STREAK_SPACING = 88;
+
+function streakHash(i) {
+  let t = Math.imul(i ^ 0x9E3779B9, 0x85EBCA6B);
+  t = Math.imul(t ^ (t >>> 13), 0xC2B2AE35);
+  return ((t ^ (t >>> 16)) >>> 0) / 4294967296;
+}
+
+function drawGroundStreaks() {
+  const cue = Math.min(1, Math.max(0, DIRECTOR.speedCue));
+  if (prefersReducedMotion || cue <= 0.02) return;
+
+  const vis = visibleWorldRange(200);
+  const far = WORLD.trackMidY, near = WORLD.trackBotY;
+
+  ctx.save();
+  ctx.globalAlpha = 0.4 * cue;
+  ctx.strokeStyle = 'rgba(232,243,219,0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  const first = Math.floor(vis.min / STREAK_SPACING);
+  const last  = Math.ceil(vis.max / STREAK_SPACING);
+  for (let i = first; i <= last; i++) {
+    // Biased towards the near rail: ground close to the camera crosses
+    // the frame fastest, so it is what smears.
+    const t = Math.pow(streakHash(i), 0.55);
+    const y = far + (near - far) * t;
+    const x = i * STREAK_SPACING + streakHash(i * 7 + 1) * STREAK_SPACING;
+    const len = (30 + 130 * cue) * (0.55 + 0.45 * t);
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + len, y);
   }
   ctx.stroke();
   ctx.restore();
@@ -3510,6 +3577,7 @@ function drawRaceScene(dt) {
   ctx.clearRect(0, 0, viewW, viewH);
   pushWorldTransform(ctx);
   drawTurf();
+  drawGroundStreaks();
   drawFarRail();
   drawFurlongMarkers();
   drawWinningPost();
@@ -6373,7 +6441,7 @@ window.FlatEngine = Object.freeze(Object.assign({
     // The shot table and the projection that frames it, so a test can
     // check no shot crops the field. Tuning these is a visual judgement
     // made by eye; whether the near horse still has feet is not.
-    SHOTS, DIRECTOR, CAM, worldToScreenY,
+    SHOTS, DIRECTOR, CAM, worldToScreenY, streakHash,
     // A function, not the array: `horses` is a let that is REASSIGNED
     // when the field is built, and this object is frozen at load, so
     // exporting the binding would hand out the empty array it held then.

@@ -31,7 +31,7 @@ window.FlatEngine = Object.freeze(Object.assign({
     // The shot table and the projection that frames it, so a test can
     // check no shot crops the field. Tuning these is a visual judgement
     // made by eye; whether the near horse still has feet is not.
-    SHOTS, DIRECTOR, CAM, worldToScreenY,
+    SHOTS, DIRECTOR, CAM, worldToScreenY, streakHash,
     // A function, not the array: `horses` is a let that is REASSIGNED
     // when the field is built, and this object is frozen at load, so
     // exporting the binding would hand out the empty array it held then.

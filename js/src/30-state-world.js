@@ -210,6 +210,7 @@ const DIRECTOR_START = Object.freeze({
   letterbox: 0,      // cinema bars, as a fraction of viewport height each
   nameplates: 0,     // runner nameplates, 0 → 1
   plateFocus: 0,     // 0 = plate the leading group, 1 = the leaders only
+  speedCue: 0,       // ground streaking and grass lying over, 0 → 1
   phase:     'cruise',
 });
 const DIRECTOR = Object.assign({}, DIRECTOR_START);
