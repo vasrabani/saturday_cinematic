@@ -236,3 +236,44 @@ test('the result is spoken, even on the reduced-motion path', () => {
   assert.match(said, /^Result:/);
   assert.ok(said.includes(winner.name), 'the winner is not named in: ' + said);
 });
+
+// A galloping horse is judged in body lengths a second, not in pixels, and
+// the race lasts the same number of seconds on every screen. So the field's
+// apparent pace is spanLengths / raceDuration, and that has to come out the
+// same at 375px as at 2560px or the horses look sluggish on a phone and
+// hurried on an ultrawide — which is exactly what they did, at 44% and 155%
+// of desktop pace. horseScale is clamped so a phone's horses stay big enough
+// to read; the span is divided by the same clamp factor so the two cancel.
+test('the field gallops at the same lengths per second on every screen', () => {
+  const { window } = boot();
+  const { WORLD } = window.FlatEngine.internals;
+
+  const at = (width) => {
+    Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+    window.dispatchEvent(new window.Event('resize'));
+    return WORLD.spanLengths;
+  };
+
+  // Phones, tablets, laptops, desktops, ultrawides. Both ends of the
+  // horseScale clamp and the unclamped middle.
+  const widths = [320, 375, 414, 768, 1024, 1280, 1440, 1920, 2560, 3440];
+  const paces = widths.map(at);
+
+  for (let i = 0; i < widths.length; i++) {
+    assert.ok(Number.isFinite(paces[i]) && paces[i] > 0,
+              widths[i] + 'px gave a nonsense span: ' + paces[i]);
+    assert.ok(Math.abs(paces[i] - paces[0]) < 0.01,
+              widths[i] + 'px gallops at ' + (paces[i] / paces[0] * 100).toFixed(0) +
+              '% of ' + widths[0] + 'px — the span no longer cancels the horseScale clamp');
+  }
+
+  // The artwork still scales with the viewport; it is only the pace that
+  // is held constant. Without this a "fix" that froze the whole layout
+  // would pass the assertion above.
+  Object.defineProperty(window, 'innerWidth', { value: 375, configurable: true });
+  window.dispatchEvent(new window.Event('resize'));
+  const phone = WORLD.lengthPx;
+  Object.defineProperty(window, 'innerWidth', { value: 1440, configurable: true });
+  window.dispatchEvent(new window.Event('resize'));
+  assert.ok(WORLD.lengthPx > phone, 'a desktop horse should still be drawn bigger than a phone one');
+});

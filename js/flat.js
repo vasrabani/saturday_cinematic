@@ -375,14 +375,35 @@ function layoutWorld() {
   // One knob sets the whole thing: how big a horse is drawn. A length
   // follows from that, and the race distance in lengths follows from
   // wanting the camera to cover TRAVEL_SCREENS of ground either way.
-  WORLD.horseScale  = Math.max(0.62, Math.min(1.15, viewW / 1440));
+  const rawScale    = viewW / 1440;
+  WORLD.horseScale  = Math.max(0.62, Math.min(1.15, rawScale));
   WORLD.lengthPx    = HORSE_ART_LENGTH * WORLD.horseScale;
   // A phone is a narrower lens on the same race. Left at 1 the field
   // fans out over three screens and the viewer sees four horses and a
   // lot of grass, so narrow viewports pull the field in — the same
   // compromise a real outside-broadcast director makes by going wider.
   WORLD.spreadScale = Math.max(0.55, Math.min(1, viewW / 1100));
-  WORLD.spanPx      = viewW * TRAVEL_SCREENS;
+
+  // The ground covered gets the same stretch the artwork got.
+  //
+  // The eye judges an animal's pace in body lengths per second, not in
+  // pixels, and the race is a fixed number of seconds whatever the
+  // screen. So lengths-per-second is spanLengths / raceDuration, and
+  // spanLengths is spanPx over lengthPx — which means the moment the
+  // clamp above holds horseScale above what the viewport asked for, a
+  // length is worth more pixels than the span was measured in and the
+  // field gallops slower. Not subtly: on a 390px phone horseScale is
+  // held at 0.62 where the viewport asked for 0.27, and the horses
+  // covered 1.66 lengths a second against a desktop's 3.81. Less than
+  // half speed, which is exactly the sluggishness it looked like. The
+  // same fault ran the other way on an ultrawide, where the clamp holds
+  // the artwork DOWN and 2560px galloped at 155%.
+  //
+  // Dividing the span by the same factor the clamp applied cancels it,
+  // so lengths-per-second is identical at every width. Between 1024 and
+  // 1440 the clamp is inactive, the factor is 1, and nothing moves —
+  // which is the tell that the clamp was the whole cause.
+  WORLD.spanPx      = viewW * TRAVEL_SCREENS * (WORLD.horseScale / rawScale);
   WORLD.spanLengths = WORLD.spanPx / WORLD.lengthPx;
 
   // The lane band has to survive the final-furlong zoom without the
@@ -6202,6 +6223,10 @@ window.FlatEngine = Object.freeze(Object.assign({
     LEG_RIG, STRIDE_SWEEP, STANCE, STRIDE_LOCAL, START_EASE, EASE_TO,
     FINISH_PAUSE_S, FINISH_PAUSE_MAX_S, MAX_VISIBLE_LENGTHS,
     esc, mergeConfig, buildRacePositions, renderCommentary, labelSlots,
+    // The live layout object, so a test can resize the window and check
+    // what the world became. Read-only by convention — writing to it
+    // would be overwritten by the next resize().
+    WORLD,
   }),
 }));
 

@@ -29,6 +29,10 @@ window.FlatEngine = Object.freeze(Object.assign({
     LEG_RIG, STRIDE_SWEEP, STANCE, STRIDE_LOCAL, START_EASE, EASE_TO,
     FINISH_PAUSE_S, FINISH_PAUSE_MAX_S, MAX_VISIBLE_LENGTHS,
     esc, mergeConfig, buildRacePositions, renderCommentary, labelSlots,
+    // The live layout object, so a test can resize the window and check
+    // what the world became. Read-only by convention — writing to it
+    // would be overwritten by the next resize().
+    WORLD,
   }),
 }));
 
