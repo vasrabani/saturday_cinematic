@@ -115,6 +115,13 @@ function labelSlots(orderedIds, pinnedIds, streaks, opts) {
 // is always better than two plates on top of each other.
 const LABEL_RISE = Object.freeze([0, -19, -38, -57, -76]);
 const LABEL_H = 18;
+
+// How far the plates step back under the broadcast lower-third. Deep
+// enough that the super clearly wins the eye, shallow enough that the
+// plates are still readable — at 0.7 they were gone rather than
+// secondary, and a viewer who has been following a name loses it three
+// times a race.
+const LABEL_SUPER_DIM = 0.4;
 const LABEL_PAD = 9;
 
 function labelAccent(h, rank) {
@@ -146,10 +153,17 @@ function drawRunnerLabels() {
   // The lower-third owns naming while it is on screen — but it takes the
   // eye by being brighter, not by clearing the track. Hiding the plates
   // outright removed them for four stretches of a race that is not long
-  // to begin with, and the viewer loses the thread each time. idGlow is
-  // set on the runner it names for exactly as long as it is up, so it
-  // says so without a DOM read per frame.
-  const superUp = horses.some((h) => h.idGlow > 0.02);
+  // to begin with, and the viewer loses the thread each time.
+  //
+  // Deference is a ramp, not a switch. Testing a boolean against idGlow
+  // stepped the whole set down the instant the super began and back up
+  // when it ended, and a step in alpha reads as a fault — the plates
+  // appeared to drop out and return. Scaling by the glow itself instead
+  // means they recede exactly as the super arrives and come back with it,
+  // which is the two devices handing over rather than colliding. idGlow
+  // is set on the runner being named for exactly as long as the super is
+  // up, so this costs no DOM read per frame.
+  const glow = horses.reduce((m, h) => Math.max(m, h.idGlow), 0);
 
   const ranked = rankedHorses();
   if (!ranked.length) return;
@@ -170,7 +184,7 @@ function drawRunnerLabels() {
   const k = labelPixelRatio();
   const placed = [];
 
-  const alpha = strength * (superUp ? 0.3 : 1);
+  const alpha = strength * (1 - LABEL_SUPER_DIM * Math.min(1, glow / BROADCAST_ID_GLOW));
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';

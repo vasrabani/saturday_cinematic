@@ -842,6 +842,12 @@ function drawPressFlashes(dt) {
 // The element is created from JS rather than declared in index.html, so
 // nothing has to move into the Django template (ARCHITECTURE.md §10).
 const BROADCAST_ID_MS = 2600;
+
+// Peak opacity of the ground marker under the runner being named. Also
+// how far idGlow travels, which § RUNNER NAMEPLATES reads to know how
+// far the super has come up: the plates defer in proportion to it, so
+// the two have to agree on the top of the range.
+const BROADCAST_ID_GLOW = 0.85;
 let bcastEl = null;
 let bcastTween = null;
 
@@ -906,7 +912,7 @@ function showBroadcastId(h, tag) {
   // the lower-third is up.
   gsap.killTweensOf(h);
   gsap.fromTo(h, { idGlow: 0 }, {
-    idGlow: 0.85, duration: 0.4, ease: 'power2.out',
+    idGlow: BROADCAST_ID_GLOW, duration: 0.4, ease: 'power2.out',
     onComplete: () => gsap.to(h, {
       idGlow: 0, duration: 0.5, delay: BROADCAST_ID_MS / 1000, ease: 'power2.in',
     }),
