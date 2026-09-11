@@ -287,6 +287,11 @@ const STATE = {
   userPick:     null,
   foxPick:      null,
   raceBand:     'mile',
+  // Only the poster reads these; the intro's copy is rendered by the page.
+  raceName:     '',
+  raceCourse:   '',
+  raceTime:     '',
+  raceDistance: '',
   simResult:    null,
   phase:        'intro',
 };
@@ -500,6 +505,11 @@ function init(data) {
   STATE.userPick     = data.userPick;
   STATE.foxPick      = data.foxPick;
   STATE.raceBand     = data.raceBand || 'mile';
+  // For the poster's race line. Absent fields simply drop out of it.
+  STATE.raceName     = data.raceName || '';
+  STATE.raceCourse   = data.raceCourse || '';
+  STATE.raceTime     = data.raceTime || '';
+  STATE.raceDistance = data.raceDistance || '';
 
   buildIntroChips();
   if (!wired) {
@@ -5308,6 +5318,7 @@ let winTL = null;
 
 const HERO = {
   active: false,
+  poster: 0,       // 0 = the full-frame Winning Moment, 1 = behind the reveal poster
   horse:  null,
   push:   0,       // 0 → 1, the camera pushing in
   speed:  1,       // the winner's gallop, easing but never stopping
@@ -5327,11 +5338,14 @@ function heroLayout() {
   const endLen = Math.min(viewW * (narrow ? 0.66 : 0.36), viewH * 0.62);
   const len = endLen / 1.45 * (1 + 0.45 * HERO.push);
   const scale = len / HORSE_ART_LENGTH;
+  // In poster mode the story column owns the right of the frame, so the
+  // winner moves left and sits higher, clear of the podium bar.
+  const poster = HERO.poster ? 1 : 0;
   return {
     railY: railY,
-    scale: scale,
-    x: viewW * 0.5 - 7.5 * scale,               // centre the drawing, not the origin
-    groundY: viewH * (narrow ? 0.82 : 0.9),
+    scale: scale * (poster && !narrow ? 0.92 : 1),
+    x: viewW * (poster ? (narrow ? 0.5 : 0.30) : 0.5) - 7.5 * scale,
+    groundY: viewH * (narrow ? 0.82 : 0.9) - (poster ? viewH * 0.06 : 0),
   };
 }
 
@@ -5434,8 +5448,78 @@ function drawHeroConfetti(dt) {
   });
 }
 
+// The reveal holds the winner behind the poster rather than cutting to a
+// trophy, so the hero scene outlives the Winning Moment. raceFinish()
+// stops the race ticker, so this is a loop of its own — it draws the one
+// horse and nothing else, and the poster is DOM over the top of it.
+let posterTicking = false;
+
+// The poster's own surface. #raceCanvas is inside the race screen, which
+// is no longer showing, and #particleCanvas is the ambient painter's —
+// sharing either meant fighting over it. This one is the poster's alone,
+// at body level between the ambient backdrop and the screens.
+//
+// Created from JS rather than declared in the markup, the same way the
+// broadcast lower-third is, so nothing has to move into the Django
+// template (ARCHITECTURE.md § 10).
+let posterCanvas = null;
+let posterCtx = null;
+
+function ensurePosterCanvas() {
+  if (posterCanvas && posterCanvas.isConnected) return posterCtx;
+  const el = document.createElement('canvas');
+  el.id = 'posterCanvas';
+  el.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(el);
+  posterCanvas = el;
+  posterCtx = el.getContext('2d');
+  sizePosterCanvas();
+  return posterCtx;
+}
+
+function sizePosterCanvas() {
+  if (!posterCanvas) return;
+  posterCanvas.width  = canvas.width;
+  posterCanvas.height = canvas.height;
+  posterCanvas.style.width  = viewW + 'px';
+  posterCanvas.style.height = viewH + 'px';
+}
+
+function posterTick() {
+  renderHeroFrame(Math.min(gsap.ticker.deltaRatio() * (1000 / 60), 50));
+  const g = ensurePosterCanvas();
+  if (!g) return;
+  if (posterCanvas.width !== canvas.width) sizePosterCanvas();
+  // Both source canvases are the same backing-store size, so this is a
+  // straight 1:1 blit: the long-lens backdrop first, the horse over it.
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, posterCanvas.width, posterCanvas.height);
+  g.drawImage(pCanvas, 0, 0);
+  g.drawImage(canvas, 0, 0);
+}
+
+function startPosterHero() {
+  if (posterTicking || !HERO.horse || prefersReducedMotion) return;
+  // Settled: the push is over, and he is coming back to a canter rather
+  // than still being driven.
+  HERO.poster = 1;
+  HERO.push   = 1;
+  HERO.active = true;
+  gsap.to(HERO, { speed: 0.28, duration: 1.6, ease: 'sine.out' });
+  gsap.ticker.add(posterTick);
+  posterTicking = true;
+}
+
+function stopPosterHero() {
+  if (posterTicking) { gsap.ticker.remove(posterTick); posterTicking = false; }
+  if (posterCanvas) { posterCanvas.remove(); posterCanvas = null; posterCtx = null; }
+  HERO.poster = 0;
+  HERO.active = false;
+}
+
 function renderHeroFrame(dt) {
   const h = HERO.horse;
+  if (!h) return;
   const L = heroLayout();
 
   // The winner keeps galloping; the gait eases as the speed does, and the
@@ -5572,9 +5656,12 @@ function resetWinningMoment() {
 }
 
 // ─── Race finish → roll call ───────────────────────────────────
+let revealMargin = null;
+
 function raceFinish(margin) {
   raceRunning = false;
   stopTicker();
+  revealMargin = margin;
 
   const winner    = STATE.simResult.winner;
   const positions = STATE.simResult.positions;
@@ -5737,6 +5824,7 @@ function transitionToReveal(winner, positions) {
     onComplete: () => {
       buildRevealScreen(winner, positions);
       showScreen('reveal');
+      startPosterHero();
       gsap.fromTo('#screen-reveal', { opacity: 0 }, { opacity: 1, duration: 0.5, onComplete: animateReveal });
     },
   });
@@ -5770,6 +5858,30 @@ function buildRevealHeader(winner, isUserWin) {
   if (silkEl) {
     silkEl.classList.add('reveal-silk--jersey');
     silkEl.innerHTML = renderSilkSvg(winner);
+  }
+
+  // How he won it. The margin is the one fact the podium cannot show, and
+  // it is what a reader repeats afterwards.
+  const marginEl = document.getElementById('revealMargin');
+  if (marginEl) {
+    const lengths = revealMargin ? revealMargin.lengths : null;
+    marginEl.textContent = lengths === -1 ? 'Dead heat'
+      : (lengths === null || lengths === undefined) ? ''
+      : 'Won by ' + formatBeatenDistanceCompact(lengths);
+  }
+
+  const metaEl = document.getElementById('revealRaceMeta');
+  if (metaEl) {
+    metaEl.textContent = [STATE.raceName, STATE.raceCourse, STATE.raceTime, STATE.raceDistance]
+      .filter(Boolean).join('  ·  ');
+  }
+
+  const connEl = document.getElementById('revealConnections');
+  if (connEl) {
+    const bits = [];
+    if (winner.jockey)  bits.push('<span>JOCKEY</span> ' + esc(winner.jockey));
+    if (winner.trainer) bits.push('<span>TRAINER</span> ' + esc(winner.trainer));
+    connEl.innerHTML = bits.join('<b>·</b>');
   }
 
   // The result, spoken. This replaces the generic screen announcement for
@@ -5902,11 +6014,12 @@ function spawnRevealConfetti() {
 function animateReveal() {
   const tl = gsap.timeline();
   tl.to('.reveal-kicker',          { opacity: 1, y: 0, duration: 0.4 });
-  tl.to('.reveal-winner-label',    { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
-  tl.to('#revealTrophyWrap',       { opacity: 1, scale: 1, duration: 0.6, ease: 'back.out(1.4)' }, '-=0.15');
-  tl.call(spawnRevealConfetti, null, '-=0.35');
-  tl.to('#revealHorseName',        { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
-  tl.to('#revealOdds',             { opacity: 1, duration: 0.3 }, '-=0.1');
+  tl.to('.winner-poster__rule',    { opacity: 1, scaleX: 1, duration: 0.45, transformOrigin: 'left center' }, '-=0.2');
+  tl.call(spawnRevealConfetti, null, '-=0.3');
+  tl.to('#revealHorseName',        { opacity: 1, y: 0, duration: 0.5 }, '-=0.25');
+  tl.to('.winner-poster__winnerline', { opacity: 1, y: 0, duration: 0.35 }, '-=0.2');
+  tl.to('#revealMargin',           { opacity: 1, y: 0, duration: 0.3 }, '-=0.15');
+  tl.to('#revealRaceMeta, #revealConnections', { opacity: 1, duration: 0.35, stagger: 0.08 }, '-=0.1');
   tl.to('#revealVerdictBox',       { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
   tl.to('#revealPodium',           { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
   // The podium is the densest thing on the screen, so it earns its own
@@ -5930,6 +6043,8 @@ function replayExperience() {
 }
 
 function resetFlow() {
+  stopPosterHero();
+  revealMargin = null;
   cancelFlowTimers();
   experienceStarted = false;
   leavingParade = false;
@@ -6019,10 +6134,11 @@ function resetScreens() {
 
   // Restore the reveal screen's inner elements to their hidden
   // starting state so animateReveal() plays cleanly on the next race.
-  gsap.set('.reveal-kicker, .reveal-winner-label', { opacity: 0 });
-  gsap.set('#revealTrophyWrap', { opacity: 0, scale: 0.7 });
+  gsap.set('.reveal-kicker, #revealRaceMeta, #revealConnections', { opacity: 0 });
+  gsap.set('.winner-poster__rule', { opacity: 0, scaleX: 0 });
   gsap.set('#revealHorseName', { opacity: 0, y: 20 });
-  gsap.set('#revealOdds', { opacity: 0 });
+  gsap.set('.winner-poster__winnerline', { opacity: 0, y: 10 });
+  gsap.set('#revealMargin', { opacity: 0, y: 8 });
   gsap.set('#revealVerdictBox', { opacity: 0, y: 12 });
   gsap.set('#revealPodium', { opacity: 0, y: 10 });
   gsap.set('.reveal-actions', { opacity: 0 });

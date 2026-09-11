@@ -4,6 +4,11 @@ const STATE = {
   userPick:     null,
   foxPick:      null,
   raceBand:     'mile',
+  // Only the poster reads these; the intro's copy is rendered by the page.
+  raceName:     '',
+  raceCourse:   '',
+  raceTime:     '',
+  raceDistance: '',
   simResult:    null,
   phase:        'intro',
 };

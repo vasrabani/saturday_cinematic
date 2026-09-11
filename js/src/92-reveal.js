@@ -1,7 +1,10 @@
 // ─── Race finish → roll call ───────────────────────────────────
+let revealMargin = null;
+
 function raceFinish(margin) {
   raceRunning = false;
   stopTicker();
+  revealMargin = margin;
 
   const winner    = STATE.simResult.winner;
   const positions = STATE.simResult.positions;
@@ -164,6 +167,7 @@ function transitionToReveal(winner, positions) {
     onComplete: () => {
       buildRevealScreen(winner, positions);
       showScreen('reveal');
+      startPosterHero();
       gsap.fromTo('#screen-reveal', { opacity: 0 }, { opacity: 1, duration: 0.5, onComplete: animateReveal });
     },
   });
@@ -197,6 +201,30 @@ function buildRevealHeader(winner, isUserWin) {
   if (silkEl) {
     silkEl.classList.add('reveal-silk--jersey');
     silkEl.innerHTML = renderSilkSvg(winner);
+  }
+
+  // How he won it. The margin is the one fact the podium cannot show, and
+  // it is what a reader repeats afterwards.
+  const marginEl = document.getElementById('revealMargin');
+  if (marginEl) {
+    const lengths = revealMargin ? revealMargin.lengths : null;
+    marginEl.textContent = lengths === -1 ? 'Dead heat'
+      : (lengths === null || lengths === undefined) ? ''
+      : 'Won by ' + formatBeatenDistanceCompact(lengths);
+  }
+
+  const metaEl = document.getElementById('revealRaceMeta');
+  if (metaEl) {
+    metaEl.textContent = [STATE.raceName, STATE.raceCourse, STATE.raceTime, STATE.raceDistance]
+      .filter(Boolean).join('  ·  ');
+  }
+
+  const connEl = document.getElementById('revealConnections');
+  if (connEl) {
+    const bits = [];
+    if (winner.jockey)  bits.push('<span>JOCKEY</span> ' + esc(winner.jockey));
+    if (winner.trainer) bits.push('<span>TRAINER</span> ' + esc(winner.trainer));
+    connEl.innerHTML = bits.join('<b>·</b>');
   }
 
   // The result, spoken. This replaces the generic screen announcement for
@@ -329,11 +357,12 @@ function spawnRevealConfetti() {
 function animateReveal() {
   const tl = gsap.timeline();
   tl.to('.reveal-kicker',          { opacity: 1, y: 0, duration: 0.4 });
-  tl.to('.reveal-winner-label',    { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
-  tl.to('#revealTrophyWrap',       { opacity: 1, scale: 1, duration: 0.6, ease: 'back.out(1.4)' }, '-=0.15');
-  tl.call(spawnRevealConfetti, null, '-=0.35');
-  tl.to('#revealHorseName',        { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
-  tl.to('#revealOdds',             { opacity: 1, duration: 0.3 }, '-=0.1');
+  tl.to('.winner-poster__rule',    { opacity: 1, scaleX: 1, duration: 0.45, transformOrigin: 'left center' }, '-=0.2');
+  tl.call(spawnRevealConfetti, null, '-=0.3');
+  tl.to('#revealHorseName',        { opacity: 1, y: 0, duration: 0.5 }, '-=0.25');
+  tl.to('.winner-poster__winnerline', { opacity: 1, y: 0, duration: 0.35 }, '-=0.2');
+  tl.to('#revealMargin',           { opacity: 1, y: 0, duration: 0.3 }, '-=0.15');
+  tl.to('#revealRaceMeta, #revealConnections', { opacity: 1, duration: 0.35, stagger: 0.08 }, '-=0.1');
   tl.to('#revealVerdictBox',       { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
   tl.to('#revealPodium',           { opacity: 1, y: 0, duration: 0.4 }, '-=0.1');
   // The podium is the densest thing on the screen, so it earns its own
@@ -357,6 +386,8 @@ function replayExperience() {
 }
 
 function resetFlow() {
+  stopPosterHero();
+  revealMargin = null;
   cancelFlowTimers();
   experienceStarted = false;
   leavingParade = false;
@@ -446,10 +477,11 @@ function resetScreens() {
 
   // Restore the reveal screen's inner elements to their hidden
   // starting state so animateReveal() plays cleanly on the next race.
-  gsap.set('.reveal-kicker, .reveal-winner-label', { opacity: 0 });
-  gsap.set('#revealTrophyWrap', { opacity: 0, scale: 0.7 });
+  gsap.set('.reveal-kicker, #revealRaceMeta, #revealConnections', { opacity: 0 });
+  gsap.set('.winner-poster__rule', { opacity: 0, scaleX: 0 });
   gsap.set('#revealHorseName', { opacity: 0, y: 20 });
-  gsap.set('#revealOdds', { opacity: 0 });
+  gsap.set('.winner-poster__winnerline', { opacity: 0, y: 10 });
+  gsap.set('#revealMargin', { opacity: 0, y: 8 });
   gsap.set('#revealVerdictBox', { opacity: 0, y: 12 });
   gsap.set('#revealPodium', { opacity: 0, y: 10 });
   gsap.set('.reveal-actions', { opacity: 0 });

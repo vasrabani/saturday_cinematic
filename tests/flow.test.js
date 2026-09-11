@@ -191,7 +191,8 @@ test('with reduced motion the result is shown straight away, and shown', () => {
   const page = boot({ reducedMotion: true });
   page.click('flatStartBtn');
   assert.equal(page.screen(), 'reveal');
-  for (const sel of ['#revealHorseName', '#revealTrophyWrap', '#revealPodium', '.reveal-actions', '.reveal-kicker']) {
+  for (const sel of ['#revealHorseName', '.winner-poster__winnerline', '#revealMargin',
+                       '#revealPodium', '.reveal-actions', '.reveal-kicker']) {
     assert.equal(page.document.querySelector(sel).style.opacity, '1', sel + ' is visible');
   }
   assert.equal(page.document.getElementById('revealHorseName').textContent, 'Daiquiri Bay');

@@ -197,44 +197,49 @@
 
 <div class="screen flat-screen" id="screen-reveal" tabindex="-1">
   <div class="reveal-bg" id="revealBg"></div>
-  <div class="reveal-content">
-    <div class="reveal-kicker" style="opacity:0">The Race is Over</div>
-    <div class="reveal-winner-label" style="opacity:0">🏆 &nbsp; THE WINNER &nbsp; 🏆</div>
-    <div class="reveal-trophy-wrap" id="revealTrophyWrap" style="opacity:0;transform:scale(0.7)">
-      <svg viewBox="0 0 240 260" xmlns="http://www.w3.org/2000/svg" class="reveal-trophy-svg" aria-hidden="true" focusable="false">
-        <defs>
-          <linearGradient id="tgH" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#B8900A"></stop>
-            <stop offset="30%" stop-color="#F5E49A"></stop>
-            <stop offset="60%" stop-color="#D4AF37"></stop>
-            <stop offset="100%" stop-color="#C8A020"></stop>
-          </linearGradient>
-          <filter id="tgGlow"><feGaussianBlur stdDeviation="6" result="b"></feGaussianBlur><feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter>
-        </defs>
-        <path d="M65,20 L175,20 Q188,65 168,105 Q148,145 120,158 Q92,145 72,105 Q52,65 65,20Z" fill="url(#tgH)" filter="url(#tgGlow)"></path>
-        <path d="M78,26 Q105,22 118,34 Q106,90 88,128 Q74,96 70,56Z" fill="rgba(255,255,255,0.25)"></path>
-        <path d="M65,48 Q22,58 26,110 Q30,142 68,132" fill="none" stroke="url(#tgH)" stroke-width="14" stroke-linecap="round"></path>
-        <path d="M175,48 Q218,58 214,110 Q210,142 172,132" fill="none" stroke="url(#tgH)" stroke-width="14" stroke-linecap="round"></path>
-        <rect x="110" y="158" width="20" height="46" rx="5" fill="url(#tgH)"></rect>
-        <rect x="76" y="202" width="88" height="18" rx="6" fill="url(#tgH)"></rect>
-        <rect x="58" y="218" width="124" height="16" rx="7" fill="url(#tgH)"></rect>
-        <polygon points="120,50 126,70 148,70 131,82 138,102 120,90 102,102 109,82 92,70 114,70" fill="rgba(255,255,200,0.45)"></polygon>
-        <circle cx="120" cy="232" r="0" id="revealSilkCircle" fill="#C8A951"></circle>
-      </svg>
-      <div class="reveal-horse-silk" id="revealSilk" style="position:absolute;bottom:-10px;left:50%;transform:translateX(-50%)"></div>
+
+  <div class="winner-poster">
+    <header class="winner-poster__masthead">
+      <span class="winner-poster__brand"><span class="winner-poster__mark">SR</span> Saturday Racing</span>
+      <span class="winner-poster__finish">The Finish</span>
+    </header>
+
+    <div class="winner-poster__main">
+      <!-- Left of the story column is deliberately empty: the winner is
+           still galloping on the race canvas behind this screen. -->
+      <div class="winner-poster__visual" aria-hidden="true"></div>
+
+      <section class="winner-poster__story">
+        <div class="reveal-kicker" style="opacity:0">The Winning Moment</div>
+        <div class="winner-poster__rule" style="opacity:0;transform:scaleX(0)"></div>
+        <div class="reveal-horse-name" id="revealHorseName" style="opacity:0;transform:translateY(20px)"></div>
+
+        <div class="winner-poster__winnerline" style="opacity:0;transform:translateY(10px)">
+          <span class="winner-poster__badge">Winner</span>
+          <span class="reveal-horse-odds" id="revealOdds"></span>
+          <span class="reveal-horse-silk" id="revealSilk"></span>
+        </div>
+
+        <div class="winner-poster__margin" id="revealMargin" style="opacity:0;transform:translateY(8px)"></div>
+        <div class="winner-poster__race" id="revealRaceMeta" style="opacity:0"></div>
+        <div class="winner-poster__connections" id="revealConnections" style="opacity:0"></div>
+
+        <div class="reveal-verdict-box" id="revealVerdictBox" style="opacity:0;transform:translateY(12px)">
+          <div class="reveal-verdict-title" id="revealVerdictTitle"></div>
+          <div class="reveal-verdict-text" id="revealVerdictText"></div>
+        </div>
+      </section>
     </div>
-    <div class="reveal-horse-name" id="revealHorseName" style="opacity:0;transform:translateY(20px)"></div>
-    <div class="reveal-horse-odds" id="revealOdds" style="opacity:0"></div>
-    <div class="reveal-verdict-box" id="revealVerdictBox" style="opacity:0;transform:translateY(12px)">
-      <div class="reveal-verdict-title" id="revealVerdictTitle"></div>
-      <div class="reveal-verdict-text" id="revealVerdictText"></div>
-    </div>
-    <div class="reveal-podium" id="revealPodium" style="opacity:0;transform:translateY(10px)"></div>
-    <div class="reveal-scores" id="revealScores" style="opacity:0"></div>
-    <div class="reveal-actions" style="opacity:0">
-      <button type="button" class="reveal-btn reveal-btn--primary" id="flatReplayBtn">🔄 Run Again</button>
-      <button type="button" class="reveal-btn reveal-btn--ghost" data-href="#" id="flatToRacecardBtn">View Race Engine →</button>
-      <button type="button" class="reveal-btn reveal-btn--ghost" data-href="#" id="flatToLandingBtn">Back to Saturday Racing</button>
+
+    <div class="winner-poster__lower">
+      <div class="winner-poster__podium-label">The Podium</div>
+      <div class="reveal-podium" id="revealPodium" style="opacity:0;transform:translateY(10px)"></div>
+      <div class="reveal-scores" id="revealScores" style="opacity:0"></div>
+      <div class="reveal-actions" style="opacity:0">
+        <button type="button" class="reveal-btn reveal-btn--primary" id="flatReplayBtn">&#8635; Watch the Finish Again</button>
+        <button type="button" class="reveal-btn reveal-btn--ghost" data-href="#" id="flatToRacecardBtn">View Full Result &#8594;</button>
+        <button type="button" class="reveal-btn reveal-btn--ghost" data-href="#" id="flatToLandingBtn">Saturday Racing</button>
+      </div>
     </div>
   </div>
 </div>

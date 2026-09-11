@@ -86,6 +86,7 @@ let winTL = null;
 
 const HERO = {
   active: false,
+  poster: 0,       // 0 = the full-frame Winning Moment, 1 = behind the reveal poster
   horse:  null,
   push:   0,       // 0 → 1, the camera pushing in
   speed:  1,       // the winner's gallop, easing but never stopping
@@ -105,11 +106,14 @@ function heroLayout() {
   const endLen = Math.min(viewW * (narrow ? 0.66 : 0.36), viewH * 0.62);
   const len = endLen / 1.45 * (1 + 0.45 * HERO.push);
   const scale = len / HORSE_ART_LENGTH;
+  // In poster mode the story column owns the right of the frame, so the
+  // winner moves left and sits higher, clear of the podium bar.
+  const poster = HERO.poster ? 1 : 0;
   return {
     railY: railY,
-    scale: scale,
-    x: viewW * 0.5 - 7.5 * scale,               // centre the drawing, not the origin
-    groundY: viewH * (narrow ? 0.82 : 0.9),
+    scale: scale * (poster && !narrow ? 0.92 : 1),
+    x: viewW * (poster ? (narrow ? 0.5 : 0.30) : 0.5) - 7.5 * scale,
+    groundY: viewH * (narrow ? 0.82 : 0.9) - (poster ? viewH * 0.06 : 0),
   };
 }
 
@@ -212,8 +216,78 @@ function drawHeroConfetti(dt) {
   });
 }
 
+// The reveal holds the winner behind the poster rather than cutting to a
+// trophy, so the hero scene outlives the Winning Moment. raceFinish()
+// stops the race ticker, so this is a loop of its own — it draws the one
+// horse and nothing else, and the poster is DOM over the top of it.
+let posterTicking = false;
+
+// The poster's own surface. #raceCanvas is inside the race screen, which
+// is no longer showing, and #particleCanvas is the ambient painter's —
+// sharing either meant fighting over it. This one is the poster's alone,
+// at body level between the ambient backdrop and the screens.
+//
+// Created from JS rather than declared in the markup, the same way the
+// broadcast lower-third is, so nothing has to move into the Django
+// template (ARCHITECTURE.md § 10).
+let posterCanvas = null;
+let posterCtx = null;
+
+function ensurePosterCanvas() {
+  if (posterCanvas && posterCanvas.isConnected) return posterCtx;
+  const el = document.createElement('canvas');
+  el.id = 'posterCanvas';
+  el.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(el);
+  posterCanvas = el;
+  posterCtx = el.getContext('2d');
+  sizePosterCanvas();
+  return posterCtx;
+}
+
+function sizePosterCanvas() {
+  if (!posterCanvas) return;
+  posterCanvas.width  = canvas.width;
+  posterCanvas.height = canvas.height;
+  posterCanvas.style.width  = viewW + 'px';
+  posterCanvas.style.height = viewH + 'px';
+}
+
+function posterTick() {
+  renderHeroFrame(Math.min(gsap.ticker.deltaRatio() * (1000 / 60), 50));
+  const g = ensurePosterCanvas();
+  if (!g) return;
+  if (posterCanvas.width !== canvas.width) sizePosterCanvas();
+  // Both source canvases are the same backing-store size, so this is a
+  // straight 1:1 blit: the long-lens backdrop first, the horse over it.
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, posterCanvas.width, posterCanvas.height);
+  g.drawImage(pCanvas, 0, 0);
+  g.drawImage(canvas, 0, 0);
+}
+
+function startPosterHero() {
+  if (posterTicking || !HERO.horse || prefersReducedMotion) return;
+  // Settled: the push is over, and he is coming back to a canter rather
+  // than still being driven.
+  HERO.poster = 1;
+  HERO.push   = 1;
+  HERO.active = true;
+  gsap.to(HERO, { speed: 0.28, duration: 1.6, ease: 'sine.out' });
+  gsap.ticker.add(posterTick);
+  posterTicking = true;
+}
+
+function stopPosterHero() {
+  if (posterTicking) { gsap.ticker.remove(posterTick); posterTicking = false; }
+  if (posterCanvas) { posterCanvas.remove(); posterCanvas = null; posterCtx = null; }
+  HERO.poster = 0;
+  HERO.active = false;
+}
+
 function renderHeroFrame(dt) {
   const h = HERO.horse;
+  if (!h) return;
   const L = heroLayout();
 
   // The winner keeps galloping; the gait eases as the speed does, and the

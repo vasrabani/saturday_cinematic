@@ -13,6 +13,11 @@ function init(data) {
   STATE.userPick     = data.userPick;
   STATE.foxPick      = data.foxPick;
   STATE.raceBand     = data.raceBand || 'mile';
+  // For the poster's race line. Absent fields simply drop out of it.
+  STATE.raceName     = data.raceName || '';
+  STATE.raceCourse   = data.raceCourse || '';
+  STATE.raceTime     = data.raceTime || '';
+  STATE.raceDistance = data.raceDistance || '';
 
   buildIntroChips();
   if (!wired) {

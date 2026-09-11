@@ -748,3 +748,262 @@
   .page-experience--flat #screen-intro .intro-title { font-size: clamp(38px, 12vw, 58px); }
   .page-experience--flat #screen-intro .intro-title__line1 { font-size: .48em; }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   THE FINISH — the winner's poster
+   Replaces the trophy. The winner is still on the race canvas
+   behind this screen (HERO.poster), so the screen itself is a
+   transparent overlay: a masthead, an empty left column the horse
+   shows through, an editorial column, and the podium along the
+   bottom. Nothing here paints an opaque background, or the horse
+   it is built around would be hidden by it.
+   ══════════════════════════════════════════════════════════════ */
+#screen-reveal {
+  background: none;
+  padding: 0;
+  justify-content: stretch;
+}
+
+.winner-poster {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  padding: clamp(14px, 2.2vh, 26px) clamp(18px, 4vw, 64px) clamp(12px, 2vh, 22px);
+  box-sizing: border-box;
+  pointer-events: none;   /* the buttons switch it back on */
+}
+
+.winner-poster__masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(var(--text-rgb), 0.5);
+  border-bottom: 1px solid rgba(var(--gold-rgb), 0.18);
+  padding-bottom: 10px;
+}
+
+.winner-poster__brand { display: inline-flex; align-items: center; gap: 10px; }
+
+.winner-poster__mark {
+  display: inline-grid;
+  place-items: center;
+  width: 22px; height: 22px;
+  border: 1px solid rgba(var(--gold-rgb), 0.5);
+  border-radius: 50%;
+  color: var(--gold);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.winner-poster__finish { color: var(--gold); }
+
+/* The horse owns the left; the story owns the right. */
+.winner-poster__main {
+  display: grid;
+  grid-template-columns: 1fr minmax(320px, 42%);
+  align-items: center;
+  gap: clamp(16px, 3vw, 48px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.winner-poster__visual { min-height: 0; }
+
+.winner-poster__story {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: clamp(6px, 0.9vh, 12px);
+}
+
+.winner-poster__story .reveal-kicker {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 0;
+}
+
+.winner-poster__rule {
+  width: 74px; height: 2px;
+  background: linear-gradient(90deg, var(--gold), rgba(var(--gold-rgb), 0));
+}
+
+.winner-poster__story .reveal-horse-name {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 900;
+  font-size: clamp(34px, 5.4vw, 78px);
+  line-height: 0.98;
+  letter-spacing: -0.015em;
+  color: var(--paper);
+  margin: 0;
+  text-shadow: 0 6px 40px rgba(0, 0, 0, 0.55);
+}
+
+.winner-poster__winnerline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.winner-poster__badge {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: var(--gold);
+  border-radius: 999px;
+  padding: 5px 12px;
+}
+
+.winner-poster__winnerline .reveal-horse-odds {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 700;
+  font-size: clamp(20px, 2.4vw, 34px);
+  color: var(--gold);
+}
+
+/* The silk belongs to the podium row, where all three are shown together
+   and it means something. In the story column it was a second identity
+   for the same horse — and .reveal-silk--jersey sizes it for a trophy
+   plinth, which blew the column past its grid row and pushed the margin
+   and the verdict down onto the podium. Kept in the DOM: the engine
+   writes the winner's silk into it either way. */
+.winner-poster__winnerline .reveal-horse-silk { display: none; }
+
+/* .reveal-horse-odds ships at opacity 0 (experience.css) because the
+   trophy's timeline faded it up by id. The poster fades the whole line
+   instead, so the odds must start visible within it. */
+.winner-poster__winnerline .reveal-horse-odds { opacity: 1; }
+
+.winner-poster__margin {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-size: clamp(15px, 1.7vw, 22px);
+  color: rgba(var(--text-rgb), 0.9);
+}
+
+.winner-poster__race {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(var(--text-rgb), 0.52);
+}
+
+.winner-poster__connections {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 12px;
+  color: rgba(var(--text-rgb), 0.86);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+.winner-poster__connections span {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--gold);
+  margin-right: 4px;
+}
+.winner-poster__connections b { color: rgba(var(--gold-rgb), 0.5); font-weight: 400; }
+
+/* The podium runs along the foot of the poster. */
+.winner-poster__lower {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.winner-poster__podium-label {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(var(--text-rgb), 0.42);
+}
+
+.winner-poster .reveal-verdict-box { pointer-events: auto; }
+.winner-poster .reveal-actions { pointer-events: auto; }
+
+@media (max-width: 900px) {
+  /* No room for two columns: the horse sits above the story, which is
+     why the hero keeps its centred x on a narrow viewport. */
+  .winner-poster__main { grid-template-columns: 1fr; align-items: end; }
+  .winner-poster__visual { display: none; }
+  .winner-poster__story { align-items: center; text-align: center; }
+  .winner-poster__rule { align-self: center; }
+}
+
+/* The poster's own surface: above the ambient backdrop, below the screens,
+   and never in the way of a click. Created by the engine, so it is not in
+   the markup — see ensurePosterCanvas(). */
+#posterCanvas {
+  position: fixed;
+  top: var(--nav-h, 60px);
+  left: 0; right: 0; bottom: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+/* The winner is drawn on #posterCanvas in full daylight — the same
+   racecourse the race was run on. A poster wants a plate, not a
+   photograph, so the screen lays a scrim over it: darkest under the
+   story column on the right, so the type reads, and lightest over the
+   horse on the left, so he does not. */
+#screen-reveal::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg,
+      rgba(var(--dark-rgb), 0.30) 0%,
+      rgba(var(--dark-rgb), 0.42) 34%,
+      rgba(var(--dark-rgb), 0.86) 62%,
+      rgba(var(--dark-rgb), 0.94) 100%),
+    linear-gradient(180deg,
+      rgba(var(--dark-rgb), 0.72) 0%,
+      rgba(var(--dark-rgb), 0.10) 32%,
+      rgba(var(--dark-rgb), 0.55) 78%,
+      rgba(var(--dark-rgb), 0.95) 100%);
+}
+
+/* The story inherits margins from the centred layout the trophy used.
+   In a column with its own gap they read as holes. */
+.winner-poster__story > * { margin: 0; }
+
+.winner-poster__story {
+  justify-content: center;
+  max-height: 100%;
+}
+
+/* The podium bar earns a plate of its own: it sits over the turf, and
+   the horse runs behind it. */
+.winner-poster__lower {
+  background: linear-gradient(180deg,
+    rgba(var(--dark-rgb), 0) 0%,
+    rgba(var(--dark-rgb), 0.82) 26%,
+    rgba(var(--dark-rgb), 0.96) 100%);
+  padding-top: 18px;
+  margin: 0 calc(clamp(18px, 4vw, 64px) * -1) calc(clamp(12px, 2vh, 22px) * -1);
+  padding-left: clamp(18px, 4vw, 64px);
+  padding-right: clamp(18px, 4vw, 64px);
+  padding-bottom: clamp(12px, 2vh, 22px);
+}
