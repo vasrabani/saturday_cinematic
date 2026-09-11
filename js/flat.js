@@ -27,10 +27,16 @@
  *   press flashguns · broadcast identification · render loop · the horse ·
  *   commentary · leaderboard · crossing the line · result card ·
  *   the Winning Moment · roll call · reveal · replay · public API
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * GENERATED FILE — do not edit. Built from js/shared/ and js/src/ by
+ * tools/build.js; the manifest there is the source order. Edit a
+ * fragment and run `npm run build`. `npm test` fails if this file and
+ * the fragments disagree.
+ * ─────────────────────────────────────────────────────────────────────
  */
 (function () {
 'use strict';
-
 // ─── CONFIG load ────────────────────────────────────────────────
 // The seed JSON (#flatConfig) overrides these. They are the keys the
 // engine reads, and nothing else: the seed may still carry V1-era tuning
@@ -173,6 +179,42 @@ function renderSilkSvg(runner) {
       '<defs><clipPath id="' + id + '"><path d="' + BODY_PATH + '"/></clipPath></defs>' +
       '<g clip-path="url(#' + id + ')">' + patternMarkup + '</g>' +
       '<path fill="' + accent + '" d="' + SLEEVES_PATH + '"/>' +
+    '</svg>'
+  );
+}
+
+// Mini jockey-cap SVG, as in experience.js. Renders a two-tone cap using the runner's
+// silk colours + silk_pattern so each row's cap matches its jersey.
+let lbCapCounter = 0;
+function renderCapSvg(runner) {
+  const body   = esc((runner && runner.silk)  || '#1A3A6B');
+  const accent = esc((runner && runner.silk2) || '#FFFFFF');
+  const pat    = (runner && runner.silk_pattern) || 'solid';
+  const id = 'lbCap-' + (++lbCapCounter);
+  let patternMarkup = '';
+  if (pat === 'halved') {
+    patternMarkup = '<rect x="8" y="0" width="8" height="16" fill="' + accent + '"/>';
+  } else if (pat === 'hooped') {
+    patternMarkup =
+      '<rect x="0" y="5"  width="16" height="2" fill="' + accent + '"/>' +
+      '<rect x="0" y="9"  width="16" height="2" fill="' + accent + '"/>';
+  } else if (pat === 'striped') {
+    patternMarkup =
+      '<rect x="7" y="0" width="2" height="16" fill="' + accent + '"/>';
+  } else if (pat === 'quartered') {
+    patternMarkup =
+      '<rect x="8" y="0" width="8" height="8" fill="' + accent + '"/>' +
+      '<rect x="0" y="8" width="8" height="8" fill="' + accent + '"/>';
+  } else if (pat === 'starred') {
+    patternMarkup =
+      '<text x="8" y="12" text-anchor="middle" font-size="11" font-weight="900" font-family="Georgia, serif" fill="' + accent + '">★</text>';
+  }
+  return (
+    '<svg class="race-lb-cap" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<defs><clipPath id="' + id + '"><circle cx="8" cy="8" r="7.5"/></clipPath></defs>' +
+      '<circle cx="8" cy="8" r="7.5" fill="' + body + '"/>' +
+      '<g clip-path="url(#' + id + ')">' + patternMarkup + '</g>' +
+      '<circle cx="8" cy="8" r="7.5" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="0.6"/>' +
     '</svg>'
   );
 }
@@ -4677,42 +4719,6 @@ function showSubtitle(text, duration) {
 // Leaderboard uses the SAME markup classes as the jumps engine
 // (.race-lb-row / .race-lb-pos / .race-lb-silk / .race-lb-name) so it
 // inherits experience.css styling — no duplicate CSS in flat.css.
-
-// Mini jockey-cap SVG, as in experience.js. Renders a two-tone cap using the runner's
-// silk colours + silk_pattern so each row's cap matches its jersey.
-let lbCapCounter = 0;
-function renderCapSvg(runner) {
-  const body   = esc((runner && runner.silk)  || '#1A3A6B');
-  const accent = esc((runner && runner.silk2) || '#FFFFFF');
-  const pat    = (runner && runner.silk_pattern) || 'solid';
-  const id = 'lbCap-' + (++lbCapCounter);
-  let patternMarkup = '';
-  if (pat === 'halved') {
-    patternMarkup = '<rect x="8" y="0" width="8" height="16" fill="' + accent + '"/>';
-  } else if (pat === 'hooped') {
-    patternMarkup =
-      '<rect x="0" y="5"  width="16" height="2" fill="' + accent + '"/>' +
-      '<rect x="0" y="9"  width="16" height="2" fill="' + accent + '"/>';
-  } else if (pat === 'striped') {
-    patternMarkup =
-      '<rect x="7" y="0" width="2" height="16" fill="' + accent + '"/>';
-  } else if (pat === 'quartered') {
-    patternMarkup =
-      '<rect x="8" y="0" width="8" height="8" fill="' + accent + '"/>' +
-      '<rect x="0" y="8" width="8" height="8" fill="' + accent + '"/>';
-  } else if (pat === 'starred') {
-    patternMarkup =
-      '<text x="8" y="12" text-anchor="middle" font-size="11" font-weight="900" font-family="Georgia, serif" fill="' + accent + '">★</text>';
-  }
-  return (
-    '<svg class="race-lb-cap" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-      '<defs><clipPath id="' + id + '"><circle cx="8" cy="8" r="7.5"/></clipPath></defs>' +
-      '<circle cx="8" cy="8" r="7.5" fill="' + body + '"/>' +
-      '<g clip-path="url(#' + id + ')">' + patternMarkup + '</g>' +
-      '<circle cx="8" cy="8" r="7.5" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="0.6"/>' +
-    '</svg>'
-  );
-}
 
 // Leaderboard layout constants — see experience.js for the rationale.
 // Rows persist with stable data-runner IDs; updateLeaderboard slides

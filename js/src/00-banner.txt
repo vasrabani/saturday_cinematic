@@ -1,0 +1,30 @@
+/*
+ * THE FLAT EXPERIENCE — Saturday Racing cinematic replay engine (flat races)
+ *
+ * Screen flow: intro → parade → race → the Winning Moment → roll call →
+ * reveal. The race is a canvas scene in world space — positions are
+ * lengths behind the leader, seen through a damped virtual camera — and
+ * one GSAP timeline is its only clock. ARCHITECTURE.md is the full map.
+ *
+ * Loading: a classic <script>, no modules and no bundler. It must be
+ * included AFTER the #replayData JSON tag (and #flatConfig, if any): both
+ * are read once, while this file parses. GSAP (js/vendor/gsap.min.js)
+ * must be loaded first.
+ *
+ * Public API (everything else is private to this file):
+ *   init(data)              the page's boot script hands over the race
+ *   window.startExperience  the intro's Run the Race button
+ *   window.skipParade / skipToFinish / skipRollCall / replayExperience
+ *   window.FlatEngine       the same functions, the build's version and
+ *                           feature list, QA hooks (debug) and the pure
+ *                           helpers the unit tests call (internals)
+ *
+ * Contents, top to bottom:
+ *   config · silks · state, canvas and world layout · the director ·
+ *   init and screens · intro · parade · race start · race model ·
+ *   master timeline · camera · parallax scenery · ambient backdrop ·
+ *   track plane · atmosphere · margins · the field · hoof dust ·
+ *   press flashguns · broadcast identification · render loop · the horse ·
+ *   commentary · leaderboard · crossing the line · result card ·
+ *   the Winning Moment · roll call · reveal · replay · public API
+ */

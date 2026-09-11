@@ -1,5 +1,8 @@
 // ESLint flat config. js/flat.js is a classic browser script (no modules,
-// no bundler): production includes it with a plain <script> tag.
+// no bundler): production includes it with a plain <script> tag. It is
+// generated from js/shared/ and js/src/ by tools/build.js, and it is the
+// artefact that is linted — the fragments share one function scope, so
+// linting them separately would report every cross-reference as undefined.
 const js = require('@eslint/js');
 const globals = require('globals');
 
@@ -27,6 +30,11 @@ module.exports = [
       sourceType: 'script',
       globals: { ...globals.browser, gsap: 'readonly' },
     },
+  },
+  {
+    // The build is a Node script, unlike the rest of tools/.
+    files: ['tools/build.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs', globals: { ...globals.node } },
   },
   {
     files: ['tests/**/*.js', 'eslint.config.js'],

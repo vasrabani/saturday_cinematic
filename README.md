@@ -63,9 +63,14 @@ Running the sandbox needs nothing but Python. The quality checks need Node 18+ a
 
 ```
 npm install        # once
+npm run build      # rebuild js/flat.js from js/shared and js/src
 npm run lint       # ESLint, zero warnings allowed
 npm test           # unit tests, and the whole experience run screen to screen in jsdom
 ```
+
+**`js/flat.js` is generated — edit `js/src/` and `js/shared/`, not the engine
+file.** `npm test` refuses to run if the two have fallen out of step, so a
+forgotten build fails loudly rather than being silently overwritten later.
 
 To show that a change does not alter what the viewer sees, use the visual regression check in `tools/visual-regression.js` (see ARCHITECTURE.md §13).
 

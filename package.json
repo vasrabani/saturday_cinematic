@@ -3,7 +3,9 @@
   "private": true,
   "description": "Development tooling for the Saturday Racing cinematic replay sandbox. Nothing here ships: production loads js/flat.js directly.",
   "scripts": {
+    "build": "node tools/build.js",
     "lint": "eslint --max-warnings 0 js/flat.js tests tools",
+    "pretest": "node tools/build.js --check",
     "test": "node --test tests"
   },
   "devDependencies": {

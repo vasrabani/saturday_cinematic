@@ -1,10 +1,10 @@
 # Developer feedback — cinematic replay V2
 
-Review of `cinematic-replay-v2` (PR #1, engine `2.6.0`), and a record of four
+Review of `cinematic-replay-v2` (PR #1, engine `2.6.0`), and a record of five
 changes made on top of it.
 
 **Verdict: 8.5 / 10.** This is a large step up on the previous delivery, and
-the four items below are the remainder — none of them is a defect in the race
+the five items below are the remainder — none of them is a defect in the race
 itself.
 
 ---
@@ -42,7 +42,7 @@ with the CTAs on screen.
 
 ---
 
-## The four changes
+## The changes
 
 ### 1. `npm test` did not run on Windows
 
@@ -178,12 +178,104 @@ phase calls and the commentary together are one voice too many.
 
 ---
 
+### 5. One 5,800-line file, and two copies of the same helpers
+
+Two problems with one cause. `js/flat.js` had reached 5,818 lines in a single
+file, and its silk and cap renderers also existed — copied — in
+`js/experience.js`, with a comment asking that the two be kept in step. They
+were not: `renderSilkSvg` had drifted 14 lines apart, `renderCapSvg` 6.
+
+#### Why the artefact is still one classic file
+
+ARCHITECTURE.md § 9 promises of production: *"everything under `css/`, `img/`,
+and `js/flat.js` translates directly. Copy the file, done."* Production
+includes the engine with a plain `<script>` from `<head>`. An ES module would
+**defer past the inline boot script that calls `init()`** and break the page.
+
+So the source is split and the artefact is not. `tools/build.js` concatenates
+`js/shared/` and `js/src/` into `js/flat.js`. **Production's contract does not
+change at all** — same one file, same plain script tag, same copy-and-done.
+
+This is a concatenation, not a bundler and not a dependency. The fragments
+share one function scope inside the IIFE exactly as they did when they were
+one file, so no cross-reference needed rewiring.
+
+#### The layout
+
+| | |
+|---|---|
+| `js/shared/payload-text.js` | `esc()` — data does not get to write HTML |
+| `js/shared/silks.js` | the silk badge and jockey-cap renderers |
+| `js/src/*.js` | 14 fragments, in reading order, 38–1,100 lines each |
+| `tools/build.js` | the manifest **is** the file order |
+
+Only one thing moved: `renderCapSvg` came up from the leaderboard section to
+sit beside the silk renderer it belongs with. Both are function declarations
+and their id counters are only read when those functions run, long after load.
+
+#### How this is known to change nothing
+
+Two independent proofs, because a 5,800-line animation engine is not something
+to refactor on optimism.
+
+1. **The code is identical.** Sorting the lines of the old and new
+   `js/flat.js` and diffing the two sets leaves exactly the eight lines of the
+   "GENERATED FILE" banner. Every other line is byte-for-byte the same. The
+   split is a slice of the original file, which is why this proof is available
+   at all — had it been a rewrite, it would not be.
+2. **The pixels are identical.** Your `tools/visual-regression.js`, run at 640×420
+   on the pre-refactor engine and again on the rebuilt one: **137 checkpoints,
+   0 differences** — race canvas, particle canvas, DOM, screen, frame and
+   label, across intro, parade, the race, Skip to Finish, the line, the
+   Winning Moment, roll call and reveal. That tool made this refactor
+   defensible; it is the single most valuable thing in the repo.
+
+Plus lint clean and 29 tests passing.
+
+#### The footgun, and the guard
+
+`js/flat.js` is now generated, so editing it directly loses the edit at the
+next build. That is a real trap, so it is guarded rather than documented and
+hoped for:
+
+- the generated file carries a **"GENERATED FILE — do not edit"** banner;
+- `npm run build --check` compares the file against a fresh build;
+- it runs as **`pretest`**, so `npm test` fails loudly if the two disagree.
+
+Verified by hand-editing `js/flat.js` and confirming `npm test` refuses to run.
+
+#### What is NOT fixed, and needs a decision
+
+**`js/experience.js` still has its own copies.** The shared module is shared by
+construction for the flat engine only. Pointing the jumps engine at it means
+building `experience.js` the same way — and that engine has no test coverage
+and is explicitly out of this engagement's scope, so it was left alone rather
+than changed blind.
+
+That leaves the drift in place, and it is worth doing deliberately, because
+adopting the shared module would also close a live gap:
+
+> **`js/experience.js` does not escape payload text at all** — zero `esc()`
+> references. It interpolates `runner.silk_url` straight into an `src="…"`
+> attribute, and horse, jockey and trainer names straight into markup. This is
+> the same exposure that was found and fixed in the flat engine; the fix never
+> reached the jumps engine because the two share code by copy rather than by
+> reference. Grand National and Cheltenham run on that engine.
+
+Recommended order when the jumps engine is next in scope: adopt
+`js/shared/payload-text.js` and `js/shared/silks.js` in `experience.js` via the
+same build, which fixes the escaping and the drift in one move, and gets the
+jumps cinematic its first tests.
+
+---
+
 ## Verifying all of it
 
 ```bash
 npm install
+npm run build     # regenerate js/flat.js from js/src and js/shared
 npm run lint      # clean at --max-warnings 0
-npm test          # 29 tests
+npm test          # 29 tests; refuses to run if js/flat.js is stale
 python serve.py
 ```
 
