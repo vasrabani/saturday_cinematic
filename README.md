@@ -12,7 +12,7 @@ Everything you need to reproduce what you see at
 ## Quick start
 
 ```bash
-python -m http.server 8080
+python serve.py
 ```
 
 Then open <http://localhost:8080/> — the intro screen fades in and the “RUN THE RACE” button drives the full sequence:
@@ -21,7 +21,23 @@ Then open <http://localhost:8080/> — the intro screen fades in and the “RUN 
 
 You must serve through a local web server. Opening `index.html` directly with `file://` will fail — the sandbox fetches `data/race.json` at boot and browsers block `fetch` from `file://` for security.
 
-Node users can substitute `npx http-server -p 8080`. Any static server works.
+**Use `serve.py`, not `python -m http.server`.** It serves this same
+directory but with caching switched off. `http.server` sends no
+`Cache-Control` header, so browsers apply heuristic caching and keep
+serving `index.html`, `js/flat.js` and `css/flat.css` from disk cache
+long after they have changed on disk — which turns every review into
+“did my change not work, or am I looking at yesterday’s build?”.
+
+As a backstop, the scenario picker shows an **engine build check**. It
+asks the loaded engine which features it was built with (`FlatEngine.features`).
+If it reads `engine:` and a version number (`engine: 2.6.0`), the
+`flat.js` you are running has everything this page expects.
+If it turns red and says `STALE ENGINE`, the browser served you a cached
+copy: hard-refresh with `Ctrl+Shift+R` (`Cmd+Shift+R` on a Mac), or
+switch to `serve.py`.
+
+Node users can substitute `npx http-server -p 8080 -c-1` (the `-c-1`
+disables caching). Any static server works, but disable caching.
 
 ---
 
@@ -31,9 +47,9 @@ The dropdown in the top-right lets you switch between three pre-baked payloads:
 
 | Slug                     | What it exercises                                                          |
 | ------------------------ | -------------------------------------------------------------------------- |
-| `race`                   | Real 12-runner finish — clear winner, mid-field spread. **Default.**       |
-| `race-close-finish`      | Photo finish — top three separated by less than one length.                |
-| `race-runaway`           | Twelve lengths clear — tests the “dominant winner” staging.                |
+| `race`                   | A real result: the Sky Bet Ebor at York, 24 runners, 22 of them placed, beaten distances only. **Default.** |
+| `race-close-finish`      | Photo finish — the first three inside a tenth of a length, all 24 inside two lengths. |
+| `race-runaway`           | Thirteen lengths clear — tests the “dominant winner” staging.              |
 
 You can also switch by URL: `?data=race-close-finish`, `?data=race-runaway`.
 
@@ -41,14 +57,26 @@ Each JSON file in `data/` is a self-contained race payload matching the producti
 
 ---
 
+## Development checks
+
+Running the sandbox needs nothing but Python. The quality checks need Node 18+ and are development-only — production still loads `js/flat.js` directly:
+
+```
+npm install        # once
+npm run lint       # ESLint, zero warnings allowed
+npm test           # unit tests, and the whole experience run screen to screen in jsdom
+```
+
+To show that a change does not alter what the viewer sees, use the visual regression check in `tools/visual-regression.js` (see ARCHITECTURE.md §13).
+
 ## What you can (and cannot) change
 
 **Edit freely:**
 
 - `css/experience.css` — the shared visual language for the cinematic (screens, buttons, roll call, reveal, trophy).
-- `css/flat.css` — flat-race-specific styling (stalls, photo finish, leaderboard, band pill).
+- `css/flat.css` — flat-race-specific styling (band pill, stalls, broadcast chrome, the Winning Moment card, reveal podium).
 - `js/flat.js` — the flat-race engine (parade → race → roll call → reveal, all GSAP timelines and canvas rendering).
-- `img/silks/*.svg` — sample silk images. Every runner falls back to a procedural SVG built from `silk` / `silk2` / `silk_pattern`; populate a runner's `silk_url` to override that fallback with an image. The bundled samples wire runners 1-6 in each fixture so you can see both paths render side by side. Swap in your own PNG/WEBP/SVG here — anything a `<img>` tag accepts.
+- `img/silks/*.svg` — sample silk images. Every runner falls back to a procedural SVG built from `silk` / `silk2` / `silk_pattern`; populate a runner's `silk_url` to override that fallback with an image. The bundled samples wire the first five or six runners in each fixture so you can see both paths render side by side. Swap in your own PNG/WEBP/SVG here — anything a `<img>` tag accepts.
 
 **Do not touch:**
 
@@ -90,7 +118,7 @@ Every scenario JSON has this top-level shape (already implemented in the fixture
   "name":         "Emily Upjohn",
   "jockey":       "Frankie Dettori",
   "trainer":      "John & Thady Gosden",
-  "odds":         "5/4",            // fractional; engine parses to decimal
+  "odds":         "5/4",            // shown exactly as given
   "silk":         "#B91C1C",         // primary silk hex
   "silk2":        "#FFFFFF",         // secondary silk hex
   "silk_url":     "img/silks/silk-01-hooped-red-white.svg",  // optional image src (relative to repo root); when set, replaces the procedural silk render for that runner. See `img/silks/`.
@@ -98,7 +126,7 @@ Every scenario JSON has this top-level shape (already implemented in the fixture
   "sr":           128,               // speed rating, 0-140-ish
   "stars":        5,                 // AI stars, 0-5
   "is_fav":       true,              // market favourite flag
-  "weight":       112.0              // sim weight — higher = more likely to win
+  "weight":       112.0              // model weight — the leaderboard's win chances, and the forecast's odds when there is no result
 }
 ```
 
@@ -125,10 +153,12 @@ Every scenario JSON has this top-level shape (already implemented in the fixture
     "1104": 2.25,
     ...
   },
-  "max_lengths_behind": 25.35,       // used to scale the finish stagger
-  "has_distances":      true         // false = no beaten-distance data available
+  "max_lengths_behind": 25.35,       // not read by the flat engine
+  "has_distances":      true         // true = use lengths_behind_winner for the finishing gaps
 }
 ```
+
+Runners missing from `result_order` (non-finishers) still race, at the back. Ids may be numbers or strings, in either list. Without `lengths_behind_winner` the engine invents the gaps behind the winner — a close finish, with the real winning margin taken from `beaten_distances` when it has one.
 
 **Silk palette** — the production app cycles this 14-colour palette when the editor hasn’t customised silks. Keep to it for consistency:
 
@@ -183,13 +213,13 @@ Please keep commits scoped (“Parade timing”, “Reveal trophy entry”, etc.
 ## Troubleshooting
 
 **“Data load failed” banner on first open**
-You’re on `file://`. Kill the tab, run `python -m http.server 8080` from this folder, and reopen at `http://localhost:8080/`.
+On `file://`: close the tab, run `python serve.py` from this folder, and reopen at <http://localhost:8080/>. Already on http://: the banner says which file failed and why — usually a scenario name with no file in `data/`, or a file that is not valid JSON.
 
-**Trophy / podium missing on the reveal screen**
-Check the browser console for a JS error. The reveal reads `#replayData` at boot; a malformed scenario JSON will hang the engine at the fade-out.
+**The wrong horse wins**
+The engine plays the result only when `replay_data.has_result` is true and `result_order` names at least one runner in `runners[]`. Otherwise it runs a weighted random forecast, which looks exactly like the real thing — check the ids match. An unreadable `#replayData` block does the same, with an error in the console.
 
 **Runners don’t appear in the parade**
-Verify your scenario JSON has `runners[]` populated. The engine short-circuits to the reveal screen when `runners.length === 0`.
+Verify your scenario JSON has `runners[]` populated: the page hands it to the engine as it is, and with no runners there is nothing to parade or race.
 
 **Silks look identical**
 Your scenario JSON is missing `silk` / `silk2` or setting them to the DB default (`#1a3a6b` + `#ffffff`). Use hex values from the palette above.
@@ -200,4 +230,3 @@ Your scenario JSON is missing `silk` / `silk2` or setting them to the DB default
 
 **Vas Rabani** · vasrabani@hotmail.co.uk
 Ping on Upwork for engagement questions or Slack for anything urgent.
-"# saturday_cinematic" 

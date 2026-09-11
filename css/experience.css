@@ -21,6 +21,20 @@ body.page-experience {
 }
 
 /* ── SCREENS ────────────────────────────────────── */
+/* Every screen is a fixed, full-viewport pane and the body never
+   scrolls, because the race is a canvas that has to fill the window.
+   The catch is that the content screens (intro, roll call, reveal) are
+   ordinary stacked content: at a small window, a tall zoom level, or a
+   short landscape phone they are simply taller than the pane, and with
+   `overflow: visible` on a fixed element the overspill is unreachable —
+   there is no scrollbar anywhere on the page to recover it. That is why
+   the RUN THE RACE button used to disappear when you zoomed in.
+
+   Fix: each screen scrolls itself when it has to. `safe center` is the
+   important half — plain `justify-content: center` on an overflowing
+   flex column pushes the first child off the TOP of the scroll box,
+   where no scrollbar can reach it either. `safe` falls back to `center`
+   on browsers that don't know it, which is the behaviour we had. */
 .screen {
   position: fixed;
   top: var(--nav-h, 60px);
@@ -31,19 +45,38 @@ body.page-experience {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  justify-content: safe center;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   opacity: 0;
   pointer-events: none;
   z-index: 10;
 }
+/* Direct children must keep their height in a scrolling flex column —
+   without this they compress instead of overflowing, and the layout
+   collapses rather than becoming scrollable. */
+.screen > * { flex-shrink: 0; }
+
 .screen.active {
   opacity: 1;
   pointer-events: all;
 }
 
+/* The race screen is the exception: it is a full-bleed canvas with
+   absolutely-positioned overlays, so it must never scroll. */
+#screen-race {
+  overflow: hidden;
+}
+
 /* ── SCREEN 0: INTRO ────────────────────────────── */
 #screen-intro {
+  /* Translucent, not solid: js/flat.js paints a dimmed, slowly drifting
+     racecourse on #particleCanvas behind every screen, and an opaque
+     background would hide it. See AMBIENT BACKDROP in flat.js. */
   background: radial-gradient(ellipse 100% 100% at 50% 50%,
-    rgba(200,169,81,0.08) 0%, transparent 60%), var(--dark);
+    rgba(200,169,81,0.10) 0%, transparent 60%), rgba(6,8,15,0.34);
   text-align: center;
   gap: 32px;
   padding: 40px 24px;
@@ -150,7 +183,7 @@ body.page-experience {
 
 /* ── SCREEN 1: PARADE ───────────────────────────── */
 #screen-parade {
-  background: var(--dark);
+  background: rgba(6,8,15,0.40);
   gap: 0;
   padding: 0;
   justify-content: flex-start;
@@ -487,47 +520,6 @@ body.page-experience {
   .race-leaderboard { --lb-row-h: 30px; }
 }
 
-/* Probability-bar row layout — same component as flat.js. Two-line
-   row: name on top, AI win-probability bar + percent below. */
-.race-lb-name-prob {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.race-lb-prob {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.race-lb-prob__bar {
-  flex: 1;
-  height: 3px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.race-lb-prob__fill {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg,
-    rgba(212, 175, 55, 0.85) 0%,
-    rgba(232, 197, 88, 1) 100%);
-  border-radius: 2px;
-  box-shadow: 0 0 4px rgba(212, 175, 55, 0.35);
-}
-.race-lb-prob__pct {
-  font-family: "DM Sans", "Inter", sans-serif;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.55);
-  font-variant-numeric: tabular-nums;
-  min-width: 24px;
-  text-align: right;
-}
-
 #raceLeaderboard {
   position: relative;
   /* 8 visible rows. Overflow hides the trailing pack as they slide
@@ -548,11 +540,11 @@ body.page-experience {
   padding: 0;
   border-bottom: 1px solid rgba(255,255,255,0.05);
   font-size: 12px;
-  /* The transition is what makes positions visibly CHANGE — without
-     this each frame's reorder is invisible. Tune the duration to
-     match the cadence of mid-race overtakes (~0.4s feels right). */
-  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.35s ease;
+  /* No transform transition. V2 tweens each row with GSAP the moment
+     its rank actually changes (see updateLeaderboard in flat.js), and
+     a CSS transition on the same property just fights the tween. The
+     override lives in flat.css alongside the rest of the V2 chrome. */
+  transition: opacity 0.35s ease;
   will-change: transform, opacity;
 }
 .race-lb-row:last-child { border-bottom: none; }
@@ -669,7 +661,7 @@ body.page-experience {
 
 /* ── SCREEN 3: REVEAL ───────────────────────────── */
 #screen-reveal {
-  background: var(--dark);
+  background: rgba(6,8,15,0.36);
   text-align: center;
   gap: 28px;
   padding: 40px 24px;
@@ -1006,11 +998,6 @@ body.page-experience {
 @media (max-width: 768px) {
   .parade-header { padding: 16px 20px; }
   .parade-name { font-size: 28px; }
-  /* Commentary bar sits above leaderboard bottom bar (≈90px total) */
-  .race-commentary {
-    padding-bottom: 120px;   /* clear leaderboard bar */
-    padding-top: 60px;
-  }
   .race-commentary__text {
     font-size: clamp(15px, 4.5vw, 22px);
   }
@@ -1075,7 +1062,6 @@ body.page-experience {
   display: flex;
   justify-content: center;
   z-index: 20;
-  pointer-events: all;
 }
 
 .parade-skip-cta {
@@ -1235,17 +1221,6 @@ body.page-experience {
   font-variant-numeric: tabular-nums;
 }
 
-/* Flat engine uses a flat row layout — append the gap inline with
-   pos / name / odds. */
-.reveal-podium__gap {
-  margin-left: 8px;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: rgba(245, 228, 154, 0.78);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
 /* Hide the archive picker once the user has committed to a race
    (RUN THE RACE click → startExperience adds body.cinematic-experience-
    running). It re-appears when the user hits Run Again, which returns
@@ -1267,7 +1242,6 @@ body.cinematic-experience-running .cinematic-archive-picker {
   transform: translateX(-50%);
   z-index: 12;
   transition: opacity 0.4s ease, transform 0.3s ease;
-  pointer-events: auto;
 }
 .race-skip-wrap.race-skip-hidden {
   opacity: 0;
@@ -1316,11 +1290,8 @@ body.cinematic-experience-running .cinematic-archive-picker {
 }
 
 @media (max-width: 768px) {
-  /* Mobile commentary uses padding-top:60 + padding-bottom:120 + up
-     to 2 lines of text (~60px). Worst-case commentary box height ≈
-     240px from the bottom edge. Pill bottom must exceed that or it
-     sits INSIDE the commentary's text area. If the commentary
-     padding ever changes, bump this number to match. */
+  /* On a phone the Mr Fox commentary card, a line or two tall, sits
+     low in the frame: the pill is lifted clear of it. */
   .race-skip-wrap { bottom: 240px; }
   .race-skip-cta {
     padding: 7px 14px;
@@ -1336,7 +1307,7 @@ body.cinematic-experience-running .cinematic-archive-picker {
    reveal trophy via a screen-level fade. */
 #screen-rollcall {
   background: radial-gradient(ellipse 100% 100% at 50% 50%,
-    rgba(212,175,55,0.06) 0%, transparent 65%), var(--dark);
+    rgba(212,175,55,0.08) 0%, transparent 65%), rgba(6,8,15,0.40);
   text-align: center;
   gap: 0;
   padding: 0;
@@ -1691,9 +1662,8 @@ body.cinematic-experience-running .cinematic-archive-picker {
 
 /* ─────────────────────────────────────────────────────────────────
    Mr Fox speech bubble (Sprint P4 #6) — wraps the existing
-   #racingCommentary element with a 🦊 byline + speech-bubble pill
-   styling. Same on flat.css. Renders only when the commentary
-   element has content; CSS-only, no JS changes needed.
+   #racingCommentary element with a 🦊 byline + speech-bubble pill.
+   CSS-only; the engine just writes the line into #racingCommentary.
    ───────────────────────────────────────────────────────────── */
 .race-commentary {
   /* Override existing positioning with Fox-branded card. */
